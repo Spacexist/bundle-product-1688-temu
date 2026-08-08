@@ -1,0 +1,67 @@
+:root {
+  color-scheme: light;
+  font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+}
+
+body {
+  width: 320px;
+  margin: 0;
+  background: #f7f7f7;
+  color: #222;
+}
+
+.panel {
+  padding: 18px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.hint,
+.status {
+  margin: 8px 0;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+button {
+  width: 100%;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: #ff7800;
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+button.secondary {
+  background: #555;
+}
+
+button.danger {
+  background: #a33;
+}
+
+button:disabled {
+  background: #bbb;
+  cursor: wait;
+}
+
+.batch-info {
+  margin-top: 10px;
+  color: #444;
+  font-size: 13px;
+}
+
+.status.success {
+  color: #17833b;
+}
+
+.status.error {
+  color: #c62828;
+}

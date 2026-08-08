@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Temu + 1688 统一商品采集",
+  "version": "3.0.0",
+  "description": "统一采集 Temu 和 1688 商品、SKU、图片与店铺数据，使用 main_id 和 platform_id 关联并导出 JSON/XLSX。",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://temu.com/*",
+    "https://*.temu.com/*",
+    "https://detail.1688.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Temu + 1688 统一采集",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://temu.com/*",
+        "https://*.temu.com/*",
+        "https://detail.1688.com/offer/*"
+      ],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

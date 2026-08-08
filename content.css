@@ -1,0 +1,36 @@
+#unified-platform-collector-button {
+  position: fixed;
+  top: 50%;
+  right: 24px;
+  z-index: 2147483647;
+  width: 58px;
+  min-height: 132px;
+  padding: 14px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ff7a00, #ff4b00);
+  box-shadow: 0 5px 18px rgba(255, 94, 0, 0.35);
+  color: #fff;
+  cursor: pointer;
+  font: 700 15px/1.25 "Microsoft YaHei", "PingFang SC", sans-serif;
+  letter-spacing: 1px;
+  writing-mode: vertical-rl;
+  transform: translateY(-50%);
+}
+
+#unified-platform-collector-button:hover {
+  background: linear-gradient(180deg, #ff9000, #f24d00);
+}
+
+#unified-platform-collector-button:disabled {
+  cursor: wait;
+  opacity: 0.78;
+}
+
+#unified-platform-collector-button.is-success {
+  background: #159447;
+}
+
+#unified-platform-collector-button.is-error {
+  background: #c7372f;
+}
