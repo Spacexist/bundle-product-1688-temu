@@ -1,6 +1,8 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const createWorkflowService = require("./workflow-service").createWorkflowService;
+const createBindingService = require("./binding-service").createBindingService;
 
 const port = Number(process.env.PORT || 5173);
 const projectRoot = path.resolve(__dirname, "..");
@@ -18,6 +20,8 @@ const maxServerLogEntries = 300;
 const operationUndoEntries = {};
 const operationUndoOrder = [];
 const maxOperationUndoEntries = 200;
+let workflowService = null;
+let bindingService = null;
 
 if (!fs.existsSync(cacheDirectory)) {
   fs.mkdirSync(cacheDirectory, { recursive: true });
@@ -59,6 +63,9 @@ function createSafeLogValue(value, keyName) {
     return "[REDACTED]";
   }
   if (typeof value === "string") {
+    if (normalizedKey.indexOf("base64") >= 0) {
+      return "[BASE64 DATA, " + value.length + " chars]";
+    }
     if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
       const commaIndex = value.indexOf(",");
       const mimeType = value.slice(5, value.indexOf(";", 5));
@@ -1181,6 +1188,132 @@ function handleServerLogEventsRequest(request, response) {
   });
 }
 
+/** Return the shared intelligent-packing domain service. */
+function getWorkflowService() {
+  if (!workflowService) {
+    workflowService = createWorkflowService({
+      cacheDirectory: cacheDirectory,
+      readConfig: readImageEditConfig,
+      getKimiEndpoint: getKimiEndpoint,
+      compactValue: compactListingValue,
+      readImageSource: readImageEditSource,
+      writeLog: writeServerLog,
+      formatTime: formatCacheTime
+    });
+  }
+  return workflowService;
+}
+
+/** Return the shared server-side Temu and 1688 binding service. */
+function getBindingService() {
+  if (!bindingService) {
+    bindingService = createBindingService({
+      cacheDirectory: cacheDirectory,
+      formatTime: formatCacheTime
+    });
+  }
+  return bindingService;
+}
+
+/** Add a transient binding-completed instruction to one cache SSE payload. */
+function createBindingCacheUpdate(cachePayload, binding) {
+  const payload = cachePayload && typeof cachePayload === "object" ? cachePayload : { records: [] };
+  const source = binding && typeof binding === "object" ? binding : {};
+  payload.update_instruction = {
+    type: "binding_completed",
+    temu_main_id: String(source.temu_main_id || ""),
+    temu_platform_id: String(source.temu_platform_id || ""),
+    ali_main_id: String(source.ali_main_id || ""),
+    ali_platform_id: String(source.ali_platform_id || "")
+  };
+  return payload;
+}
+
+/** Read one workflow request body and dispatch it to the domain service. */
+function handleWorkflowOperation(request, response, operationName, logLabel) {
+  readRequestBody(request, function handleWorkflowOperationBody(body) {
+    let input;
+    try {
+      input = JSON.parse(body || "{}");
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: "智能组货请求 JSON 格式错误。" });
+      return;
+    }
+    const requestId = getApiRequestId(request);
+    writeServerLog("RECEIVE BODY", logLabel, input, requestId);
+    let operationResult;
+    try {
+      operationResult = getWorkflowService()[operationName](input, requestId);
+    } catch (error) {
+      sendJson(response, Number(error.statusCode || 500), { ok: false, error: error.message || "智能组货请求失败。" });
+      return;
+    }
+    Promise.resolve(operationResult)
+      .then(function handleWorkflowOperationSuccess(payload) {
+        sendJson(response, 200, payload);
+      })
+      .catch(function handleWorkflowOperationFailure(error) {
+        sendJson(response, Number(error.statusCode || 502), { ok: false, error: error.message || "智能组货请求失败。" });
+      });
+  });
+}
+
+/** Persist one Temu-to-1688 binding before completing its workflow task. */
+function handleWorkflowBindingOperation(request, response) {
+  readRequestBody(request, function handleWorkflowBindingBody(body) {
+    let input;
+    try {
+      input = JSON.parse(body || "{}");
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: "绑定请求 JSON 格式错误。" });
+      return;
+    }
+    const requestId = getApiRequestId(request);
+    writeServerLog("RECEIVE BODY", "Workflow binding input", input, requestId);
+    try {
+      const binding = getBindingService().bindTemuTo1688(input);
+      const payload = getWorkflowService().complete(input, requestId);
+      payload.binding = binding;
+      broadcastCachePayload(createBindingCacheUpdate(getBindingService().readCachePayload(), binding));
+      sendJson(response, 200, payload);
+    } catch (error) {
+      sendJson(response, Number(error.statusCode || 500), { ok: false, error: error.message || "服务器绑定失败。" });
+    }
+  });
+}
+
+/** Accept raw 1688 extension data and complete the entire binding on the server. */
+function handleWorkflowCollectionBindingOperation(request, response) {
+  readRequestBody(request, function handleWorkflowCollectionBindingBody(body) {
+    let input;
+    try {
+      input = JSON.parse(body || "{}");
+    } catch (error) {
+      sendJson(response, 400, { ok: false, error: "绑定请求 JSON 格式错误。" });
+      return;
+    }
+    const requestId = getApiRequestId(request);
+    writeServerLog("RECEIVE BODY", "Extension 1688 binding input", input, requestId);
+    try {
+      const result = getBindingService().collectAndBind1688(input);
+      const workflowPayload = getWorkflowService().complete(result.binding, requestId);
+      broadcastCachePayload(createBindingCacheUpdate(result.cache, result.binding));
+      sendJson(response, 200, {
+        ok: true,
+        workflow_completed: true,
+        linked_temu_main_id: result.binding.temu_main_id,
+        main_id: result.record.main_id,
+        platform_id: result.record.platform_id,
+        record: result.record,
+        binding: result.binding,
+        task: workflowPayload.task
+      });
+    } catch (error) {
+      sendJson(response, Number(error.statusCode || 500), { ok: false, error: error.message || "服务器绑定失败。" });
+    }
+  });
+}
+
 /** Handle the local cache API and the Server-Sent Events stream. */
 function handleApiRequest(request, response) {
   const requestUrl = new URL(request.url || "/", "http://127.0.0.1:" + port);
@@ -1204,6 +1337,42 @@ function handleApiRequest(request, response) {
   }
   if (requestUrl.pathname === "/api/debug/logs/events" && request.method === "GET") {
     handleServerLogEventsRequest(request, response);
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow" && request.method === "GET") {
+    sendJson(response, 200, { ok: true, workflow: getWorkflowService().readPayload() });
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow/events" && request.method === "GET") {
+    getWorkflowService().handleEvents(request, response);
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow/active" && request.method === "GET") {
+    sendJson(response, 200, getWorkflowService().getActivePayload());
+    return true;
+  }
+  if (requestUrl.pathname.indexOf("/api/workflow/") === 0 && request.method === "OPTIONS") {
+    sendApiOptions(response);
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow/prompts" && request.method === "POST") {
+    handleWorkflowOperation(request, response, "generatePrompts", "Workflow prompt input");
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow/generate" && request.method === "POST") {
+    handleWorkflowOperation(request, response, "generateImages", "Workflow generation input");
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow/search" && request.method === "POST") {
+    handleWorkflowOperation(request, response, "searchImage", "Workflow 1688 search input");
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow/complete" && request.method === "POST") {
+    handleWorkflowBindingOperation(request, response);
+    return true;
+  }
+  if (requestUrl.pathname === "/api/workflow/bind" && request.method === "POST") {
+    handleWorkflowCollectionBindingOperation(request, response);
     return true;
   }
   if ((requestUrl.pathname === "/api/listing/merge" || requestUrl.pathname === "/api/listing-merge") && request.method === "OPTIONS") {
@@ -1365,7 +1534,9 @@ function serveStaticFile(request, response) {
   }
   let filePath = requestUrl.pathname === "/server/logs" || requestUrl.pathname === "/server/logs/"
     ? path.join(__dirname, "logs.html")
-    : resolveStaticFile(request.url);
+    : requestUrl.pathname === "/workflow" || requestUrl.pathname === "/workflow/"
+      ? path.join(root, "workflow.html")
+      : resolveStaticFile(request.url);
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     filePath = path.join(root, "index.html");
   }

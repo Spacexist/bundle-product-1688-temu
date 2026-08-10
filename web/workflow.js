@@ -1,0 +1,420 @@
+const { createApp } = Vue;
+
+/** Return a safe array for one workflow field. */
+function workflowArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+/** Read the unified cache record array from supported response shapes. */
+function readWorkflowRecords(payload) {
+  if (payload && Array.isArray(payload.records)) {
+    return payload.records;
+  }
+  return Array.isArray(payload) ? payload : [];
+}
+
+/** Read ordered image URLs from strings or collector image objects. */
+function readWorkflowImageUrls(value) {
+  const images = [];
+  const list = workflowArray(value);
+  for (let index = 0; index < list.length; index += 1) {
+    const item = list[index];
+    const url = typeof item === "string" ? item : item && (item.url || item.imageUrl);
+    if (url && images.indexOf(String(url)) < 0) {
+      images.push(String(url));
+    }
+  }
+  return images;
+}
+
+/** Normalize one cached Temu record for the intelligent-packing page. */
+function normalizeWorkflowTemuRecord(record) {
+  const source = record || {};
+  const collected = source.source_data || {};
+  const goods = collected.goods || {};
+  const gallery = readWorkflowImageUrls(source.gallery_image_urls);
+  const sourceGallery = readWorkflowImageUrls(goods.gallery);
+  for (let index = 0; index < sourceGallery.length; index += 1) {
+    if (gallery.indexOf(sourceGallery[index]) < 0) {
+      gallery.push(sourceGallery[index]);
+    }
+  }
+  const mainImage = source.main_image_url || collected.mainImageUrl || gallery[0] || "";
+  if (mainImage && gallery.indexOf(String(mainImage)) < 0) {
+    gallery.unshift(String(mainImage));
+  }
+  return {
+    main_id: source.main_id === undefined ? source.mainid || "" : source.main_id,
+    platform_id: source.platform_id || "",
+    product_name: source.product_name || goods.goodsName || "未命名 Temu 商品",
+    product_category: source.product_category || "",
+    attributes: source.attributes_json || collected.attributes || goods.goodsProperty || {},
+    gallery_image_urls: gallery,
+    main_image_url: mainImage
+  };
+}
+
+/** Send one JSON request and reject non-success API payloads. */
+function requestWorkflowJson(url, options) {
+  return fetch(url, options).then(function parseWorkflowResponse(response) {
+    return response.json().then(function validateWorkflowPayload(payload) {
+      if (!response.ok || !payload || payload.ok === false) {
+        throw new Error(payload && payload.error ? payload.error : "请求失败。");
+      }
+      return payload;
+    });
+  });
+}
+
+const workflowApp = createApp({
+  template: `
+    <div class="workflow-shell">
+      <header class="workflow-topbar">
+        <div class="workflow-brand"><span>T+8</span><div><h1>智能组货</h1><p>Temu 选品 · 四方向生图 · 1688 搜款</p></div></div>
+        <a class="back-link" href="/">返回编辑工作台</a>
+      </header>
+      <div class="workflow-body">
+        <aside class="temu-task-list">
+          <div class="task-list-heading"><div><strong>Temu 商品</strong><span>{{ temuRecords.length }} 个</span></div><small>每个商品独立处理</small></div>
+          <button v-for="record in temuRecords" :key="record.main_id" class="temu-task-card" :class="{ active: String(record.main_id) === String(selectedTemuMainId) }" type="button" @click="selectTemu(record)">
+            <img v-if="record.main_image_url" :src="record.main_image_url" referrerpolicy="no-referrer" alt="Temu 商品">
+            <span v-else class="task-image-empty">—</span>
+            <span class="task-card-copy"><strong>{{ record.product_name }}</strong><small>{{ taskStatusText(record.main_id) }}</small></span>
+            <i :class="taskStatusClass(record.main_id)"></i>
+          </button>
+          <div v-if="!temuRecords.length" class="task-list-empty">请先通过扩展采集 Temu 商品。</div>
+        </aside>
+
+        <main v-if="selectedTemu" class="workflow-main">
+          <section class="product-summary">
+            <div><span class="eyebrow">当前 Temu</span><h2>{{ selectedTemu.product_name }}</h2><p>{{ selectedTemu.product_category || '未提供分类' }}</p></div>
+            <span class="main-id">main_id {{ selectedTemu.main_id }}</span>
+          </section>
+
+          <div class="workflow-status" :class="statusType">{{ statusText }}</div>
+
+          <section class="workflow-step">
+            <header><span>01</span><div><h3>选择分析主图</h3><p>默认第一张，可改选其他 Temu 主图。</p></div></header>
+            <div class="source-image-grid">
+              <button v-for="image in selectedTemu.gallery_image_urls" :key="image" type="button" :class="{ selected: image === selectedImageUrl }" @click="selectSourceImage(image)"><img :src="image" referrerpolicy="no-referrer" alt="Temu 主图"><i>✓</i></button>
+            </div>
+            <button class="primary-action" type="button" :disabled="promptBusy || !selectedImageUrl" @click="generatePrompts">{{ promptBusy ? 'Kimi 分析中…' : selectedTask && selectedTask.prompts && selectedTask.prompts.length ? '重新生成 4 个组货方向' : '生成 4 个组货方向' }}</button>
+          </section>
+
+          <section v-if="localPrompts.length" class="workflow-step">
+            <header><span>02</span><div><h3>确认组货提示词</h3><p>四种关系固定，提示词可以直接修改。</p></div></header>
+            <div class="prompt-grid">
+              <article v-for="(item, index) in localPrompts" :key="index" class="prompt-card">
+                <div class="prompt-card-head"><span>{{ item.relation }}</span><strong>{{ item.product_name }}</strong></div>
+                <textarea v-model="item.prompt" rows="8" :aria-label="item.relation + '提示词'"></textarea>
+              </article>
+            </div>
+            <button class="primary-action" type="button" :disabled="generateBusy" @click="generateImages()">{{ generateBusy ? '正在生成 4 张图片…' : hasGeneratedImages ? '全部重新生成' : '一次生成 4 张白底图' }}</button>
+          </section>
+
+          <section v-if="localPrompts.length" class="workflow-step">
+            <header><span>03</span><div><h3>选择组货图片</h3><p>可单独重生，确认一张后进入 1688 搜图。</p></div></header>
+            <div class="result-grid">
+              <article v-for="(item, index) in localPrompts" :key="'result-' + index" class="result-card" :class="{ selected: selectedResultIndex === index }">
+                <button class="result-image" type="button" :disabled="!item.image_url" @click="selectResult(index)">
+                  <img v-if="item.image_url" :src="item.image_url" alt="AI 组货候选图">
+                  <span v-else>{{ item.status === 'generating' ? '生成中…' : item.error || '等待生成' }}</span>
+                  <i v-if="selectedResultIndex === index">已选择</i>
+                </button>
+                <div><strong>{{ item.relation }}</strong><span>{{ item.product_name }}</span></div>
+                <button class="regenerate-button" type="button" :disabled="generateBusy" @click="generateImages(index)">单独重生</button>
+              </article>
+            </div>
+            <button class="search-action" type="button" :disabled="searchBusy || selectedResultIndex < 0" @click="search1688">{{ searchBusy ? '正在发送到 1688…' : '确认图片并打开 1688 搜款' }}</button>
+            <div v-if="selectedTask && selectedTask.search_url" class="search-ready"><span>搜款页已生成，进入满意商品详情后选择 Temu，并点击扩展的“确认并绑定”。</span><a :href="selectedTask.search_url" target="_blank">重新打开搜款页</a></div>
+          </section>
+        </main>
+        <main v-else class="workflow-main workflow-empty"><strong>等待 Temu 商品</strong><span>在 Temu 商品详情页点击扩展采集后，这里会实时出现。</span></main>
+      </div>
+    </div>
+  `,
+  data: function createWorkflowState() {
+    return {
+      records: [],
+      workflow: { active_temu_main_id: "", tasks: {} },
+      selectedTemuMainId: "",
+      selectedImageUrl: "",
+      selectedResultIndex: -1,
+      localPrompts: [],
+      promptBusy: false,
+      generateBusy: false,
+      searchBusy: false,
+      statusText: "等待选择 Temu 商品。",
+      statusType: "normal",
+      cacheSource: null,
+      workflowSource: null,
+      redirectedTaskKey: ""
+    };
+  },
+  /** Connect the page to cache and workflow SSE streams. */
+  mounted: function mountWorkflowPage() {
+    this.startCacheStream();
+    this.startWorkflowStream();
+  },
+  /** Close active SSE streams when leaving the workflow page. */
+  beforeUnmount: function unmountWorkflowPage() {
+    if (this.cacheSource) {
+      this.cacheSource.close();
+    }
+    if (this.workflowSource) {
+      this.workflowSource.close();
+    }
+  },
+  computed: {
+    /** Return normalized Temu products from the shared cache. */
+    temuRecords: function getWorkflowTemuRecords() {
+      const result = [];
+      for (let index = 0; index < this.records.length; index += 1) {
+        const record = this.records[index] || {};
+        if (String(record.platform || "").toLowerCase() === "temu") {
+          result.push(normalizeWorkflowTemuRecord(record));
+        }
+      }
+      return result;
+    },
+    /** Return the currently selected Temu product. */
+    selectedTemu: function getSelectedWorkflowTemu() {
+      for (let index = 0; index < this.temuRecords.length; index += 1) {
+        if (String(this.temuRecords[index].main_id) === String(this.selectedTemuMainId)) {
+          return this.temuRecords[index];
+        }
+      }
+      return this.temuRecords[0] || null;
+    },
+    /** Return the persisted task belonging to the selected Temu product. */
+    selectedTask: function getSelectedWorkflowTask() {
+      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
+      return tasks[String(this.selectedTemuMainId)] || null;
+    },
+    /** Check whether at least one candidate image has been generated. */
+    hasGeneratedImages: function hasWorkflowGeneratedImages() {
+      for (let index = 0; index < this.localPrompts.length; index += 1) {
+        if (this.localPrompts[index].image_url) {
+          return true;
+        }
+      }
+      return false;
+    }
+  },
+  methods: {
+    /** Set the operation message displayed above the workflow. */
+    setWorkflowStatus: function setWorkflowStatus(message, type) {
+      this.statusText = String(message || "");
+      this.statusType = type || "normal";
+    },
+    /** Start receiving unified product cache updates. */
+    startCacheStream: function startWorkflowCacheStream() {
+      const view = this;
+      fetch("/cache.json", { cache: "no-store" }).then(function readInitialCache(response) {
+        return response.json();
+      }).then(function applyInitialCache(payload) {
+        view.applyWorkflowCache(payload);
+      }).catch(function handleInitialCacheError(error) {
+        view.setWorkflowStatus(error.message || "无法读取商品 cache。", "error");
+      });
+      this.cacheSource = new EventSource("/api/cache/events");
+      this.cacheSource.onmessage = function applyCacheEvent(event) {
+        try {
+          view.applyWorkflowCache(JSON.parse(event.data));
+        } catch (error) {
+          view.setWorkflowStatus("商品 cache 数据格式错误。", "error");
+        }
+      };
+    },
+    /** Start receiving intelligent-packing task updates. */
+    startWorkflowStream: function startWorkflowTaskStream() {
+      const view = this;
+      this.workflowSource = new EventSource("/api/workflow/events");
+      this.workflowSource.onmessage = function applyWorkflowEvent(event) {
+        try {
+          view.applyWorkflowPayload(JSON.parse(event.data));
+        } catch (error) {
+          view.setWorkflowStatus("智能组货状态格式错误。", "error");
+        }
+      };
+    },
+    /** Apply a product cache snapshot and preserve the current Temu selection. */
+    applyWorkflowCache: function applyWorkflowCache(payload) {
+      this.records = readWorkflowRecords(payload);
+      if (!this.selectedTemuMainId && this.temuRecords.length) {
+        this.selectTemu(this.temuRecords[0]);
+      }
+    },
+    /** Apply one workflow state snapshot and redirect after extension completion. */
+    applyWorkflowPayload: function applyWorkflowPayload(payload) {
+      const state = payload && payload.workflow ? payload.workflow : payload;
+      this.workflow = state && typeof state === "object" ? state : { active_temu_main_id: "", tasks: {} };
+      const task = this.selectedTask;
+      if (task && Array.isArray(task.prompts) && !this.promptBusy && !this.generateBusy) {
+        this.syncLocalPrompts(task);
+      }
+      if (task && !this.promptBusy && !this.generateBusy && !this.searchBusy) {
+        this.setWorkflowStatus(this.taskStatusText(this.selectedTemuMainId), task.status === "completed" ? "success" : "normal");
+      }
+      if (task && task.status === "completed" && task.bound_ali_main_id) {
+        const redirectKey = String(task.temu_main_id) + ":" + String(task.bound_ali_main_id);
+        if (this.redirectedTaskKey !== redirectKey) {
+          this.redirectedTaskKey = redirectKey;
+          window.location.href = "/?mode=realtime&temu_main_id=" + encodeURIComponent(task.temu_main_id) + "&ali_main_id=" + encodeURIComponent(task.bound_ali_main_id);
+        }
+      }
+    },
+    /** Select one Temu task and restore its persisted workflow state. */
+    selectTemu: function selectWorkflowTemu(record) {
+      this.selectedTemuMainId = String(record && record.main_id || "");
+      const task = this.selectedTask;
+      this.selectedImageUrl = task && task.selected_image_url ? task.selected_image_url : record && (record.main_image_url || record.gallery_image_urls[0]) || "";
+      this.selectedResultIndex = task && Number.isFinite(Number(task.selected_result_index)) ? Number(task.selected_result_index) : -1;
+      this.syncLocalPrompts(task);
+      this.setWorkflowStatus(task && task.status !== "idle" ? this.taskStatusText(this.selectedTemuMainId) : "已选择 Temu 商品，请确认分析主图。", "normal");
+    },
+    /** Copy persisted prompt objects into editable local prompt objects. */
+    syncLocalPrompts: function syncWorkflowLocalPrompts(task) {
+      const source = task && Array.isArray(task.prompts) ? task.prompts : [];
+      const prompts = [];
+      for (let index = 0; index < source.length; index += 1) {
+        prompts.push({
+          relation: String(source[index].relation || ""),
+          product_name: String(source[index].product_name || ""),
+          prompt: String(source[index].prompt || ""),
+          image_url: String(source[index].image_url || ""),
+          status: String(source[index].status || ""),
+          error: String(source[index].error || "")
+        });
+      }
+      this.localPrompts = prompts;
+      if (task && Number(task.selected_result_index) >= 0) {
+        this.selectedResultIndex = Number(task.selected_result_index);
+      }
+    },
+    /** Select the Temu main image sent to Kimi. */
+    selectSourceImage: function selectWorkflowSourceImage(image) {
+      this.selectedImageUrl = String(image || "");
+    },
+    /** Request four fixed-relation product-packing prompts from Kimi. */
+    generatePrompts: function generateWorkflowPrompts() {
+      if (!this.selectedTemu || !this.selectedImageUrl || this.promptBusy) {
+        return;
+      }
+      this.promptBusy = true;
+      this.setWorkflowStatus("Kimi 正在分析商品并生成四个组货方向…", "normal");
+      const view = this;
+      requestWorkflowJson("/api/workflow/prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          temu_main_id: this.selectedTemu.main_id,
+          image_url: this.selectedImageUrl,
+          product: {
+            title: this.selectedTemu.product_name,
+            category: this.selectedTemu.product_category,
+            attributes: this.selectedTemu.attributes
+          }
+        })
+      }).then(function handleWorkflowPromptSuccess(payload) {
+        view.syncLocalPrompts(payload.task);
+        view.selectedResultIndex = -1;
+        view.setWorkflowStatus("四个组货方向已生成，可以修改提示词后生图。", "success");
+      }).catch(function handleWorkflowPromptError(error) {
+        view.setWorkflowStatus("Kimi 提词失败：" + error.message, "error");
+      }).finally(function finishWorkflowPromptRequest() {
+        view.promptBusy = false;
+      });
+    },
+    /** Generate all four images or regenerate one selected candidate. */
+    generateImages: function generateWorkflowImages(index) {
+      if (this.generateBusy || !this.selectedTemu || this.localPrompts.length !== 4) {
+        return;
+      }
+      this.generateBusy = true;
+      this.setWorkflowStatus(index === undefined ? "BeeAPI 正在依次生成四张白底图…" : "BeeAPI 正在重新生成第 " + (Number(index) + 1) + " 张图…", "normal");
+      const prompts = [];
+      for (let promptIndex = 0; promptIndex < this.localPrompts.length; promptIndex += 1) {
+        prompts.push(this.localPrompts[promptIndex].prompt);
+      }
+      const body = { temu_main_id: this.selectedTemu.main_id, prompts: prompts };
+      if (index !== undefined) {
+        body.index = Number(index);
+      }
+      const view = this;
+      requestWorkflowJson("/api/workflow/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }).then(function handleWorkflowGenerationSuccess(payload) {
+        view.syncLocalPrompts(payload.task);
+        view.setWorkflowStatus(index === undefined ? "四张白底图已生成，请选择一张。" : "图片已重新生成。", "success");
+      }).catch(function handleWorkflowGenerationError(error) {
+        view.setWorkflowStatus("BeeAPI 生图失败：" + error.message, "error");
+      }).finally(function finishWorkflowGenerationRequest() {
+        view.generateBusy = false;
+      });
+    },
+    /** Select one generated candidate image for the 1688 search step. */
+    selectResult: function selectWorkflowResult(index) {
+      if (this.localPrompts[index] && this.localPrompts[index].image_url) {
+        this.selectedResultIndex = Number(index);
+      }
+    },
+    /** Send the selected candidate to 1688 and open the returned search page. */
+    search1688: function searchWorkflow1688() {
+      if (this.searchBusy || this.selectedResultIndex < 0 || !this.selectedTemu) {
+        return;
+      }
+      this.searchBusy = true;
+      this.setWorkflowStatus("正在上传图片到 1688 搜款…", "normal");
+      const view = this;
+      requestWorkflowJson("/api/workflow/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ temu_main_id: this.selectedTemu.main_id, index: this.selectedResultIndex })
+      }).then(function handleWorkflowSearchSuccess(payload) {
+        const searchWindow = window.open(payload.search_url, "_blank");
+        if (!searchWindow) {
+          view.setWorkflowStatus("1688 搜图完成。浏览器阻止了自动打开，请点击下方“重新打开搜款页”。", "normal");
+          return;
+        }
+        view.setWorkflowStatus("已打开 1688 搜款页。进入满意商品详情后选择 Temu，并点击扩展确认绑定。", "success");
+      }).catch(function handleWorkflowSearchError(error) {
+        view.setWorkflowStatus("1688 搜图失败：" + error.message, "error");
+      }).finally(function finishWorkflowSearchRequest() {
+        view.searchBusy = false;
+      });
+    },
+    /** Return the readable task status shown in the Temu list. */
+    taskStatusText: function getWorkflowTaskStatusText(temuMainId) {
+      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
+      const task = tasks[String(temuMainId)];
+      const statuses = {
+        idle: "等待开始",
+        prompts_ready: "提示词已就绪",
+        generating: "图片生成中",
+        images_ready: "图片已就绪",
+        waiting_1688_confirmation: "等待确认 1688",
+        completed: "1688 已绑定",
+        generation_error: "生图失败",
+        search_error: "搜图失败"
+      };
+      return task ? statuses[task.status] || task.status || "等待开始" : "等待开始";
+    },
+    /** Return the task status color class used by one Temu card. */
+    taskStatusClass: function getWorkflowTaskStatusClass(temuMainId) {
+      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
+      const task = tasks[String(temuMainId)];
+      if (task && task.status === "completed") {
+        return "done";
+      }
+      if (task && (task.status === "generation_error" || task.status === "search_error")) {
+        return "failed";
+      }
+      return task && task.status && task.status !== "idle" ? "working" : "idle";
+    }
+  }
+});
+
+workflowApp.mount("#workflow-app");

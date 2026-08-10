@@ -1,9 +1,19 @@
 importScripts("collector-temu.js", "collector-1688.js");
 
 var unifiedCacheEndpoint = "http://127.0.0.1:5173/api/cache";
+var unifiedWorkflowActiveEndpoint = "http://127.0.0.1:5173/api/workflow/active";
+var unifiedWorkflowBindEndpoint = "http://127.0.0.1:5173/api/workflow/bind";
 
 /** Handle collection requests from either platform page. */
 chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(message, sender, sendResponse) {
+  if (message && message.type === "getUnifiedBindingPanelData") {
+    getUnifiedBindingPanelData().then(function handleBindingPanelData(payload) {
+      sendResponse({ ok: true, payload: payload });
+    }).catch(function handleBindingPanelError(error) {
+      sendResponse({ ok: false, error: error.message || "读取 Temu 绑定列表失败。" });
+    });
+    return true;
+  }
   if (!message || message.type !== "collectUnifiedProduct") {
     return false;
   }
@@ -20,7 +30,21 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
     return false;
   }
   collectUnifiedFromTab(tabId, platform).then(function handleUnifiedCollection(data) {
-    return addUnifiedDataToBatch(data, platform);
+    if (platform !== "1688") {
+      return addUnifiedDataToBatch(data, platform, "");
+    }
+    if (message.targetTemuMainId) {
+      return submitUnified1688Binding(data, String(message.targetTemuMainId), String(message.targetTemuPlatformId || ""));
+    }
+    return getUnifiedActiveWorkflow().then(function handleActiveWorkflow(activeWorkflow) {
+      var workflowTemuMainId = activeWorkflow && activeWorkflow.active_temu_main_id
+        ? String(activeWorkflow.active_temu_main_id)
+        : "";
+      if (workflowTemuMainId) {
+        return submitUnified1688Binding(data, workflowTemuMainId, "");
+      }
+      return addUnifiedDataToBatch(data, platform, "");
+    });
   }).then(function handleUnifiedCollectionResult(result) {
     sendResponse(result);
   }).catch(function handleUnifiedCollectionError(error) {
@@ -139,14 +163,14 @@ function getUnifiedProductCategory(data, platform) {
 }
 
 /** Build one unified JSON record with canonical global and platform identifiers. */
-function createUnifiedRecord(data, platform, mainId, platformId) {
+function createUnifiedRecord(data, platform, mainId, platformId, linkedTemuMainId) {
   var source = data || {};
   var goods = source.goods || {};
   var productId = platform === "1688"
     ? source.offerId || ""
     : goods.goodsId || source.page && source.page.goodsId || "";
   var productName = platform === "1688" ? source.productName : goods.goodsName;
-  return {
+  var record = {
     main_id: mainId,
     platform_id: platformId,
     mainid: mainId,
@@ -157,6 +181,10 @@ function createUnifiedRecord(data, platform, mainId, platformId) {
     category_ids: getUnifiedCategoryIds(source, platform),
     source_data: source
   };
+  if (platform === "1688" && linkedTemuMainId) {
+    record.linked_temu_main_id = String(linkedTemuMainId);
+  }
+  return record;
 }
 
 /** Read the canonical global identifier from a record with legacy fallback. */
@@ -233,8 +261,91 @@ function saveUnifiedBatchData(batch) {
   });
 }
 
+/** Read the single Temu task currently waiting for a 1688 confirmation. */
+function getUnifiedActiveWorkflow() {
+  return fetch(unifiedWorkflowActiveEndpoint, { cache: "no-store" }).then(function handleActiveWorkflowResponse(response) {
+    if (!response.ok) {
+      throw new Error("无法读取当前智能组货任务。");
+    }
+    return response.json();
+  });
+}
+
+/** Create a compact Temu summary for the floating panel on 1688 detail pages. */
+function createUnifiedBindingPanelRecord(record) {
+  var item = record || {};
+  var source = item.source_data || {};
+  var goods = source.goods || {};
+  var gallery = Array.isArray(goods.gallery) ? goods.gallery : [];
+  var firstGallery = gallery.length ? gallery[0] : "";
+  var galleryUrl = typeof firstGallery === "string"
+    ? firstGallery
+    : firstGallery && (firstGallery.url || firstGallery.imageUrl) || "";
+  var sourceSkus = Array.isArray(source.sku) ? source.sku : [];
+  var skus = [];
+  for (var index = 0; index < sourceSkus.length; index += 1) {
+    var sourceSku = sourceSkus[index] || {};
+    skus.push({
+      SubSku1: sourceSku.SubSku1 || sourceSku.subSku1 || "",
+      SubSku2: sourceSku.SubSku2 || sourceSku.subSku2 || "",
+      specs: Array.isArray(sourceSku.specs) ? sourceSku.specs : [],
+      sku_price: sourceSku.sku_price || sourceSku.discountPrice || sourceSku.price || ""
+    });
+  }
+  var listing = item.listing_json && typeof item.listing_json === "object"
+    ? item.listing_json
+    : source.listing && typeof source.listing === "object" ? source.listing : {};
+  return {
+    main_id: item.main_id === undefined ? item.mainid || "" : item.main_id,
+    platform_id: item.platform_id || "",
+    product_name: item.product_name || goods.goodsName || "未命名 Temu 商品",
+    main_image_url: item.main_image_url || source.mainImageUrl || galleryUrl,
+    listing_json: { title: String(listing.title || item.product_name || goods.goodsName || "") },
+    sku: skus
+  };
+}
+
+/** Build the Temu list displayed on 1688 detail pages with the active task marker. */
+async function getUnifiedBindingPanelData() {
+  var batch = await getUnifiedBatchData();
+  var active = await getUnifiedActiveWorkflow();
+  var temuRecords = [];
+  for (var index = 0; index < batch.length; index += 1) {
+    var item = batch[index] || {};
+    if (item.platform === "temu") {
+      temuRecords.push(createUnifiedBindingPanelRecord(item));
+    }
+  }
+  return {
+    records: temuRecords,
+    active_temu_main_id: String(active && active.active_temu_main_id || "")
+  };
+}
+
+/** Submit raw 1688 collection data so the server performs cache binding atomically. */
+function submitUnified1688Binding(data, temuMainId, temuPlatformId) {
+  return fetch(unifiedWorkflowBindEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      temu_main_id: String(temuMainId || ""),
+      temu_platform_id: String(temuPlatformId || ""),
+      source_data: data && typeof data === "object" ? data : {}
+    })
+  }).then(function handleWorkflowBindingResponse(response) {
+    if (!response.ok) {
+      return response.json().catch(function handleWorkflowBindingErrorBody() {
+        return {};
+      }).then(function throwWorkflowBindingError(payload) {
+        throw new Error(payload.error || "服务器绑定 1688 商品失败。");
+      });
+    }
+    return response.json();
+  });
+}
+
 /** Add or replace one platform product while preserving both identifiers. */
-async function addUnifiedDataToBatch(data, platform) {
+async function addUnifiedDataToBatch(data, platform, linkedTemuMainId) {
   var batch = await getUnifiedBatchData();
   var productKey = getUnifiedProductKey(data, platform);
   var mainId = getNextUnifiedMainid(batch);
@@ -242,16 +353,22 @@ async function addUnifiedDataToBatch(data, platform) {
   var replaced = false;
   for (var index = 0; index < batch.length; index += 1) {
     var item = batch[index] || {};
-    if (getUnifiedProductKey(item.source_data, item.platform) === productKey) {
+    var matchesLinkedTemu = platform === "1688"
+      && linkedTemuMainId
+      && item.platform === "1688"
+      && String(item.linked_temu_main_id || "") === String(linkedTemuMainId);
+    var matchesUnboundProduct = !linkedTemuMainId
+      && getUnifiedProductKey(item.source_data, item.platform) === productKey;
+    if (matchesLinkedTemu || matchesUnboundProduct) {
       mainId = getUnifiedRecordMainId(item) || mainId;
       platformId = getUnifiedRecordPlatformId(item) || platformId;
-      batch[index] = createUnifiedRecord(data, platform, mainId, platformId);
+      batch[index] = createUnifiedRecord(data, platform, mainId, platformId, linkedTemuMainId);
       replaced = true;
       break;
     }
   }
   if (!replaced) {
-    batch.push(createUnifiedRecord(data, platform, mainId, platformId));
+    batch.push(createUnifiedRecord(data, platform, mainId, platformId, linkedTemuMainId));
   }
   await saveUnifiedBatchData(batch);
   return {

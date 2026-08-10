@@ -167,6 +167,10 @@ function normalizeStoredExtensionRecord(record) {
     main_id: stored.main_id === undefined ? stored.mainid || "" : stored.main_id,
     platform_id: stored.platform_id === undefined ? "" : stored.platform_id,
     platform: platform,
+    linked_temu_main_id: stored.linked_temu_main_id || "",
+    linked_temu_platform_id: stored.linked_temu_platform_id || "",
+    bound_1688_main_id: stored.bound_1688_main_id || "",
+    bound_1688_platform_id: stored.bound_1688_platform_id || "",
     product_id: stored.product_id || (platform === "1688" ? source.offerId : goods.goodsId) || "",
     product_name: productName,
     product_category: category,
@@ -202,6 +206,10 @@ function normalizeProduct(record) {
     main_id: source.main_id === undefined ? "" : source.main_id,
     platform_id: source.platform_id === undefined ? "" : source.platform_id,
     platform: source.platform || "",
+    linked_temu_main_id: source.linked_temu_main_id || "",
+    linked_temu_platform_id: source.linked_temu_platform_id || "",
+    bound_1688_main_id: source.bound_1688_main_id || "",
+    bound_1688_platform_id: source.bound_1688_platform_id || "",
     product_id: source.product_id || "",
     product_name: source.product_name || "未命名商品",
     product_category: source.product_category || "",
@@ -349,6 +357,7 @@ const app = createApp({
           </div>
         </div>
         <div class="toolbar">
+          <a class="ghost-button toolbar-link" href="/workflow">智能组货</a>
           <button class="mode-button" :class="{ active: renderMode === 'realtime' }" type="button" @click="changeRenderMode('realtime')">实时渲染</button>
           <button class="mode-button" :class="{ active: renderMode === 'export' }" type="button" @click="changeRenderMode('export')">导出模式</button>
           <label v-if="renderMode === 'export'" class="file-button">
@@ -588,7 +597,7 @@ const app = createApp({
           return list[index];
         }
       }
-      return list[0] || null;
+      return null;
     },
 
     /** Return all SKU references already attached to one Temu SKU. */
@@ -738,8 +747,26 @@ const app = createApp({
       this.records = records;
       this.sourceFileName = sourceFileName || "";
       this.selectedMainId = records.length ? records[0].main_id : "";
+      const query = new URLSearchParams(window.location.search);
+      const requestedTemuMainId = String(query.get("temu_main_id") || "");
+      const requestedAliMainId = String(query.get("ali_main_id") || "");
       this.selectedTemuMainId = this.temuRecords.length ? this.temuRecords[0].main_id : "";
-      this.selected1688MainId = this.aliRecords.length ? this.aliRecords[0].main_id : "";
+      this.selected1688MainId = "";
+      for (let temuIndex = 0; temuIndex < this.temuRecords.length; temuIndex += 1) {
+        if (requestedTemuMainId && String(this.temuRecords[temuIndex].main_id) === requestedTemuMainId) {
+          this.selectedTemuMainId = this.temuRecords[temuIndex].main_id;
+          break;
+        }
+      }
+      for (let aliIndex = 0; aliIndex < this.aliRecords.length; aliIndex += 1) {
+        if (requestedAliMainId && String(this.aliRecords[aliIndex].main_id) === requestedAliMainId) {
+          this.selected1688MainId = this.aliRecords[aliIndex].main_id;
+          break;
+        }
+      }
+      if (!requestedAliMainId) {
+        this.selectBound1688ForTemu(this.selectedTemuRecord);
+      }
       this.selectedGalleryIndex = 0;
       this.selectedTemuGalleryIndex = 0;
       this.selected1688GalleryIndex = 0;
@@ -754,12 +781,35 @@ const app = createApp({
 
     /** Apply the long-lived local cache payload received from the server. */
     applyCachePayload: function applyCachePayload(payload) {
+      const instruction = payload && payload.update_instruction && typeof payload.update_instruction === "object"
+        ? payload.update_instruction
+        : {};
       const rawRecords = readJsonRecords(payload);
       const records = [];
       for (let index = 0; index < rawRecords.length; index += 1) {
         records.push(normalizeProduct(rawRecords[index]));
       }
       this.applyRecords(records, "cache.json", payload);
+      if (instruction.type === "binding_completed") {
+        const temuMainId = String(instruction.temu_main_id || "");
+        const aliMainId = String(instruction.ali_main_id || "");
+        for (let temuIndex = 0; temuIndex < this.temuRecords.length; temuIndex += 1) {
+          if (String(this.temuRecords[temuIndex].main_id) === temuMainId) {
+            this.selectedTemuMainId = this.temuRecords[temuIndex].main_id;
+            break;
+          }
+        }
+        for (let aliIndex = 0; aliIndex < this.aliRecords.length; aliIndex += 1) {
+          if (String(this.aliRecords[aliIndex].main_id) === aliMainId) {
+            this.selected1688MainId = this.aliRecords[aliIndex].main_id;
+            break;
+          }
+        }
+        this.selectedTemuGalleryIndex = 0;
+        this.selected1688GalleryIndex = 0;
+        this.setStatus("服务器已完成绑定并更新当前 Temu / 1688 商品。", "success");
+        return;
+      }
       if (records.length) {
         this.setStatus("实时 cache 已读取 " + records.length + " 个商品。", "success");
       } else {
@@ -849,9 +899,28 @@ const app = createApp({
     /** Select a Temu listing in the left rail and reset its gallery. */
     selectTemuRecord: function selectTemuRecord(record) {
       this.selectedTemuMainId = record ? record.main_id : "";
+      this.selectBound1688ForTemu(record);
       this.selectedTemuGalleryIndex = 0;
+      this.selected1688GalleryIndex = 0;
       this.galleryEditRecordKey = "";
       this.galleryEditSelection = [];
+    },
+
+    /** Select only the 1688 record whose platform_id is bound to one Temu record. */
+    selectBound1688ForTemu: function selectBound1688ForTemu(record) {
+      const boundPlatformId = String(record && record.bound_1688_platform_id || "");
+      this.selected1688MainId = "";
+      if (!boundPlatformId) {
+        return;
+      }
+      for (let index = 0; index < this.aliRecords.length; index += 1) {
+        const aliRecord = this.aliRecords[index] || {};
+        if (String(aliRecord.platform_id || "") === boundPlatformId
+          && String(aliRecord.linked_temu_platform_id || "") === String(record.platform_id || "")) {
+          this.selected1688MainId = aliRecord.main_id;
+          return;
+        }
+      }
     },
 
     /** Return the original CDN URL without a local image cache or proxy. */

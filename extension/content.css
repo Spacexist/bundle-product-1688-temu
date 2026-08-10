@@ -34,3 +34,45 @@
 #unified-platform-collector-button.is-error {
   background: #c7372f;
 }
+#unified-temu-binding-panel {
+  position: fixed;
+  z-index: 2147483645;
+  left: 18px;
+  top: 110px;
+  width: 220px;
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #e0e6ef;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 18px 45px rgba(21, 32, 49, .18);
+  font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.unified-binding-panel-heading { display: flex; align-items: center; justify-content: space-between; margin: 2px 3px 10px; color: #172033; }
+.unified-binding-panel-heading strong { font-size: 14px; }
+.unified-binding-panel-heading span { color: #ff5c36; font-size: 12px; }
+.unified-binding-card { width: 100%; display: grid; grid-template-columns: 50px minmax(0, 1fr); gap: 9px; align-items: center; margin-top: 8px; padding: 8px; border: 1px solid #e3e8f0; border-radius: 12px; background: #fff; text-align: left; cursor: pointer; }
+.unified-binding-card:hover, .unified-binding-card.is-active { border-color: #ff653e; background: #fff7f3; }
+.unified-binding-card img { width: 50px; height: 50px; border-radius: 8px; object-fit: cover; background: #f0f3f7; }
+.unified-binding-card > span { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.unified-binding-card strong { overflow: hidden; color: #1e293b; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.unified-binding-card small { color: #8290a3; font-size: 10px; }
+#unified-temu-binding-panel > p { color: #8793a5; font-size: 12px; text-align: center; }
+
+#unified-temu-binding-modal { position: fixed; z-index: 2147483647; inset: 0; display: grid; place-items: center; padding: 28px; background: rgba(12, 19, 31, .58); font-family: "PingFang SC", "Microsoft YaHei", sans-serif; }
+.unified-binding-dialog { position: relative; width: min(680px, 92vw); max-height: 88vh; overflow: auto; padding: 20px; border-radius: 18px; background: #fff; box-shadow: 0 25px 80px rgba(0, 0, 0, .3); }
+.unified-binding-close { position: absolute; right: 12px; top: 12px; width: 32px; height: 32px; border: 0; border-radius: 50%; background: #eef2f6; color: #526075; font-size: 22px; cursor: pointer; }
+.unified-binding-main-image { width: 190px; height: 190px; float: left; margin-right: 18px; border-radius: 14px; object-fit: contain; background: #f1f4f8; }
+.unified-binding-copy { min-height: 190px; padding: 22px 35px 10px 0; }
+.unified-binding-copy span { color: #ff5c36; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.unified-binding-copy h3 { margin: 8px 0; color: #172033; font-size: 20px; line-height: 1.45; }
+.unified-binding-copy p { margin: 0; color: #8793a5; font-size: 11px; }
+.unified-binding-sku-title { display: block; clear: both; padding-top: 18px; color: #273449; font-size: 14px; }
+.unified-binding-skus { margin-top: 10px; border: 1px solid #e4e9f0; border-radius: 11px; overflow: hidden; }
+.unified-binding-skus > div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 12px; border-bottom: 1px solid #edf0f4; color: #415066; font-size: 12px; }
+.unified-binding-skus > div:last-child { border-bottom: 0; }
+.unified-binding-skus small { color: #718096; }
+.unified-binding-confirm { width: 100%; margin-top: 16px; padding: 13px; border: 0; border-radius: 11px; background: linear-gradient(135deg, #ff7145, #ff4f30); color: #fff; font-weight: 700; cursor: pointer; }
+.unified-binding-confirm:disabled { opacity: .6; cursor: wait; }

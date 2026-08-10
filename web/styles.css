@@ -299,3 +299,4 @@ button { cursor: pointer; }
   .ali-render { grid-column: 2; }
   .listing-rail { grid-row: 1 / span 2; }
 }
+.toolbar-link { display: inline-flex; align-items: center; text-decoration: none; }
