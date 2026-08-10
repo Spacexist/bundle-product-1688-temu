@@ -4,7 +4,10 @@ const legacyApi = require("../legacy-api");
 function attachRequestContext(request, response, next) {
   const pathname = String(request.originalUrl || request.url || "").split("?")[0];
   const method = String(request.method || "GET").toUpperCase();
-  if (pathname === "/api/v1/logs" || pathname === "/api/v1/logs/events") {
+  if (pathname === "/api/v1/logs"
+    || pathname === "/api/v1/logs/events"
+    || pathname === "/api/v1/queue"
+    || pathname === "/api/v1/queue/events") {
     next();
     return;
   }

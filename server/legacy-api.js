@@ -22,6 +22,7 @@ const eventClients = [];
 const apiRequestLogs = [];
 const maxApiRequestLogs = 100;
 const serverLogClients = [];
+const imageQueueClients = [];
 const serverLogEntries = [];
 const maxServerLogEntries = 300;
 let serverLogSequence = 0;
@@ -30,7 +31,10 @@ const operationUndoOrder = [];
 const maxOperationUndoEntries = 200;
 let workflowService = null;
 let bindingService = null;
-const imageTaskQueue = new ImageTaskQueue({ getConcurrency: getImageTaskConcurrency });
+const imageTaskQueue = new ImageTaskQueue({
+  getConcurrency: getImageTaskConcurrency,
+  onChange: handleImageTaskQueueChange
+});
 
 if (!fs.existsSync(cacheDirectory)) {
   fs.mkdirSync(cacheDirectory, { recursive: true });
@@ -324,6 +328,28 @@ function startApiRequestTrace(request, response) {
       );
     }
   });
+}
+
+/** Send one current image queue snapshot to every connected log page. */
+function broadcastImageTaskQueue(snapshot, event) {
+  const payload = {
+    action: "queue_snapshot",
+    event: event || null,
+    queue: snapshot || imageTaskQueue.getSnapshot()
+  };
+  const message = "data: " + JSON.stringify(payload) + "\n\n";
+  for (let index = imageQueueClients.length - 1; index >= 0; index -= 1) {
+    try {
+      imageQueueClients[index].write(message);
+    } catch (error) {
+      imageQueueClients.splice(index, 1);
+    }
+  }
+}
+
+/** Forward one shared edits or generation queue transition to the queue SSE clients. */
+function handleImageTaskQueueChange(snapshot, event) {
+  broadcastImageTaskQueue(snapshot, event);
 }
 
 /** Return the request identifier assigned by the local API tracer. */
@@ -1367,6 +1393,39 @@ function handleServerLogEventsRequest(request, response) {
   });
 }
 
+/** Return the current shared image task queue state for an initial page render. */
+function handleImageTaskQueueRequest(request, response) {
+  response.skipPayloadLog = true;
+  sendJson(response, 200, {
+    ok: true,
+    request_id: getApiRequestId(request),
+    queue: imageTaskQueue.getSnapshot()
+  });
+}
+
+/** Open a Server-Sent Events connection for shared image queue transitions. */
+function handleImageTaskQueueEventsRequest(request, response) {
+  response.writeHead(200, {
+    "Access-Control-Allow-Origin": "*",
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive"
+  });
+  response.write("retry: 1000\n");
+  response.write("data: " + JSON.stringify({
+    action: "connected",
+    queue: imageTaskQueue.getSnapshot()
+  }) + "\n\n");
+  imageQueueClients.push(response);
+  /** Remove one disconnected queue page from the live stream. */
+  request.on("close", function handleImageQueueClientClose() {
+    const index = imageQueueClients.indexOf(response);
+    if (index >= 0) {
+      imageQueueClients.splice(index, 1);
+    }
+  });
+}
+
 /** Return the shared intelligent-packing domain service. */
 function getWorkflowService() {
   if (!workflowService) {
@@ -1523,6 +1582,14 @@ function handleApiRequest(request, response) {
   }
   if (requestUrl.pathname === "/api/debug/logs/events" && request.method === "GET") {
     handleServerLogEventsRequest(request, response);
+    return true;
+  }
+  if (requestUrl.pathname === "/api/debug/queue" && request.method === "GET") {
+    handleImageTaskQueueRequest(request, response);
+    return true;
+  }
+  if (requestUrl.pathname === "/api/debug/queue/events" && request.method === "GET") {
+    handleImageTaskQueueEventsRequest(request, response);
     return true;
   }
   if (requestUrl.pathname === "/api/workflow" && request.method === "GET") {

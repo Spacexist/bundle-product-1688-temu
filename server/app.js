@@ -77,6 +77,8 @@ function createApp() {
   const providerRouter = providerRouteModule.createProviderRouter();
   providerRouter.all("/logs", adapterModule.createLegacyApiAdapter("/api/debug/logs"));
   providerRouter.all("/logs/events", adapterModule.createLegacyApiAdapter("/api/debug/logs/events"));
+  providerRouter.all("/queue", adapterModule.createLegacyApiAdapter("/api/debug/queue"));
+  providerRouter.all("/queue/events", adapterModule.createLegacyApiAdapter("/api/debug/queue/events"));
   app.use("/api/v1", providerRouter);
 
   app.use(express.json({ limit: "80mb" }));

@@ -6,7 +6,9 @@ class ConcurrencyController {
     this.getConfiguredConcurrency = typeof settings.getConcurrency === "function"
       ? settings.getConcurrency
       : null;
+    this.onChange = typeof settings.onChange === "function" ? settings.onChange : null;
     this.pendingTasks = [];
+    this.activeTasks = [];
     this.activeCount = 0;
     this.taskSequence = 0;
   }
@@ -25,13 +27,19 @@ class ConcurrencyController {
     const controller = this;
     return new Promise(function createQueuedTaskPromise(resolve, reject) {
       controller.taskSequence += 1;
-      controller.pendingTasks.push({
+      const task = {
         id: controller.taskSequence,
         execute: execute,
         metadata: metadata || {},
         resolve: resolve,
-        reject: reject
-      });
+        reject: reject,
+        state: "waiting",
+        enqueued_at: new Date().toISOString(),
+        started_at: "",
+        finished_at: ""
+      };
+      controller.pendingTasks.push(task);
+      controller.notifyChange("queued", task);
       controller.pump();
     });
   }
@@ -42,6 +50,10 @@ class ConcurrencyController {
     while (this.activeCount < concurrency && this.pendingTasks.length) {
       const task = this.pendingTasks.shift();
       this.activeCount += 1;
+      task.state = "running";
+      task.started_at = new Date().toISOString();
+      this.activeTasks.push(task);
+      this.notifyChange("started", task);
       this.startTask(task);
     }
   }
@@ -56,25 +68,73 @@ class ConcurrencyController {
       return task.execute();
     }).then(function resolveQueuedTask(result) {
       task.resolve(result);
-      controller.finishTask();
+      controller.finishTask(task, "completed");
     }, function rejectQueuedTask(error) {
       task.reject(error);
-      controller.finishTask();
+      controller.finishTask(task, "failed");
     });
   }
 
-  /** Release one active slot and continue draining the shared queue. */
-  finishTask() {
+  /** Release one active slot, record its result, and continue draining the shared queue. */
+  finishTask(task, state) {
+    for (let index = this.activeTasks.length - 1; index >= 0; index -= 1) {
+      if (this.activeTasks[index].id === task.id) {
+        this.activeTasks.splice(index, 1);
+        break;
+      }
+    }
     this.activeCount = Math.max(0, this.activeCount - 1);
+    task.state = state;
+    task.finished_at = new Date().toISOString();
     this.pump();
+    this.notifyChange("finished", task);
   }
 
-  /** Return controller state without exposing queued task payloads. */
+  /** Create a public task snapshot without exposing execution callbacks or Promise handlers. */
+  createTaskSnapshot(task) {
+    const metadata = task && task.metadata && typeof task.metadata === "object" ? task.metadata : {};
+    return {
+      id: task ? task.id : 0,
+      type: String(metadata.type || "image"),
+      request_id: String(metadata.request_id || ""),
+      state: String(task && task.state || "waiting"),
+      enqueued_at: String(task && task.enqueued_at || ""),
+      started_at: String(task && task.started_at || ""),
+      finished_at: String(task && task.finished_at || "")
+    };
+  }
+
+  /** Notify the optional queue observer after one queue state transition. */
+  notifyChange(action, task) {
+    if (!this.onChange) {
+      return;
+    }
+    try {
+      this.onChange(this.getSnapshot(), {
+        action: String(action || "update"),
+        task: this.createTaskSnapshot(task)
+      });
+    } catch (error) {
+      return;
+    }
+  }
+
+  /** Return controller state with safe active and waiting task details for diagnostics. */
   getSnapshot() {
+    const activeTasks = [];
+    const pendingTasks = [];
+    for (let index = 0; index < this.activeTasks.length; index += 1) {
+      activeTasks.push(this.createTaskSnapshot(this.activeTasks[index]));
+    }
+    for (let index = 0; index < this.pendingTasks.length; index += 1) {
+      pendingTasks.push(this.createTaskSnapshot(this.pendingTasks[index]));
+    }
     return {
       concurrency: this.getConcurrency(),
       active: this.activeCount,
-      pending: this.pendingTasks.length
+      pending: this.pendingTasks.length,
+      active_tasks: activeTasks,
+      pending_tasks: pendingTasks
     };
   }
 }

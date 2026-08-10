@@ -19,6 +19,32 @@
     button:hover, select:hover, a:hover { border-color: #38bdf8; }
     main { width: min(1500px, calc(100% - 28px)); margin: 16px auto 40px; }
     .summary { display: flex; gap: 10px; margin-bottom: 12px; color: #94a3b8; font-size: 12px; }
+    .queue-panel { margin-bottom: 14px; padding: 14px; border: 1px solid #26354e; border-radius: 12px; background: linear-gradient(135deg, #0d1b31, #0a1424); box-shadow: 0 10px 34px rgba(0, 0, 0, .16); }
+    .queue-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .queue-heading h2 { margin: 0; color: #f8fafc; font-size: 14px; }
+    .queue-heading p { margin: 4px 0 0; color: #64748b; font-size: 11px; }
+    .queue-heading-meta { display: flex; align-items: center; gap: 8px; }
+    .queue-limit { padding: 5px 8px; border: 1px solid #334155; border-radius: 999px; color: #bfdbfe; font: 11px Consolas, monospace; }
+    .queue-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+    .queue-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid #1e293b; border-radius: 8px; background: rgba(15, 23, 42, .72); }
+    .queue-stat span { color: #94a3b8; font-size: 11px; }
+    .queue-stat strong { color: #f8fafc; font: 800 16px Consolas, monospace; }
+    .queue-lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .queue-lane { min-width: 0; padding: 10px; border: 1px solid #1e293b; border-radius: 9px; background: rgba(5, 11, 22, .44); }
+    .queue-lane[data-state="running"] { border-color: rgba(34, 197, 94, .35); }
+    .queue-lane[data-state="waiting"] { border-color: rgba(245, 158, 11, .35); }
+    .queue-lane-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #cbd5e1; font-size: 11px; font-weight: 800; }
+    .queue-lane-heading span { color: #64748b; font: 10px Consolas, monospace; }
+    .queue-task-list { display: grid; gap: 6px; }
+    .queue-task { padding: 8px 9px; border-left: 3px solid #64748b; border-radius: 7px; background: #101c30; }
+    .queue-task[data-state="running"] { border-left-color: #22c55e; }
+    .queue-task[data-state="waiting"] { border-left-color: #f59e0b; }
+    .queue-task-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .queue-task-type { color: #f8fafc; font-size: 11px; font-weight: 800; }
+    .queue-task-number { color: #64748b; font: 10px Consolas, monospace; }
+    .queue-task-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: #94a3b8; font: 10px/1.4 Consolas, monospace; }
+    .queue-task-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-task-empty { padding: 12px 6px; color: #475569; font-size: 11px; text-align: center; }
     .log-list { display: grid; gap: 12px; }
     .network-card { overflow: hidden; border: 1px solid #26354e; border-left: 4px solid #64748b; border-radius: 12px; background: #0b1628; box-shadow: 0 8px 30px rgba(0, 0, 0, .12); }
     .network-card[data-status="success"] { border-left-color: #22c55e; }
@@ -55,6 +81,7 @@
       .request-summary { align-items: flex-start; flex-direction: column; gap: 4px; }
       .request-id, .time { grid-column: span 1; }
       .network-columns { grid-template-columns: 1fr; }
+      .queue-lanes { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -82,6 +109,32 @@
     </div>
   </header>
   <main>
+    <section class="queue-panel" aria-live="polite">
+      <div class="queue-heading">
+        <div>
+          <h2>Images Queue</h2>
+          <p>edits / gen 共用并发，按进入顺序执行</p>
+        </div>
+        <div class="queue-heading-meta">
+          <span id="queueLiveStatus" class="status">队列连接中</span>
+          <span id="queueConcurrency" class="queue-limit">并发 3 / 3</span>
+        </div>
+      </div>
+      <div class="queue-stats">
+        <div class="queue-stat"><span>执行中</span><strong id="queueActiveCount">0</strong></div>
+        <div class="queue-stat"><span>排队中</span><strong id="queuePendingCount">0</strong></div>
+      </div>
+      <div class="queue-lanes">
+        <section class="queue-lane" data-state="running">
+          <div class="queue-lane-heading"><span>执行中</span><span id="queueActiveLabel">0</span></div>
+          <div id="queueActiveList" class="queue-task-list"></div>
+        </section>
+        <section class="queue-lane" data-state="waiting">
+          <div class="queue-lane-heading"><span>排队等待</span><span id="queuePendingLabel">0</span></div>
+          <div id="queuePendingList" class="queue-task-list"></div>
+        </section>
+      </div>
+    </section>
     <div class="summary">
       <span id="logCount">0 个请求</span>
       <span id="flowSummary">前端请求 0 · 中转 0 · 响应 0 · 广播 0</span>
@@ -101,6 +154,22 @@
     var pauseButton = document.getElementById("pauseButton");
     var clearButton = document.getElementById("clearButton");
     var connectionStatus = document.getElementById("connectionStatus");
+    var queueLiveStatus = document.getElementById("queueLiveStatus");
+    var queueConcurrency = document.getElementById("queueConcurrency");
+    var queueActiveCount = document.getElementById("queueActiveCount");
+    var queuePendingCount = document.getElementById("queuePendingCount");
+    var queueActiveLabel = document.getElementById("queueActiveLabel");
+    var queuePendingLabel = document.getElementById("queuePendingLabel");
+    var queueActiveList = document.getElementById("queueActiveList");
+    var queuePendingList = document.getElementById("queuePendingList");
+    var queueEventSource = null;
+    var queueState = {
+      concurrency: 3,
+      active: 0,
+      pending: 0,
+      active_tasks: [],
+      pending_tasks: []
+    };
 
     /** Update the visible state of the live SSE connection. */
     function setConnectionStatus(isOnline, text) {
@@ -120,6 +189,102 @@
     function formatDurationSeconds(durationMs) {
       var safeDuration = Math.max(0, Number(durationMs) || 0);
       return "耗时 " + (safeDuration / 1000).toFixed(2) + " 秒";
+    }
+
+    /** Format one queue timestamp for the compact task card. */
+    function formatQueueTime(value) {
+      if (!value) {
+        return "时间未知";
+      }
+      var date = new Date(String(value));
+      if (!Number.isFinite(date.getTime())) {
+        return "时间未知";
+      }
+      return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    /** Return a readable label for one edits or generation queue task. */
+    function getQueueTaskLabel(task) {
+      return String(task && task.type || "image").toLowerCase() === "gen" ? "GEN 生图" : "EDITS 图片编辑";
+    }
+
+    /** Create one task card for the active or waiting image queue lane. */
+    function createQueueTaskElement(task) {
+      var card = document.createElement("article");
+      var head = document.createElement("div");
+      var type = document.createElement("span");
+      var number = document.createElement("span");
+      var meta = document.createElement("div");
+      var request = document.createElement("span");
+      var time = document.createElement("span");
+      var state = String(task && task.state || "waiting");
+      card.className = "queue-task";
+      card.dataset.state = state;
+      head.className = "queue-task-head";
+      type.className = "queue-task-type";
+      type.textContent = getQueueTaskLabel(task);
+      number.className = "queue-task-number";
+      number.textContent = "#" + String(task && task.id || "-");
+      meta.className = "queue-task-meta";
+      request.textContent = "请求 " + String(task && task.request_id || "-");
+      time.textContent = state === "running"
+        ? "开始 " + formatQueueTime(task && task.started_at)
+        : "进入 " + formatQueueTime(task && task.enqueued_at);
+      head.appendChild(type);
+      head.appendChild(number);
+      meta.appendChild(request);
+      meta.appendChild(time);
+      card.appendChild(head);
+      card.appendChild(meta);
+      return card;
+    }
+
+    /** Render the active and waiting image queue lanes from the latest snapshot. */
+    function renderQueue() {
+      var activeTasks = Array.isArray(queueState.active_tasks) ? queueState.active_tasks : [];
+      var pendingTasks = Array.isArray(queueState.pending_tasks) ? queueState.pending_tasks : [];
+      var concurrency = Math.max(1, Number(queueState.concurrency) || 3);
+      queueActiveCount.textContent = String(activeTasks.length);
+      queuePendingCount.textContent = String(pendingTasks.length);
+      queueActiveLabel.textContent = activeTasks.length + " / " + concurrency;
+      queuePendingLabel.textContent = String(pendingTasks.length);
+      queueConcurrency.textContent = "并发 " + activeTasks.length + " / " + concurrency;
+      queueActiveList.textContent = "";
+      queuePendingList.textContent = "";
+      for (var activeIndex = 0; activeIndex < activeTasks.length; activeIndex += 1) {
+        queueActiveList.appendChild(createQueueTaskElement(activeTasks[activeIndex]));
+      }
+      for (var pendingIndex = 0; pendingIndex < pendingTasks.length; pendingIndex += 1) {
+        queuePendingList.appendChild(createQueueTaskElement(pendingTasks[pendingIndex]));
+      }
+      if (!activeTasks.length) {
+        var activeEmpty = document.createElement("div");
+        activeEmpty.className = "queue-task-empty";
+        activeEmpty.textContent = "暂无执行任务";
+        queueActiveList.appendChild(activeEmpty);
+      }
+      if (!pendingTasks.length) {
+        var pendingEmpty = document.createElement("div");
+        pendingEmpty.className = "queue-task-empty";
+        pendingEmpty.textContent = "暂无排队任务";
+        queuePendingList.appendChild(pendingEmpty);
+      }
+    }
+
+    /** Apply one queue API or SSE payload to the live queue panel. */
+    function applyQueuePayload(payload) {
+      var nextState = payload && payload.queue ? payload.queue : payload;
+      if (!nextState || typeof nextState !== "object") {
+        return;
+      }
+      queueState = {
+        concurrency: Number(nextState.concurrency) || 3,
+        active: Number(nextState.active) || 0,
+        pending: Number(nextState.pending) || 0,
+        active_tasks: Array.isArray(nextState.active_tasks) ? nextState.active_tasks : [],
+        pending_tasks: Array.isArray(nextState.pending_tasks) ? nextState.pending_tasks : []
+      };
+      renderQueue();
     }
 
     /** Parse the server local timestamp for pending request duration updates. */
@@ -439,6 +604,21 @@
       }
     }
 
+    /** Load the current shared image queue snapshot before opening its live stream. */
+    async function loadQueueState() {
+      try {
+        var response = await fetch("/api/v1/queue", { cache: "no-store" });
+        var payload = await response.json();
+        if (!response.ok || !payload || payload.ok === false) {
+          throw new Error("队列状态读取失败");
+        }
+        applyQueuePayload(payload.queue);
+      } catch (error) {
+        queueLiveStatus.className = "status";
+        queueLiveStatus.textContent = "队列读取失败";
+      }
+    }
+
     /** Handle one log message received from the server stream. */
     function handleServerLogMessage(event) {
       try {
@@ -458,12 +638,46 @@
       setConnectionStatus(false, "正在重连");
     }
 
+    /** Handle one live queue snapshot received from the Server. */
+    function handleQueueMessage(event) {
+      try {
+        var payload = JSON.parse(event.data);
+        applyQueuePayload(payload);
+      } catch (error) {
+        queueLiveStatus.className = "status";
+        queueLiveStatus.textContent = "队列格式错误";
+      }
+    }
+
+    /** Mark the shared image queue stream as connected. */
+    function handleQueueOpen() {
+      queueLiveStatus.className = "status is-online";
+      queueLiveStatus.textContent = "队列实时";
+    }
+
+    /** Mark the shared image queue stream as reconnecting. */
+    function handleQueueError() {
+      queueLiveStatus.className = "status";
+      queueLiveStatus.textContent = "队列重连中";
+    }
+
     /** Connect the page to the server-side live log event stream. */
     function connectServerLogs() {
       var eventSource = new EventSource("/api/v1/logs/events");
       eventSource.onmessage = handleServerLogMessage;
       eventSource.onopen = handleServerLogOpen;
       eventSource.onerror = handleServerLogError;
+    }
+
+    /** Connect the page to the shared image queue event stream. */
+    function connectImageQueue() {
+      if (queueEventSource) {
+        queueEventSource.close();
+      }
+      queueEventSource = new EventSource("/api/v1/queue/events");
+      queueEventSource.onmessage = handleQueueMessage;
+      queueEventSource.onopen = handleQueueOpen;
+      queueEventSource.onerror = handleQueueError;
     }
 
     /** Re-render grouped requests after the status filter changes. */
@@ -495,7 +709,9 @@
     /** Load history first and then connect the live grouped request stream. */
     async function initializeLogPage() {
       await loadLogHistory();
+      await loadQueueState();
       connectServerLogs();
+      connectImageQueue();
     }
 
     statusFilter.addEventListener("change", handleStatusFilterChange);
