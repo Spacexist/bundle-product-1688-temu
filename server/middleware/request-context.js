@@ -8,6 +8,16 @@ function attachRequestContext(request, response, next) {
     next();
     return;
   }
+  const longLivedEventPaths = [
+    "/api/v1/events",
+    "/api/v1/workflow/events",
+    "/v1/api/events",
+    "/v1/api/workflow/events"
+  ];
+  if (longLivedEventPaths.indexOf(pathname) >= 0) {
+    next();
+    return;
+  }
   if ((method === "GET" || method === "HEAD") && pathname.indexOf("/api/v1/cache/image/") === 0) {
     next();
     return;

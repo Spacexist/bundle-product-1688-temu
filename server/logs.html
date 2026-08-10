@@ -165,8 +165,20 @@
       }
     }
 
+    /** Return whether one entry belongs to an intentionally long-lived SSE request. */
+    function isLongLivedEventEntry(entry) {
+      var label = String(entry && entry.label || "");
+      return label.indexOf("GET /api/v1/events") >= 0
+        || label.indexOf("GET /api/v1/workflow/events") >= 0
+        || label.indexOf("GET /v1/api/events") >= 0
+        || label.indexOf("GET /v1/api/workflow/events") >= 0;
+    }
+
     /** Add one raw event to the matching request group. */
     function groupLogEntry(entry) {
+      if (isLongLivedEventEntry(entry)) {
+        return;
+      }
       var requestId = String(entry && entry.request_id || "-");
       var group = findRequestGroup(requestId);
       if (!group) {
@@ -252,10 +264,10 @@
       status.className = "status-code";
       status.textContent = group.status === null ? "PENDING" : String(group.status);
       duration.className = "time";
-      duration.textContent = formatDurationSeconds(group.duration_ms === null ? Date.now() - group.started_ms : group.duration_ms);
       if (group.duration_ms === null) {
-        duration.className = "time pending-duration";
-        duration.dataset.startedMs = String(group.started_ms);
+        duration.textContent = "请求中";
+      } else {
+        duration.textContent = formatDurationSeconds(group.duration_ms);
       }
       identity.className = "request-id";
       identity.textContent = group.request_id;
@@ -372,18 +384,6 @@
       renderLogs();
     }
 
-    /** Refresh only pending duration labels without rebuilding the log cards. */
-    function refreshPendingDurations() {
-      if (isPaused) {
-        return;
-      }
-      var durations = document.querySelectorAll(".pending-duration");
-      for (var index = 0; index < durations.length; index += 1) {
-        var duration = durations[index];
-        duration.textContent = formatDurationSeconds(Date.now() - Number(duration.dataset.startedMs));
-      }
-    }
-
     /** Load history first and then connect the live grouped request stream. */
     async function initializeLogPage() {
       await loadLogHistory();
@@ -394,7 +394,6 @@
     pauseButton.addEventListener("click", handlePauseClick);
     clearButton.addEventListener("click", handleClearClick);
     window.addEventListener("load", initializeLogPage);
-    window.setInterval(refreshPendingDurations, 1000);
   </script>
 </body>
 </html>

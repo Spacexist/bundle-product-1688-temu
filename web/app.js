@@ -1605,6 +1605,7 @@ const app = createApp({
         return;
       }
       this.mergeAliSkuIntoTemuRows(record, groupName, "", reference.source_sku);
+      this.saveProductModule(record, "skus");
       this.dragSkuReference = null;
       this.dragDropTarget = null;
     },
@@ -1620,6 +1621,7 @@ const app = createApp({
         return;
       }
       this.mergeAliSkuIntoTemuRows(record, groupName, optionValue, reference.source_sku);
+      this.saveProductModule(record, "skus");
       this.dragSkuReference = null;
       this.dragDropTarget = null;
     },
@@ -1634,6 +1636,7 @@ const app = createApp({
         return;
       }
       this.mergeAliSkuIntoTemuSkuCell(record, targetSku, rowIndex, groupName, reference.source_sku);
+      this.saveProductModule(record, "skus");
       this.endAliDrag();
     },
 
@@ -2735,6 +2738,7 @@ const app = createApp({
       }
       this.endAliImageDrag();
       this.setStatus(imageType === "gallery" ? "已调整主图顺序。" : "已调整详情图顺序。", "success");
+      this.saveProductModule(record, "images");
     },
 
     /** Append one unique image to a Temu product gallery. */
@@ -2814,6 +2818,7 @@ const app = createApp({
         this.setStatus(targetIndex === undefined
           ? (added ? "已将 1688 图片添加到 Temu 主图。" : "已将已有图片设为 Temu 主图。")
           : (added ? "已将 1688 图片插入 Temu 主图列表。" : "已调整 Temu 主图顺序。"), "success");
+        this.saveProductModule(record, "images");
       }
       this.endAliImageDrag();
     },
@@ -2834,6 +2839,7 @@ const app = createApp({
         this.setStatus(targetIndex === undefined
           ? "已将 1688 图片添加到 Temu 商品详情。"
           : (added ? "已将 1688 图片插入 Temu 详情图列表。" : "已调整 Temu 详情图顺序。"), "success");
+        this.saveProductModule(record, "images");
       }
       this.endAliImageDrag();
     },
@@ -2850,6 +2856,7 @@ const app = createApp({
         const afterCount = this.skuImageUrls(targetSku).length;
         if (afterCount > beforeCount) {
           this.setStatus("已将 1688 图片添加到 Temu SKU #" + (Number(rowIndex) + 1) + "。", "success");
+          this.saveProductModule(record, "skus");
         }
       }
       this.endAliImageDrag();
@@ -2948,6 +2955,7 @@ const app = createApp({
         return;
       }
       this.appendAliSkuToTemuField(record, groupName, sourceSku);
+      this.saveProductModule(record, "skus");
       this.dragSkuReference = null;
       this.dragDropTarget = null;
     },
