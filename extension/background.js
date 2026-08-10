@@ -1,6 +1,6 @@
 importScripts("collector-temu.js", "collector-1688.js");
 
-var unifiedBatchStorageKey = "unifiedBatchRecords";
+var unifiedCacheEndpoint = "http://127.0.0.1:5173/api/cache";
 
 /** Handle collection requests from either platform page. */
 chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(message, sender, sendResponse) {
@@ -207,37 +207,29 @@ function getNextUnifiedPlatformId(batch, platform) {
   return maxPlatformId > 0 ? maxPlatformId + 1 : samePlatformCount + 1;
 }
 
-/** Read the persistent unified JSON batch from chrome.storage.local. */
+/** Read the unified JSON batch from the single local cache service. */
 function getUnifiedBatchData() {
-  return new Promise(function resolveUnifiedBatch(resolve, reject) {
-    var defaults = {};
-    defaults[unifiedBatchStorageKey] = [];
-    chrome.storage.local.get(defaults, function handleUnifiedBatch(items) {
-      var lastError = chrome.runtime && chrome.runtime.lastError;
-      if (lastError) {
-        reject(new Error(lastError.message));
-        return;
-      }
-      resolve(items && Array.isArray(items[unifiedBatchStorageKey])
-        ? items[unifiedBatchStorageKey]
-        : []);
-    });
+  return fetch(unifiedCacheEndpoint, { cache: "no-store" }).then(function handleCacheRead(response) {
+    if (!response.ok) {
+      throw new Error("无法读取本地 cache，请先运行 npm run dev。 ");
+    }
+    return response.json();
+  }).then(function handleCachePayload(payload) {
+    return payload && Array.isArray(payload.records) ? payload.records : [];
   });
 }
 
-/** Write the unified JSON batch to chrome.storage.local. */
+/** Write the complete unified JSON batch to the single local cache service. */
 function saveUnifiedBatchData(batch) {
-  return new Promise(function resolveUnifiedSave(resolve, reject) {
-    var values = {};
-    values[unifiedBatchStorageKey] = batch;
-    chrome.storage.local.set(values, function handleUnifiedSave() {
-      var lastError = chrome.runtime && chrome.runtime.lastError;
-      if (lastError) {
-        reject(new Error(lastError.message));
-        return;
-      }
-      resolve();
-    });
+  return fetch(unifiedCacheEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ records: Array.isArray(batch) ? batch : [] })
+  }).then(function handleCacheResponse(response) {
+    if (!response.ok) {
+      throw new Error("写入本地 cache 失败，请确认 npm run dev 正在运行。 ");
+    }
+    return response.json();
   });
 }
 

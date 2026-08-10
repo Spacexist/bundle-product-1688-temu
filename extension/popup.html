@@ -9,8 +9,9 @@
   <body>
     <main class="panel">
       <h1>Temu + 1688 统一采集</h1>
-      <p class="hint">在 Temu 或 1688 商品详情页点击页面右侧采集按钮。</p>
+      <p class="hint">先运行 npm run dev，再在 Temu 或 1688 商品详情页点击采集；所有数据统一写入 cache。</p>
       <button id="collectButton" type="button">采集当前商品</button>
+      <button id="renderButton" class="secondary" type="button">打开实时渲染</button>
       <button id="jsonExportButton" class="secondary" type="button">导出统一 JSON</button>
       <button id="batchExportButton" class="secondary" type="button">导出统一 Excel</button>
       <button id="clearBatchButton" class="danger" type="button">清空统一批次</button>

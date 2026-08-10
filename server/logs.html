@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Server 实时收发日志</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #07101f; color: #dbeafe; }
+    header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid #1e293b; background: rgba(7, 16, 31, .94); backdrop-filter: blur(12px); }
+    h1 { margin: 0; font-size: 17px; }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: #94a3b8; font-size: 12px; }
+    .status::before { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; content: ""; }
+    .status.is-online::before { background: #22c55e; box-shadow: 0 0 12px rgba(34, 197, 94, .65); }
+    .actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+    button, select, a { min-height: 34px; padding: 7px 11px; border: 1px solid #334155; border-radius: 8px; background: #111c2f; color: #dbeafe; font: inherit; font-size: 12px; text-decoration: none; }
+    button { cursor: pointer; }
+    button:hover, select:hover, a:hover { border-color: #38bdf8; }
+    main { width: min(1500px, calc(100% - 28px)); margin: 16px auto 40px; }
+    .summary { display: flex; gap: 10px; margin-bottom: 12px; color: #94a3b8; font-size: 12px; }
+    .log-list { display: grid; gap: 12px; }
+    .network-card { overflow: hidden; border: 1px solid #26354e; border-left: 4px solid #64748b; border-radius: 12px; background: #0b1628; box-shadow: 0 8px 30px rgba(0, 0, 0, .12); }
+    .network-card[data-status="success"] { border-left-color: #22c55e; }
+    .network-card[data-status="error"] { border-left-color: #ef4444; }
+    .network-card[data-status="pending"] { border-left-color: #f59e0b; }
+    .network-head { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 100px 160px; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #1e293b; background: #101c30; }
+    .request-name { color: #f8fafc; font-size: 13px; font-weight: 800; }
+    .time, .request-id { color: #94a3b8; font: 11px/1.5 Consolas, monospace; word-break: break-all; }
+    .status-code { display: inline-flex; width: fit-content; min-width: 54px; justify-content: center; padding: 4px 8px; border-radius: 999px; background: #334155; color: #e2e8f0; font: 800 11px/1.3 Consolas, monospace; }
+    .network-card[data-status="success"] .status-code { background: rgba(34, 197, 94, .16); color: #86efac; }
+    .network-card[data-status="error"] .status-code { background: rgba(239, 68, 68, .16); color: #fca5a5; }
+    .network-card[data-status="pending"] .status-code { background: rgba(245, 158, 11, .16); color: #fcd34d; }
+    .network-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: #1e293b; }
+    .network-phase { min-width: 0; padding: 12px; background: #0b1628; }
+    .phase-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #93c5fd; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+    .phase-count { color: #64748b; font: 10px Consolas, monospace; }
+    .event-block + .event-block { margin-top: 9px; padding-top: 9px; border-top: 1px dashed #26354e; }
+    .event-label { margin-bottom: 5px; color: #cbd5e1; font: 700 10px/1.4 Consolas, monospace; word-break: break-word; }
+    pre { max-height: 360px; margin: 0; overflow: auto; padding: 10px; border-radius: 7px; background: #050b16; color: #bfdbfe; font: 11px/1.55 Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+    .phase-empty { padding: 26px 8px; color: #475569; font-size: 11px; text-align: center; }
+    .empty { padding: 80px 20px; border: 1px dashed #334155; border-radius: 12px; color: #64748b; text-align: center; }
+    @media (max-width: 800px) {
+      header { align-items: flex-start; flex-wrap: wrap; }
+      .actions { width: 100%; margin-left: 0; overflow-x: auto; }
+      .network-head { grid-template-columns: 1fr 70px; }
+      .request-id, .time { grid-column: span 1; }
+      .network-columns { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Server 实时收发日志</h1>
+    <span id="connectionStatus" class="status">连接中</span>
+    <div class="actions">
+      <select id="statusFilter" aria-label="请求状态">
+        <option value="">全部请求</option>
+        <option value="success">成功</option>
+        <option value="error">失败</option>
+        <option value="pending">进行中</option>
+      </select>
+      <button id="pauseButton" type="button">暂停滚动</button>
+      <button id="clearButton" type="button">清空显示</button>
+      <a href="/">返回工作台</a>
+    </div>
+  </header>
+  <main>
+    <div class="summary">
+      <span id="logCount">0 个请求</span>
+      <span>API Key 已脱敏，Base64 仅显示类型与长度</span>
+    </div>
+    <div id="logList" class="log-list"></div>
+  </main>
+  <script>
+    var logEntries = [];
+    var requestGroups = [];
+    var isPaused = false;
+    var statusFilter = document.getElementById("statusFilter");
+    var logList = document.getElementById("logList");
+    var logCount = document.getElementById("logCount");
+    var pauseButton = document.getElementById("pauseButton");
+    var clearButton = document.getElementById("clearButton");
+    var connectionStatus = document.getElementById("connectionStatus");
+
+    /** Update the visible state of the live SSE connection. */
+    function setConnectionStatus(isOnline, text) {
+      connectionStatus.className = isOnline ? "status is-online" : "status";
+      connectionStatus.textContent = text;
+    }
+
+    /** Convert one structured payload into readable JSON text. */
+    function formatPayload(payload) {
+      if (payload === null || payload === undefined) {
+        return "";
+      }
+      return JSON.stringify(payload, null, 2);
+    }
+
+    /** Return the grouped display status for one complete or pending request. */
+    function getRequestGroupStatus(group) {
+      if (!group || group.status === null || group.status === undefined) {
+        return "pending";
+      }
+      return Number(group.status) >= 400 ? "error" : "success";
+    }
+
+    /** Find one request group by request identifier without creating duplicates. */
+    function findRequestGroup(requestId) {
+      for (var index = 0; index < requestGroups.length; index += 1) {
+        if (requestGroups[index].request_id === requestId) {
+          return requestGroups[index];
+        }
+      }
+      return null;
+    }
+
+    /** Create one Network-style request group for incoming server events. */
+    function createRequestGroup(entry) {
+      var group = {
+        request_id: String(entry.request_id || "-"),
+        first_time: String(entry.time || ""),
+        last_time: String(entry.time || ""),
+        label: "等待请求信息",
+        status: null,
+        duration_ms: null,
+        events: []
+      };
+      requestGroups.push(group);
+      return group;
+    }
+
+    /** Apply one raw server event to its existing Network-style request group. */
+    function applyEntryToRequestGroup(group, entry) {
+      group.events.push(entry);
+      group.last_time = String(entry.time || group.last_time);
+      if (entry.direction === "RECEIVE") {
+        group.label = String(entry.label || group.label);
+      }
+      if (entry.direction === "DONE" && entry.payload) {
+        group.status = entry.payload.status;
+        group.duration_ms = entry.payload.duration_ms;
+      }
+      if (entry.direction === "SEND" && group.status === null) {
+        var statusMatch = /->\s*(\d{3})/.exec(String(entry.label || ""));
+        if (statusMatch) {
+          group.status = Number(statusMatch[1]);
+        }
+      }
+    }
+
+    /** Add one raw event to the matching request group. */
+    function groupLogEntry(entry) {
+      var requestId = String(entry && entry.request_id || "-");
+      var group = findRequestGroup(requestId);
+      if (!group) {
+        group = createRequestGroup(entry || {});
+      }
+      applyEntryToRequestGroup(group, entry || {});
+    }
+
+    /** Rebuild every Network-style request group from retained raw history. */
+    function rebuildRequestGroups() {
+      requestGroups = [];
+      for (var index = 0; index < logEntries.length; index += 1) {
+        groupLogEntry(logEntries[index]);
+      }
+    }
+
+    /** Create one request, upstream, or response column for a grouped request. */
+    function createPhaseElement(title, directions, group) {
+      var section = document.createElement("section");
+      var heading = document.createElement("div");
+      var titleElement = document.createElement("span");
+      var countElement = document.createElement("span");
+      var count = 0;
+      section.className = "network-phase";
+      heading.className = "phase-title";
+      titleElement.textContent = title;
+      countElement.className = "phase-count";
+      heading.appendChild(titleElement);
+      heading.appendChild(countElement);
+      section.appendChild(heading);
+      for (var index = 0; index < group.events.length; index += 1) {
+        var entry = group.events[index];
+        if (directions.indexOf(entry.direction) < 0) {
+          continue;
+        }
+        var eventBlock = document.createElement("div");
+        var eventLabel = document.createElement("div");
+        var payloadText = formatPayload(entry.payload);
+        eventBlock.className = "event-block";
+        eventLabel.className = "event-label";
+        eventLabel.textContent = String(entry.direction || "") + " · " + String(entry.label || "");
+        eventBlock.appendChild(eventLabel);
+        if (payloadText) {
+          var payload = document.createElement("pre");
+          payload.textContent = payloadText;
+          eventBlock.appendChild(payload);
+        }
+        section.appendChild(eventBlock);
+        count += 1;
+      }
+      countElement.textContent = String(count);
+      if (!count) {
+        var empty = document.createElement("div");
+        empty.className = "phase-empty";
+        empty.textContent = "暂无";
+        section.appendChild(empty);
+      }
+      return section;
+    }
+
+    /** Create one Network-style card containing request and response together. */
+    function createNetworkCard(group) {
+      var card = document.createElement("article");
+      var head = document.createElement("div");
+      var name = document.createElement("div");
+      var status = document.createElement("div");
+      var duration = document.createElement("div");
+      var identity = document.createElement("div");
+      var columns = document.createElement("div");
+      var groupStatus = getRequestGroupStatus(group);
+      card.className = "network-card";
+      card.dataset.status = groupStatus;
+      head.className = "network-head";
+      name.className = "request-name";
+      name.textContent = group.label;
+      status.className = "status-code";
+      status.textContent = group.status === null ? "PENDING" : String(group.status);
+      duration.className = "time";
+      duration.textContent = group.duration_ms === null ? group.last_time : String(group.duration_ms) + " ms";
+      identity.className = "request-id";
+      identity.textContent = group.request_id;
+      head.appendChild(name);
+      head.appendChild(status);
+      head.appendChild(duration);
+      head.appendChild(identity);
+      columns.className = "network-columns";
+      columns.appendChild(createPhaseElement("Request", ["RECEIVE", "RECEIVE BODY"], group));
+      columns.appendChild(createPhaseElement("Upstream", ["OUTBOUND", "UPSTREAM"], group));
+      columns.appendChild(createPhaseElement("Response", ["SEND", "DONE"], group));
+      card.appendChild(head);
+      card.appendChild(columns);
+      return card;
+    }
+
+    /** Render one card per request instead of one row per event. */
+    function renderLogs() {
+      var selectedStatus = statusFilter.value;
+      var visibleCount = 0;
+      logList.textContent = "";
+      for (var index = requestGroups.length - 1; index >= 0; index -= 1) {
+        var group = requestGroups[index];
+        if (selectedStatus && getRequestGroupStatus(group) !== selectedStatus) {
+          continue;
+        }
+        logList.appendChild(createNetworkCard(group));
+        visibleCount += 1;
+      }
+      logCount.textContent = visibleCount + " 个请求";
+      if (!visibleCount) {
+        var empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "等待 Server 收发请求…";
+        logList.appendChild(empty);
+      }
+    }
+
+    /** Add one live entry while retaining a bounded browser-side history. */
+    function appendLogEntry(entry) {
+      logEntries.push(entry);
+      if (logEntries.length > 500) {
+        logEntries.splice(0, logEntries.length - 500);
+        rebuildRequestGroups();
+      } else {
+        groupLogEntry(entry);
+      }
+      if (!isPaused) {
+        renderLogs();
+      }
+    }
+
+    /** Load the current in-memory server log history. */
+    async function loadLogHistory() {
+      try {
+        var response = await fetch("/api/debug/logs", { cache: "no-store" });
+        var payload = await response.json();
+        logEntries = payload && Array.isArray(payload.logs) ? payload.logs : [];
+        rebuildRequestGroups();
+        renderLogs();
+      } catch (error) {
+        setConnectionStatus(false, "历史读取失败");
+      }
+    }
+
+    /** Handle one log message received from the server stream. */
+    function handleServerLogMessage(event) {
+      try {
+        appendLogEntry(JSON.parse(event.data));
+      } catch (error) {
+        setConnectionStatus(false, "日志格式错误");
+      }
+    }
+
+    /** Mark the live log stream as connected. */
+    function handleServerLogOpen() {
+      setConnectionStatus(true, "实时连接");
+    }
+
+    /** Mark the live log stream as reconnecting after a connection error. */
+    function handleServerLogError() {
+      setConnectionStatus(false, "正在重连");
+    }
+
+    /** Connect the page to the server-side live log event stream. */
+    function connectServerLogs() {
+      var eventSource = new EventSource("/api/debug/logs/events");
+      eventSource.onmessage = handleServerLogMessage;
+      eventSource.onopen = handleServerLogOpen;
+      eventSource.onerror = handleServerLogError;
+    }
+
+    /** Re-render grouped requests after the status filter changes. */
+    function handleStatusFilterChange() {
+      renderLogs();
+    }
+
+    /** Toggle live rendering without disconnecting from the server. */
+    function handlePauseClick() {
+      isPaused = !isPaused;
+      pauseButton.textContent = isPaused ? "继续滚动" : "暂停滚动";
+      if (!isPaused) {
+        renderLogs();
+      }
+    }
+
+    /** Clear only the current browser display while keeping future logs live. */
+    function handleClearClick() {
+      logEntries = [];
+      requestGroups = [];
+      renderLogs();
+    }
+
+    /** Load history first and then connect the live grouped request stream. */
+    async function initializeLogPage() {
+      await loadLogHistory();
+      connectServerLogs();
+    }
+
+    statusFilter.addEventListener("change", handleStatusFilterChange);
+    pauseButton.addEventListener("click", handlePauseClick);
+    clearButton.addEventListener("click", handleClearClick);
+    window.addEventListener("load", initializeLogPage);
+  </script>
+</body>
+</html>

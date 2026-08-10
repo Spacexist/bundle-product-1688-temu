@@ -1,16 +1,18 @@
 var collectButton = document.getElementById("collectButton");
+var renderButton = document.getElementById("renderButton");
 var jsonExportButton = document.getElementById("jsonExportButton");
 var batchExportButton = document.getElementById("batchExportButton");
 var clearBatchButton = document.getElementById("clearBatchButton");
 var batchCountElement = document.getElementById("batchCount");
 var statusElement = document.getElementById("status");
-var batchStorageKey = "unifiedBatchRecords";
+var unifiedCacheEndpoint = "http://127.0.0.1:5173/api/cache";
 
 document.addEventListener("DOMContentLoaded", initializePopup);
 
 /** 初始化扩展弹窗。 */
 function initializePopup() {
   collectButton.addEventListener("click", handleCollectClick);
+  renderButton.addEventListener("click", handleRenderButtonClick);
   jsonExportButton.addEventListener("click", handleJsonExportClick);
   batchExportButton.addEventListener("click", handleBatchExportClick);
   clearBatchButton.addEventListener("click", handleClearBatchClick);
@@ -34,6 +36,11 @@ async function handleCollectClick() {
   } finally {
     collectButton.disabled = false;
   }
+}
+
+/** Open the local Vue workbench in real-time cache mode. */
+function handleRenderButtonClick() {
+  chrome.tabs.create({ url: "http://127.0.0.1:5173/?mode=realtime" });
 }
 
 /** Collect the active Temu or 1688 tab through the unified background worker. */
@@ -199,89 +206,42 @@ function removeUnifiedHomeCategoryPrefix(value) {
   return text;
 }
 
-/** 从 chrome.storage.local 读取 JSON 批次。 */
+/** 从本地 cache 服务读取 JSON 批次。 */
 function getBatchData() {
-  return new Promise(function (resolve, reject) {
-    var defaults = {};
-    defaults[batchStorageKey] = [];
-    chrome.storage.local.get(defaults, function (items) {
-      var lastError = chrome.runtime && chrome.runtime.lastError;
-      if (lastError) {
-        reject(new Error(lastError.message));
-        return;
-      }
-      var rawBatch = items && Array.isArray(items[batchStorageKey]) ? items[batchStorageKey] : [];
-      var batch = [];
-      var nextMainId = getNextMainId(rawBatch);
-      var nextPlatformIds = {};
-      var changed = false;
-      for (var index = 0; index < rawBatch.length; index += 1) {
-        var rawRecord = rawBatch[index] || {};
-        var mainId = Number(rawRecord.main_id || rawRecord.mainid);
-        if (!Number.isFinite(mainId) || mainId <= 0) {
-          mainId = nextMainId;
-          nextMainId += 1;
-          changed = true;
-        }
-        var platform = rawRecord.platform || "";
-        if (!Object.prototype.hasOwnProperty.call(nextPlatformIds, platform)) {
-          nextPlatformIds[platform] = getNextPlatformId(rawBatch, platform);
-        }
-        var platformId = getStoredPlatformId(rawRecord);
-        if (!platformId) {
-          platformId = nextPlatformIds[platform];
-          nextPlatformIds[platform] += 1;
-          changed = true;
-        } else if (platformId >= nextPlatformIds[platform]) {
-          nextPlatformIds[platform] = platformId + 1;
-        }
-        if (Object.keys(rawRecord)[0] !== "main_id"
-          || rawRecord.mainid !== mainId
-          || rawRecord.platform_id !== platformId
-          || Object.prototype.hasOwnProperty.call(rawRecord, "temu_front_category")
-          || Object.prototype.hasOwnProperty.call(rawRecord, "temu_backend_category_ids")) {
-          changed = true;
-        }
-        batch.push(createStagedData(rawRecord, mainId, platformId));
-      }
-      if (changed) {
-        saveBatchData(batch).then(function () {
-          resolve(batch);
-        }).catch(reject);
-        return;
-      }
-      resolve(batch);
-    });
+  return fetch(unifiedCacheEndpoint, { cache: "no-store" }).then(function handleCacheRead(response) {
+    if (!response.ok) {
+      throw new Error("无法读取本地 cache，请先运行 npm run dev。 ");
+    }
+    return response.json();
+  }).then(function handleCachePayload(payload) {
+    return payload && Array.isArray(payload.records) ? payload.records : [];
   });
 }
 
-/** 把 JSON 批次写入 chrome.storage.local。 */
+/** 把 JSON 批次直接写入本地 cache 服务。 */
 function saveBatchData(batch) {
-  return new Promise(function (resolve, reject) {
-    var values = {};
-    values[batchStorageKey] = batch;
-    chrome.storage.local.set(values, function () {
-      var lastError = chrome.runtime && chrome.runtime.lastError;
-      if (lastError) {
-        reject(new Error(lastError.message));
-        return;
-      }
-      resolve();
-    });
+  return fetch(unifiedCacheEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ records: Array.isArray(batch) ? batch : [] })
+  }).then(function handleCacheResponse(response) {
+    if (!response.ok) {
+      throw new Error("写入本地 cache 失败，请确认 npm run dev 正在运行。 ");
+    }
+    return response.json();
   });
 }
 
 /** 清空当前 JSON 批次。 */
 function clearBatchData() {
-  return new Promise(function (resolve, reject) {
-    chrome.storage.local.remove(batchStorageKey, function () {
-      var lastError = chrome.runtime && chrome.runtime.lastError;
-      if (lastError) {
-        reject(new Error(lastError.message));
-        return;
-      }
-      resolve();
-    });
+  return fetch(unifiedCacheEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ records: [] })
+  }).then(function handleCacheResponse(response) {
+    if (!response.ok) {
+      throw new Error("清空本地 cache 失败。 ");
+    }
   });
 }
 
@@ -1238,7 +1198,8 @@ function getUnifiedSkuRows(record) {
         price: eightItem.discountPrice || eightItem.price || "",
         originalPrice: eightItem.price || "",
         stock: eightItem.stock,
-        imageUrl: eightItem.imageUrl || ""
+        imageUrl: eightItem.imageUrl || "",
+        imageUrls: Array.isArray(eightItem.imageUrls) ? eightItem.imageUrls : eightItem.imageUrl ? [eightItem.imageUrl] : []
       });
     }
     return result;
@@ -1252,7 +1213,8 @@ function getUnifiedSkuRows(record) {
       price: temuItem.salePrice !== undefined ? temuItem.salePrice : temuItem.normalPriceStr,
       originalPrice: temuItem.normalPriceStr || "",
       stock: temuItem.stockQuantity,
-      imageUrl: temuItem.thumbUrl || ""
+      imageUrl: temuItem.thumbUrl || "",
+      imageUrls: Array.isArray(temuItem.imageUrls) ? temuItem.imageUrls : temuItem.thumbUrl ? [temuItem.thumbUrl] : []
     });
   }
   return result;
@@ -1313,7 +1275,9 @@ function buildUnifiedCollectionRows(batch) {
         sku.sku_price === undefined ? "" : sku.sku_price,
         sku.sku_original_price === undefined ? "" : sku.sku_original_price,
         sku.sku_stock === undefined ? "" : sku.sku_stock,
-        sku.sku_image_url || "",
+        Array.isArray(sku.sku_image_urls) && sku.sku_image_urls.length
+          ? sku.sku_image_urls.join("\n")
+          : sku.sku_image_url || "",
         record.main_image_url || "",
         Array.isArray(record.gallery_image_urls) ? record.gallery_image_urls.join("\n") : "",
         Array.isArray(record.detail_image_urls) ? record.detail_image_urls.join("\n") : "",
@@ -1391,7 +1355,8 @@ function buildUnifiedJsonExportBatch(batch) {
         sku_price: sku.price === undefined ? "" : sku.price,
         sku_original_price: sku.originalPrice === undefined ? "" : sku.originalPrice,
         sku_stock: sku.stock === undefined ? "" : sku.stock,
-        sku_image_url: sku.imageUrl || ""
+        sku_image_url: sku.imageUrl || "",
+        sku_image_urls: Array.isArray(sku.imageUrls) ? sku.imageUrls : sku.imageUrl ? [sku.imageUrl] : []
       });
     }
     var galleryUrls = getUnifiedImageUrlArray(getUnifiedImageUrls(record, false));

@@ -1,0 +1,5 @@
+cache/*
+!cache/.gitkeep
+web/cache.json
+node_modules/
+config.json

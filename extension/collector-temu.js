@@ -68,6 +68,9 @@ function collectTemuDataFromPage() {
   /** Copy detail images from either supported page data location. */
   function copyDetailList(goods, productDetail) {
     var directList = copyGalleryList(goods ? goods.detailList : []);
+    if (!directList.length && goods && Array.isArray(goods.detail)) {
+      directList = copyGalleryList(goods.detail);
+    }
     if (directList.length) {
       return directList;
     }
@@ -85,6 +88,64 @@ function collectTemuDataFromPage() {
           width: item.width,
           height: item.height,
           index: item.index
+        });
+      }
+    }
+    if (result.length) {
+      return result;
+    }
+    return copyDomDetailList();
+  }
+
+  /** Read one loaded or lazy-loaded image URL from a detail image node. */
+  function readDomDetailImageUrl(image) {
+    if (!image) {
+      return "";
+    }
+    var attributes = ["src", "data-src", "data-original", "data-lazy-src", "data-image-url"];
+    for (var index = 0; index < attributes.length; index += 1) {
+      var value = image.getAttribute(attributes[index]);
+      if (value && value.indexOf("data:") !== 0) {
+        return value;
+      }
+    }
+    return "";
+  }
+
+  /** Copy the product detail images already present in the Temu DOM. */
+  function copyDomDetailList() {
+    if (typeof document === "undefined") {
+      return [];
+    }
+    var selectors = [
+      '[data-testid*="detail"] img',
+      '[data-testid*="description"] img',
+      '[class*="product-detail"] img',
+      '[class*="goods-detail"] img',
+      '[class*="description"] img'
+    ];
+    var result = [];
+    var seen = {};
+    for (var selectorIndex = 0; selectorIndex < selectors.length; selectorIndex += 1) {
+      var nodes = document.querySelectorAll(selectors[selectorIndex]);
+      for (var nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+        var image = nodes[nodeIndex];
+        var url = readDomDetailImageUrl(image);
+        if (!url || seen[url]) {
+          continue;
+        }
+        var rect = image.getBoundingClientRect();
+        var width = Number(image.naturalWidth || rect.width || 0);
+        var height = Number(image.naturalHeight || rect.height || 0);
+        if (width < 180 && height < 180) {
+          continue;
+        }
+        seen[url] = true;
+        result.push({
+          url: url,
+          width: width,
+          height: height,
+          type: "dom_detail"
         });
       }
     }

@@ -1255,6 +1255,7 @@ function collect1688DataFromPage() {
     return {
       domProductName: readDomProductName(),
       domImageUrls: readDomImageUrls(),
+      domDetailImageUrls: readDomDetailImageUrls(),
       domPrice: readDomPrice(),
       domSkuPropName: readDomSkuPropName(),
       domSkuRows: readDomSkuRows(),
@@ -1281,6 +1282,42 @@ function collect1688DataFromPage() {
       for (var propIndex = 0; propIndex < skuProps.length && result.length < 2; propIndex += 1) {
         var property = skuProps[propIndex] || {};
         appendSkuPropertyName(result, property.prop);
+      }
+    }
+    return result;
+  }
+
+  /** Read product detail images already mounted in the rendered 1688 detail section. */
+  function readDomDetailImageUrls() {
+    var result = [];
+    var seen = {};
+    var selectors = [
+      '#detail img',
+      '#description img',
+      '.module-od-detail img',
+      '[data-module*="detail"] img',
+      '[class*="offer-detail"] img',
+      '[class*="product-detail"] img',
+      '[class*="description"] img'
+    ];
+    for (var selectorIndex = 0; selectorIndex < selectors.length; selectorIndex += 1) {
+      var nodes = document.querySelectorAll(selectors[selectorIndex]);
+      for (var nodeIndex = 0; nodeIndex < nodes.length; nodeIndex += 1) {
+        var image = nodes[nodeIndex];
+        if (image.closest && image.closest('#gallery, [data-module*="gallery"], [data-module*="sku"], .od-gallery')) {
+          continue;
+        }
+        var rawUrl = image.currentSrc
+          || image.src
+          || image.getAttribute("data-src")
+          || image.getAttribute("data-original")
+          || image.getAttribute("data-lazy-src")
+          || image.getAttribute("data-ks-lazyload")
+          || "";
+        appendDomImageUrl(result, seen, rawUrl);
+        if (result.length >= 100) {
+          return result;
+        }
       }
     }
     return result;
@@ -1424,6 +1461,9 @@ function collect1688DataFromPage() {
       }
     }
     var detailImageUrls = read1688DetailImageUrls();
+    if (!detailImageUrls.length && domSnapshot && Array.isArray(domSnapshot.domDetailImageUrls)) {
+      detailImageUrls = domSnapshot.domDetailImageUrls.slice();
+    }
     var descriptionFields = pageContextData && pageContextData.description
       && pageContextData.description.fields
       ? pageContextData.description.fields

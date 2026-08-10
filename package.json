@@ -1,0 +1,9 @@
+{
+  "name": "temu-1688-standard-data-get",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "node server/server.js",
+    "start": "node server/server.js"
+  }
+}
