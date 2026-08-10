@@ -1,6 +1,7 @@
 importScripts("collector-temu.js", "collector-1688.js");
 
 var unifiedConfigPromise = null;
+var extensionCacheStorageKey = "autoPackingExtensionCache";
 
 /** Read extension API configuration once from the packaged config file. */
 function getUnifiedExtensionConfig() {
@@ -49,19 +50,19 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
   }
   collectUnifiedFromTab(tabId, platform).then(function handleUnifiedCollection(data) {
     if (platform !== "1688") {
-      return submitUnifiedCollection(data, platform, "", "");
+      return submitAndCacheUnifiedCollection(data, platform, "", "");
     }
     if (message.targetTemuMainId) {
-      return submitUnified1688Binding(data, String(message.targetTemuMainId), String(message.targetTemuPlatformId || ""));
+      return submitAndCacheUnifiedCollection(data, "1688", String(message.targetTemuMainId), String(message.targetTemuPlatformId || ""));
     }
     return getUnifiedActiveWorkflow().then(function handleActiveWorkflow(activeWorkflow) {
       var workflowTemuMainId = activeWorkflow && activeWorkflow.active_temu_main_id
         ? String(activeWorkflow.active_temu_main_id)
         : "";
       if (workflowTemuMainId) {
-        return submitUnified1688Binding(data, workflowTemuMainId, "");
+        return submitAndCacheUnifiedCollection(data, "1688", workflowTemuMainId, "");
       }
-      return submitUnifiedCollection(data, platform, "", "");
+      return submitAndCacheUnifiedCollection(data, platform, "", "");
     });
   }).then(function handleUnifiedCollectionResult(result) {
     sendResponse(result);
@@ -267,20 +268,6 @@ function getUnifiedBatchData() {
   });
 }
 
-/** Write the complete unified JSON batch to the single local cache service. */
-function saveUnifiedBatchData(batch) {
-  return fetch(unifiedCacheEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ records: Array.isArray(batch) ? batch : [] })
-  }).then(function handleCacheResponse(response) {
-    if (!response.ok) {
-      throw new Error("写入本地 cache 失败，请确认 npm run dev 正在运行。 ");
-    }
-    return response.json();
-  });
-}
-
 /** Read the single Temu task currently waiting for a 1688 confirmation. */
 function getUnifiedActiveWorkflow() {
   return getUnifiedApiUrl("/workflow/active").then(function requestUnifiedActiveWorkflow(endpoint) {
@@ -377,11 +364,6 @@ async function getUnifiedBindingPanelData() {
   };
 }
 
-/** Submit raw 1688 collection data so the server performs cache binding atomically. */
-function submitUnified1688Binding(data, temuMainId, temuPlatformId) {
-  return submitUnifiedCollection(data, "1688", temuMainId, temuPlatformId);
-}
-
 /** Submit raw collector output so all normalization and persistence stay on the backend. */
 function submitUnifiedCollection(data, platform, temuMainId, temuPlatformId) {
   return getUnifiedApiUrl("/products/collect").then(function postUnifiedCollection(endpoint) {
@@ -407,9 +389,53 @@ function submitUnifiedCollection(data, platform, temuMainId, temuPlatformId) {
   });
 }
 
+/** Submit one collection to Server and preserve the raw record in extension cache. */
+function submitAndCacheUnifiedCollection(data, platform, temuMainId, temuPlatformId) {
+  return submitUnifiedCollection(data, platform, temuMainId, temuPlatformId).then(function cacheUnifiedCollectionResult(result) {
+    return addUnifiedDataToBatch(data, platform, temuMainId).then(function finishExtensionCacheWrite() {
+      return result;
+    });
+  });
+}
+
+/** Read the independent extension cache records from chrome.storage.local. */
+function getExtensionCacheBatch() {
+  return new Promise(function readExtensionCache(resolve, reject) {
+    chrome.storage.local.get([extensionCacheStorageKey], function handleExtensionCacheRead(payload) {
+      var lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      var cache = payload && payload[extensionCacheStorageKey];
+      resolve(cache && Array.isArray(cache.records) ? cache.records : []);
+    });
+  });
+}
+
+/** Write the independent extension cache records to chrome.storage.local. */
+function saveExtensionCacheBatch(batch) {
+  var payload = {};
+  payload[extensionCacheStorageKey] = {
+    version: 1,
+    updated_at: new Date().toISOString(),
+    records: Array.isArray(batch) ? batch : []
+  };
+  return new Promise(function writeExtensionCache(resolve, reject) {
+    chrome.storage.local.set(payload, function handleExtensionCacheWrite() {
+      var lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 /** Add or replace one platform product while preserving both identifiers. */
 async function addUnifiedDataToBatch(data, platform, linkedTemuMainId) {
-  var batch = await getUnifiedBatchData();
+  var batch = await getExtensionCacheBatch();
   var productKey = getUnifiedProductKey(data, platform);
   var mainId = getNextUnifiedMainid(batch);
   var platformId = getNextUnifiedPlatformId(batch, platform);
@@ -433,7 +459,7 @@ async function addUnifiedDataToBatch(data, platform, linkedTemuMainId) {
   if (!replaced) {
     batch.push(createUnifiedRecord(data, platform, mainId, platformId, linkedTemuMainId));
   }
-  await saveUnifiedBatchData(batch);
+  await saveExtensionCacheBatch(batch);
   return {
     ok: true,
     main_id: mainId,

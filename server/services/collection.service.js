@@ -82,7 +82,7 @@ class CollectionService {
   }
 
   /** Upsert one raw collection and optionally bind it to exactly one Temu product. */
-  async collect(input) {
+  async collect(input, requestId) {
     const platform = String(input.platform || "").toLowerCase();
     const source = input.source_data && typeof input.source_data === "object" ? input.source_data : {};
     const payload = this.repository.read();
@@ -129,10 +129,10 @@ class CollectionService {
           temu_main_id: String(temuRecord.main_id || ""),
           ali_main_id: String(record.main_id || ""),
           ali_platform_id: String(record.platform_id || "")
-        });
+        }, requestId);
       }
     }
-    this.events.publish({ resource: "product", action: temuRecord ? "bound" : "collected", ids: ids, version: Number(payload.version || 1) });
+    this.events.publish({ resource: "product", action: temuRecord ? "bound" : "collected", ids: ids, version: Number(payload.version || 1) }, requestId);
     return {
       product: this.viewModels.normalizeRecord(record),
       bound_temu: temuRecord ? this.viewModels.normalizeRecord(temuRecord) : null

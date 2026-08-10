@@ -39,7 +39,7 @@ function isAllowedOrigin(origin, configuredOrigins) {
 function createApp() {
   const config = configModule.readServerConfig();
   const repository = new cacheModule.CacheRepository(config.storage);
-  const events = new eventModule.EventHub();
+  const events = new eventModule.EventHub({ writeLog: legacyApi.writeServerLog });
   const viewModels = new viewModelModule.ViewModelService();
   const images = new imageCacheModule.ImageCacheService(config.storage);
   const products = new productModule.ProductService({ repository: repository, viewModels: viewModels, events: events, images: images });
@@ -80,6 +80,7 @@ function createApp() {
   app.use("/api/v1", providerRouter);
 
   app.use(express.json({ limit: "80mb" }));
+  app.use(requestContextModule.logParsedRequestBody);
   app.use("/api/v1/cache/image", express.static(images.imageDirectory, { immutable: true, maxAge: "365d" }));
   const businessRouteOptions = {
     productController: productController,

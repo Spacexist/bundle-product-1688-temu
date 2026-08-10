@@ -100,6 +100,7 @@ class WorkflowService {
     this.compactValue = settings.compactValue;
     this.readImageSource = settings.readImageSource;
     this.cacheGeneratedImage = settings.cacheGeneratedImage;
+    this.imageTaskQueue = settings.imageTaskQueue;
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
     this.eventClients = [];
@@ -136,23 +137,35 @@ class WorkflowService {
   }
 
   /** Broadcast one task snapshot to all workflow SSE clients. */
-  broadcast(payload) {
+  broadcast(payload, requestId) {
     const message = "data: " + JSON.stringify(payload) + "\n\n";
+    const subscriberCount = this.eventClients.length;
+    let deliveredCount = 0;
     for (let index = this.eventClients.length - 1; index >= 0; index -= 1) {
       try {
         this.eventClients[index].write(message);
+        deliveredCount += 1;
       } catch (error) {
         this.eventClients.splice(index, 1);
       }
     }
+    if (typeof this.writeLog === "function") {
+      this.writeLog("BROADCAST", "Workflow SSE broadcast", {
+        stream: "workflow",
+        subscriber_count: subscriberCount,
+        delivered_count: deliveredCount,
+        active_temu_main_id: payload && payload.active_temu_main_id,
+        updated_at: payload && payload.updated_at
+      }, requestId);
+    }
   }
 
   /** Persist all tasks and notify connected workflow pages. */
-  writePayload(payload) {
+  writePayload(payload, requestId) {
     const state = payload && typeof payload === "object" ? payload : this.createEmptyPayload();
     state.updated_at = this.formatTime(new Date());
     fs.writeFileSync(this.filePath, JSON.stringify(state, null, 2), "utf8");
-    this.broadcast(state);
+    this.broadcast(state, requestId);
     return state;
   }
 
@@ -200,8 +213,18 @@ class WorkflowService {
       "Cache-Control": "no-cache",
       "Connection": "keep-alive"
     });
-    response.write("data: " + JSON.stringify(this.readPayload()) + "\n\n");
+    const initialPayload = this.readPayload();
+    response.write("data: " + JSON.stringify(initialPayload) + "\n\n");
     this.eventClients.push(response);
+    if (typeof this.writeLog === "function") {
+      this.writeLog("BROADCAST", "Workflow SSE initial snapshot", {
+        stream: "workflow",
+        subscriber_count: this.eventClients.length,
+        delivered_count: 1,
+        active_temu_main_id: initialPayload.active_temu_main_id,
+        updated_at: initialPayload.updated_at
+      }, request.requestId);
+    }
     const service = this;
     /** Remove one disconnected workflow page from the live stream. */
     request.on("close", function handleWorkflowClientClose() {
@@ -291,12 +314,12 @@ class WorkflowService {
     task.search_url = "";
     task.search_offers = [];
     task.error = "";
-    this.writePayload(workflow);
+    this.writePayload(workflow, requestId);
     return { ok: true, task: task };
   }
 
-  /** Generate one candidate image through the configured BeeAPI endpoint. */
-  async generateOneImage(config, prompt, requestId) {
+  /** Execute one candidate image request through the configured BeeAPI endpoint. */
+  async executeGeneratedImageRequest(config, prompt, requestId) {
     const baseurl = String(config && config.baseurl || "").trim();
     const endpointPath = String(config && config.generation_endpoint || "").trim();
     if (!baseurl || !endpointPath) {
@@ -339,6 +362,17 @@ class WorkflowService {
     return imageUrl;
   }
 
+  /** Queue one generation provider request behind the shared edits limit. */
+  async generateOneImage(config, prompt, requestId) {
+    if (this.imageTaskQueue && typeof this.imageTaskQueue.run === "function") {
+      const service = this;
+      return this.imageTaskQueue.run(function executeQueuedImageGeneration() {
+        return service.executeGeneratedImageRequest(config, prompt, requestId);
+      }, { type: "gen", request_id: requestId });
+    }
+    return this.executeGeneratedImageRequest(config, prompt, requestId);
+  }
+
   /** Generate all four images or regenerate one selected candidate. */
   async generateImages(input, requestId) {
     const temuMainId = String(input.temu_main_id || "").trim();
@@ -359,7 +393,7 @@ class WorkflowService {
     }
     task.status = "generating";
     task.error = "";
-    this.writePayload(workflow);
+    this.writePayload(workflow, requestId);
     let generatedCount = 0;
     for (let index = 0; index < task.prompts.length; index += 1) {
       if (requestedIndex >= 0 && index !== requestedIndex) {
@@ -371,7 +405,7 @@ class WorkflowService {
       }
       item.status = "generating";
       item.error = "";
-      this.writePayload(workflow);
+      this.writePayload(workflow, requestId);
       try {
         item.image_url = await this.generateOneImage(config, item.prompt, requestId);
         item.status = "generated";
@@ -382,15 +416,15 @@ class WorkflowService {
         if (requestedIndex >= 0) {
           task.status = "generation_error";
           task.error = item.error;
-          this.writePayload(workflow);
+          this.writePayload(workflow, requestId);
           throw error;
         }
       }
-      this.writePayload(workflow);
+      this.writePayload(workflow, requestId);
     }
     task.status = generatedCount > 0 ? "images_ready" : "generation_error";
     task.error = generatedCount > 0 ? "" : "四张图片均生成失败。";
-    this.writePayload(workflow);
+    this.writePayload(workflow, requestId);
     if (!generatedCount) {
       throw createWorkflowError(task.error, 502);
     }
@@ -428,12 +462,12 @@ class WorkflowService {
       task.search_url = searchUrl;
       task.search_offers = Array.isArray(result.offers) ? result.offers : [];
       task.error = "";
-      this.writePayload(workflow);
+      this.writePayload(workflow, requestId);
       return { ok: true, search_url: searchUrl, offers: task.search_offers, task: task };
     } catch (error) {
       task.status = "search_error";
       task.error = error.message || "1688 图搜失败。";
-      this.writePayload(workflow);
+      this.writePayload(workflow, requestId);
       if (!error.statusCode) {
         error.statusCode = 502;
       }
@@ -442,7 +476,7 @@ class WorkflowService {
   }
 
   /** Mark one Temu workflow as bound to an extension-collected 1688 record. */
-  complete(input) {
+  complete(input, requestId) {
     const workflow = this.readPayload();
     const temuMainId = String(input.temu_main_id || workflow.active_temu_main_id || "").trim();
     if (!temuMainId) {
@@ -454,7 +488,7 @@ class WorkflowService {
     task.bound_ali_platform_id = String(input.ali_platform_id || "");
     task.error = "";
     workflow.active_temu_main_id = "";
-    this.writePayload(workflow);
+    this.writePayload(workflow, requestId);
     return { ok: true, task: task };
   }
 }

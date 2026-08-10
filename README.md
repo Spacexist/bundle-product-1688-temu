@@ -1,13 +1,13 @@
-# Temu + 1688 统一商品采集扩展
+# 自动组货采集器
 
-这是 Temu 和 1688 的合并版 Chrome Extension。两个平台继续使用各自已经验证过的页面内存采集器，但统一使用同一个批次、同一个 JSON 结构和同一个 Excel 导出格式。
+这是 Temu 和 1688 的合并版 Chrome Extension。扩展 cache 保存原始采集批次，Server cache 保存服务端规范化数据；扩展只提供统一 JSON 导出，不提供 Excel 导出。
 
 ## 当前架构
 
 - `web/`：独立 Vue/Vite 前端，默认端口 5173，只消费后端 ViewModel、维护界面交互状态并提交模块草稿。
 - `server/`：独立 Express API，默认端口 3000，统一使用 `/api/v1`，负责标准化、校验、业务计算、持久化、版本冲突、历史返回和第三方调用。
-- `extension/`：采集原始页面数据并提交 `/api/v1/products/collect`，API 地址来自 `extension/config.json`。
-- `cache/`：由后端独占读写；`cache/history/` 保存可跨重启使用的操作快照。
+- `extension/`：采集原始页面数据并提交 `/api/v1/products/collect`，同时把原始批次保存到 `chrome.storage.local` 的 extension cache。
+- `cache/`：由后端独占读写 Server cache；`cache/history/` 保存可跨重启使用的操作快照。
 
 运行 `npm run dev` 会同时启动前后端。服务器 Network 风格日志页面为 `http://127.0.0.1:5173/server/logs`。
 
@@ -30,11 +30,11 @@
 
 ## 采集流程
 
-页面右侧只显示一个“采集Temu”或“采集1688”按钮。采集结果直接写入本地 cache 服务；同一平台同一商品再次采集时更新原记录，并保留原来的 `main_id` 和 `platform_id`。
+页面右侧只显示一个“采集Temu”或“采集1688”按钮。采集结果同时写入 extension cache 和 Server cache；同一平台同一商品再次采集时更新对应 cache 中的原记录。
 
 ## 统一 JSON 结构
 
-JSON 是规范数据模型，Excel 的“商品SKU”Sheet 从 JSON 的 sku 数组展开成多行；两者使用同一组商品字段。
+JSON 是扩展唯一的导出格式，`sku` 数组保存每个商品的完整 SKU 数据。
 
 ```json
 {
@@ -71,24 +71,11 @@ JSON 是规范数据模型，Excel 的“商品SKU”Sheet 从 JSON 的 sku 数�
 }
 ```
 
-`main_id` 是两个平台共用的全局顺序号；`platform_id` 是同一平台内独立递增的顺序号。`platform` 为 `temu` 或 `1688`。旧缓存中的 `mainid` 只作为兼容别名保留在本地存储，新的 JSON/Excel 导出不再输出它，也不会输出内部 `source_data`。
+`main_id` 是两个平台共用的全局顺序号；`platform_id` 是同一平台内独立递增的顺序号。`platform` 为 `temu` 或 `1688`。旧缓存中的 `mainid` 只作为兼容别名保留在本地存储，新的 JSON 导出不再输出它。
 
-## 统一 Excel
+## 导出说明
 
-Excel 包含两个工作表：
-
-- `商品SKU`：Temu 和 1688 的真实 SKU 展平到同一张表。
-- `评论`：评论统一使用 `main_id` 和 `platform_id` 关联商品。
-
-第一张表的字段顺序为：
-
-```text
-main_id, platform_id, platform, product_id, product_name, product_category, category_ids, sku_id, SubSku1, SubSku2, sku_price, sku_original_price, sku_stock, sku_image_url, main_image_url, gallery_image_urls, detail_image_urls, shop_name, shop_rating, review_count, sales_count, delivery_json, attributes_json, page_url, collected_at
-```
-
-Temu 和 1688 不存在的字段留空；轮播图和详情图 URL 在同一单元格中按换行分隔。
-
-`product_category` 是统一分类字段：Temu 使用前台面包屑，1688 使用页面内存中的分类路径。导出前会过滤开头的 `首页>`、`首页 >` 或同类首页分隔符。`category_ids` 是统一分类 ID 字段：Temu 写入后台 `goods.catId1` 到 `goods.catId4`，1688 写入商品分类 ID。
+扩展只保留统一 JSON 导出；Excel 导出入口已移除。`main_id`、`platform_id`、SKU、主图、轮播图和详情图 URL 都从扩展 cache 的原始记录生成。
 
 ## 1688 SKU 属性来源
 
@@ -106,7 +93,7 @@ SKU 实际值来自 `skuInfoMap[*].specAttrs`，按对应顺序组成 `属性:�
 - `collector-temu.js`：读取 Temu 页面内存数据。
 - `collector-1688.js`：读取 1688 页面内存数据。
 - `background.js`：统一采集消息、批次去重，以及 `main_id`、`platform_id` 分配。
-- `popup.js`：统一 JSON/XLSX 导出。
+- `popup.js`：扩展 cache 管理和统一 JSON 导出。
 - `content.js`：两个平台共用的页面采集按钮。
 
 ## Vue 商品重渲染工作台
@@ -157,13 +144,12 @@ Temu 规格区支持直接改规格名、改选项、删除选项、删除整组
 }
 ```
 
-## 长久 cache 与两种渲染模式
+## 扩展 cache、Server cache 与两种渲染模式
 
-扩展不再写入 `chrome.storage.local`，本地 cache 服务是唯一数据源。每次采集成功后，扩展会把完整批次 POST 到本地服务：
+扩展 cache 和 Server cache 分开维护。每次采集成功后，扩展把原始记录保存到 `chrome.storage.local`，同时把采集数据提交到本地 Server：
 
 ```text
 POST http://127.0.0.1:3000/api/v1/products/collect
-GET  http://127.0.0.1:5173/cache.json
 SSE  http://127.0.0.1:3000/api/v1/events
 ```
 
@@ -173,11 +159,13 @@ Express 服务把数据写到项目根目录的 `cache/cache.json`，并通过 `
 
 扩展导出的原格式 JSON 可以提交到 `POST /api/v1/restore`，兼容路径为 `POST /v1/api/restore`。
 
-图片不经过本地缓存，主图、轮播图、SKU 图和详情图都直接使用 Temu/1688 CDN URL。详情图为空时，工作台会通过下面的接口临时读取详情描述并解析图片 URL，只放入当前 Vue 页面内存，不写入 `cache.json` 或其他图片缓存文件：
+扩展弹窗的“清空扩展 cache”只清除 `chrome.storage.local`；前端工作台的“清空 Server cache”只清除 Server 的 `cache/cache.json`。扩展已有的“打开实时渲染”功能保持不变。
+
+主图、轮播图、SKU 图和详情图 URL 会随扩展 cache 的原始记录导出；Server cache 中的图片会通过 `/api/v1/cache/image/...` 提供给前端。详情图为空时，工作台会通过下面的接口临时读取详情描述并解析图片 URL，只放入当前 Vue 页面内存，不写入 `cache.json` 或其他图片缓存文件：
 
 - `GET /api/v1/images/details?url=1688详情描述地址`：由后端读取 1688 详情描述并返回详情图 URL。
 
-`cache/cache.json` 仍然只保存采集到的商品数据；图片缓存后续再单独设计。
+`cache/cache.json` 仍然只由后端维护，扩展 cache 不会被前端清空操作删除。
 
 工作台有两种模式：
 

@@ -24,16 +24,22 @@
     .network-card[data-status="success"] { border-left-color: #22c55e; }
     .network-card[data-status="error"] { border-left-color: #ef4444; }
     .network-card[data-status="pending"] { border-left-color: #f59e0b; }
-    .network-head { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 160px; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #1e293b; background: #101c30; }
+    .network-head { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(170px, auto) 110px 160px; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #1e293b; background: #101c30; }
     .request-summary { display: flex; min-width: 0; align-items: center; gap: 14px; }
     .request-name { color: #f8fafc; font-size: 13px; font-weight: 800; }
+    .flow-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+    .flow-badge { padding: 4px 7px; border: 1px solid #334155; border-radius: 999px; color: #cbd5e1; font-size: 10px; white-space: nowrap; }
+    .flow-badge[data-flow="frontend_request"] { border-color: #2563eb; color: #93c5fd; }
+    .flow-badge[data-flow="backend_proxy"] { border-color: #c2410c; color: #fdba74; }
+    .flow-badge[data-flow="backend_response"] { border-color: #15803d; color: #86efac; }
+    .flow-badge[data-flow="backend_broadcast"] { border-color: #7e22ce; color: #d8b4fe; }
     .request-meta { display: inline-flex; flex-shrink: 0; align-items: center; gap: 12px; }
     .time, .request-id { color: #94a3b8; font: 11px/1.5 Consolas, monospace; word-break: break-all; }
     .status-code { display: inline-flex; width: fit-content; min-width: 54px; justify-content: center; padding: 4px 8px; border-radius: 999px; background: #334155; color: #e2e8f0; font: 800 11px/1.3 Consolas, monospace; }
     .network-card[data-status="success"] .status-code { background: rgba(34, 197, 94, .16); color: #86efac; }
     .network-card[data-status="error"] .status-code { background: rgba(239, 68, 68, .16); color: #fca5a5; }
     .network-card[data-status="pending"] .status-code { background: rgba(245, 158, 11, .16); color: #fcd34d; }
-    .network-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: #1e293b; }
+    .network-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: #1e293b; }
     .network-phase { min-width: 0; padding: 12px; background: #0b1628; }
     .phase-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #93c5fd; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
     .phase-count { color: #64748b; font: 10px Consolas, monospace; }
@@ -63,6 +69,13 @@
         <option value="error">失败</option>
         <option value="pending">进行中</option>
       </select>
+      <select id="flowFilter" aria-label="流量方向">
+        <option value="">全部流量</option>
+        <option value="frontend_request">前端请求后端</option>
+        <option value="backend_proxy">后端请求中转</option>
+        <option value="backend_response">后端响应前端</option>
+        <option value="backend_broadcast">后端广播前端</option>
+      </select>
       <button id="pauseButton" type="button">暂停滚动</button>
       <button id="clearButton" type="button">清空显示</button>
       <a href="/">返回工作台</a>
@@ -71,6 +84,7 @@
   <main>
     <div class="summary">
       <span id="logCount">0 个请求</span>
+      <span id="flowSummary">前端请求 0 · 中转 0 · 响应 0 · 广播 0</span>
       <span>API Key 已脱敏，Base64 仅显示类型与长度</span>
     </div>
     <div id="logList" class="log-list"></div>
@@ -80,8 +94,10 @@
     var requestGroups = [];
     var isPaused = false;
     var statusFilter = document.getElementById("statusFilter");
+    var flowFilter = document.getElementById("flowFilter");
     var logList = document.getElementById("logList");
     var logCount = document.getElementById("logCount");
+    var flowSummary = document.getElementById("flowSummary");
     var pauseButton = document.getElementById("pauseButton");
     var clearButton = document.getElementById("clearButton");
     var connectionStatus = document.getElementById("connectionStatus");
@@ -115,15 +131,47 @@
     /** Return the grouped display status for one complete or pending request. */
     function getRequestGroupStatus(group) {
       if (!group || group.status === null || group.status === undefined) {
+        if (group && group.flows && group.flows.backend_broadcast) {
+          return "success";
+        }
         return "pending";
       }
       return Number(group.status) >= 400 ? "error" : "success";
     }
 
-    /** Find one request group by request identifier without creating duplicates. */
-    function findRequestGroup(requestId) {
+    /** Return the compact status label shown in one grouped flow card. */
+    function getRequestStatusLabel(group) {
+      if (group.status === null || group.status === undefined) {
+        return group.flows && group.flows.backend_broadcast ? "BROADCAST" : "PENDING";
+      }
+      return String(group.status);
+    }
+
+    /** Resolve old and new log entries to the same flow names. */
+    function getEntryFlow(entry) {
+      if (entry && entry.flow) {
+        return String(entry.flow);
+      }
+      var direction = String(entry && entry.direction || "").toUpperCase();
+      if (direction === "RECEIVE" || direction === "RECEIVE BODY") {
+        return "frontend_request";
+      }
+      if (direction === "OUTBOUND" || direction === "UPSTREAM") {
+        return "backend_proxy";
+      }
+      if (direction === "BROADCAST") {
+        return "backend_broadcast";
+      }
+      if (direction === "SEND" || direction === "DONE") {
+        return "backend_response";
+      }
+      return "system";
+    }
+
+    /** Find one grouped flow entry without creating duplicates. */
+    function findRequestGroup(groupKey) {
       for (var index = 0; index < requestGroups.length; index += 1) {
-        if (requestGroups[index].request_id === requestId) {
+        if (requestGroups[index].group_key === groupKey) {
           return requestGroups[index];
         }
       }
@@ -131,8 +179,9 @@
     }
 
     /** Create one Network-style request group for incoming server events. */
-    function createRequestGroup(entry) {
+    function createRequestGroup(entry, groupKey) {
       var group = {
+        group_key: groupKey,
         request_id: String(entry.request_id || "-"),
         first_time: String(entry.time || ""),
         last_time: String(entry.time || ""),
@@ -140,6 +189,7 @@
         label: "等待请求信息",
         status: null,
         duration_ms: null,
+        flows: {},
         events: []
       };
       requestGroups.push(group);
@@ -150,7 +200,11 @@
     function applyEntryToRequestGroup(group, entry) {
       group.events.push(entry);
       group.last_time = String(entry.time || group.last_time);
+      group.flows[getEntryFlow(entry)] = true;
       if (entry.direction === "RECEIVE") {
+        group.label = String(entry.label || group.label);
+      }
+      if (entry.direction === "BROADCAST" && group.label === "等待请求信息") {
         group.label = String(entry.label || group.label);
       }
       if (entry.direction === "DONE" && entry.payload) {
@@ -175,14 +229,16 @@
     }
 
     /** Add one raw event to the matching request group. */
-    function groupLogEntry(entry) {
+    function groupLogEntry(entry, entryIndex) {
       if (isLongLivedEventEntry(entry)) {
         return;
       }
       var requestId = String(entry && entry.request_id || "-");
-      var group = findRequestGroup(requestId);
+      var eventId = String(entry && entry.event_id || entryIndex || "0");
+      var groupKey = requestId === "-" ? "event:" + eventId : "request:" + requestId;
+      var group = findRequestGroup(groupKey);
       if (!group) {
-        group = createRequestGroup(entry || {});
+        group = createRequestGroup(entry || {}, groupKey);
       }
       applyEntryToRequestGroup(group, entry || {});
     }
@@ -191,12 +247,12 @@
     function rebuildRequestGroups() {
       requestGroups = [];
       for (var index = 0; index < logEntries.length; index += 1) {
-        groupLogEntry(logEntries[index]);
+        groupLogEntry(logEntries[index], index);
       }
     }
 
-    /** Create one request, upstream, or response column for a grouped request. */
-    function createPhaseElement(title, directions, group) {
+    /** Create one clearly labeled transport-flow column for a grouped request. */
+    function createPhaseElement(title, flowKey, group) {
       var section = document.createElement("section");
       var heading = document.createElement("div");
       var titleElement = document.createElement("span");
@@ -211,7 +267,7 @@
       section.appendChild(heading);
       for (var index = 0; index < group.events.length; index += 1) {
         var entry = group.events[index];
-        if (directions.indexOf(entry.direction) < 0) {
+        if (getEntryFlow(entry) !== flowKey) {
           continue;
         }
         var eventBlock = document.createElement("div");
@@ -219,7 +275,7 @@
         var payloadText = formatPayload(entry.payload);
         eventBlock.className = "event-block";
         eventLabel.className = "event-label";
-        eventLabel.textContent = String(entry.direction || "") + " · " + String(entry.label || "");
+        eventLabel.textContent = String(entry.flow_label || "") + " · " + String(entry.direction || "") + " · " + String(entry.label || "");
         eventBlock.appendChild(eventLabel);
         if (payloadText) {
           var payload = document.createElement("pre");
@@ -239,6 +295,30 @@
       return section;
     }
 
+    /** Create flow badges showing every transport direction in one request group. */
+    function createFlowBadges(group) {
+      var wrapper = document.createElement("div");
+      var flowDefinitions = [
+        { key: "frontend_request", label: "前端请求后端" },
+        { key: "backend_proxy", label: "后端请求中转" },
+        { key: "backend_response", label: "后端响应前端" },
+        { key: "backend_broadcast", label: "后端广播前端" }
+      ];
+      wrapper.className = "flow-badges";
+      for (var index = 0; index < flowDefinitions.length; index += 1) {
+        var definition = flowDefinitions[index];
+        if (!group.flows[definition.key]) {
+          continue;
+        }
+        var badge = document.createElement("span");
+        badge.className = "flow-badge";
+        badge.dataset.flow = definition.key;
+        badge.textContent = definition.label;
+        wrapper.appendChild(badge);
+      }
+      return wrapper;
+    }
+
     /** Create one Network-style card containing request and response together. */
     function createNetworkCard(group) {
       var card = document.createElement("article");
@@ -246,6 +326,7 @@
       var summary = document.createElement("div");
       var name = document.createElement("div");
       var meta = document.createElement("div");
+      var badges = createFlowBadges(group);
       var startedTime = document.createElement("div");
       var status = document.createElement("div");
       var duration = document.createElement("div");
@@ -262,7 +343,7 @@
       startedTime.className = "time";
       startedTime.textContent = group.first_time;
       status.className = "status-code";
-      status.textContent = group.status === null ? "PENDING" : String(group.status);
+      status.textContent = getRequestStatusLabel(group);
       duration.className = "time";
       if (group.duration_ms === null) {
         duration.textContent = "请求中";
@@ -276,12 +357,14 @@
       summary.appendChild(name);
       summary.appendChild(meta);
       head.appendChild(summary);
+      head.appendChild(badges);
       head.appendChild(status);
       head.appendChild(identity);
       columns.className = "network-columns";
-      columns.appendChild(createPhaseElement("Request", ["RECEIVE", "RECEIVE BODY"], group));
-      columns.appendChild(createPhaseElement("Upstream", ["OUTBOUND", "UPSTREAM"], group));
-      columns.appendChild(createPhaseElement("Response", ["SEND", "DONE"], group));
+      columns.appendChild(createPhaseElement("前端请求后端", "frontend_request", group));
+      columns.appendChild(createPhaseElement("后端请求中转", "backend_proxy", group));
+      columns.appendChild(createPhaseElement("后端响应前端", "backend_response", group));
+      columns.appendChild(createPhaseElement("后端广播前端", "backend_broadcast", group));
       card.appendChild(head);
       card.appendChild(columns);
       return card;
@@ -290,11 +373,31 @@
     /** Render one card per request instead of one row per event. */
     function renderLogs() {
       var selectedStatus = statusFilter.value;
+      var selectedFlow = flowFilter.value;
       var visibleCount = 0;
+      var flowCounts = {
+        frontend_request: 0,
+        backend_proxy: 0,
+        backend_response: 0,
+        backend_broadcast: 0
+      };
       logList.textContent = "";
+      for (var entryIndex = 0; entryIndex < logEntries.length; entryIndex += 1) {
+        var entryFlow = getEntryFlow(logEntries[entryIndex]);
+        if (Object.prototype.hasOwnProperty.call(flowCounts, entryFlow)) {
+          flowCounts[entryFlow] += 1;
+        }
+      }
+      flowSummary.textContent = "前端请求 " + flowCounts.frontend_request
+        + " · 中转 " + flowCounts.backend_proxy
+        + " · 响应 " + flowCounts.backend_response
+        + " · 广播 " + flowCounts.backend_broadcast;
       for (var index = requestGroups.length - 1; index >= 0; index -= 1) {
         var group = requestGroups[index];
         if (selectedStatus && getRequestGroupStatus(group) !== selectedStatus) {
+          continue;
+        }
+        if (selectedFlow && !group.flows[selectedFlow]) {
           continue;
         }
         logList.appendChild(createNetworkCard(group));
@@ -316,7 +419,7 @@
         logEntries.splice(0, logEntries.length - 500);
         rebuildRequestGroups();
       } else {
-        groupLogEntry(entry);
+        groupLogEntry(entry, logEntries.length - 1);
       }
       if (!isPaused) {
         renderLogs();
@@ -368,6 +471,11 @@
       renderLogs();
     }
 
+    /** Re-render grouped requests after the transport-flow filter changes. */
+    function handleFlowFilterChange() {
+      renderLogs();
+    }
+
     /** Toggle live rendering without disconnecting from the server. */
     function handlePauseClick() {
       isPaused = !isPaused;
@@ -391,6 +499,7 @@
     }
 
     statusFilter.addEventListener("change", handleStatusFilterChange);
+    flowFilter.addEventListener("change", handleFlowFilterChange);
     pauseButton.addEventListener("click", handlePauseClick);
     clearButton.addEventListener("click", handleClearClick);
     window.addEventListener("load", initializeLogPage);

@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
-  "name": "Temu + 1688 统一商品采集",
-  "version": "3.0.0",
-  "description": "统一采集 Temu 和 1688 商品、SKU、图片与店铺数据，使用 main_id 和 platform_id 关联并导出 JSON/XLSX。",
+  "name": "自动组货采集器",
+  "version": "3.1.0",
+  "description": "统一采集 Temu 和 1688 商品、SKU、图片与店铺数据，分别保存到扩展 cache 和 Server cache。",
   "permissions": [
     "activeTab",
     "scripting",
-    "downloads"
+    "downloads",
+    "storage"
   ],
   "host_permissions": [
     "https://temu.com/*",
@@ -17,11 +18,21 @@
     "http://127.0.0.1:3000/*",
     "http://localhost:3000/*"
   ],
+  "icons": {
+    "16": "icon.ico",
+    "48": "icon.ico",
+    "128": "icon.ico"
+  },
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Temu + 1688 统一采集",
+    "default_title": "自动组货采集器",
+    "default_icon": {
+      "16": "icon.ico",
+      "32": "icon.ico",
+      "48": "icon.ico"
+    },
     "default_popup": "popup.html"
   },
   "content_scripts": [

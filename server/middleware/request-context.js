@@ -55,4 +55,37 @@ function attachRequestContext(request, response, next) {
   next();
 }
 
-module.exports = { attachRequestContext: attachRequestContext };
+/** Summarize a parsed request body without retaining any field values. */
+function createRequestBodySummary(body) {
+  if (Array.isArray(body)) {
+    return { type: "array", item_count: body.length };
+  }
+  if (body && typeof body === "object") {
+    return {
+      type: "object",
+      field_count: Object.keys(body).length,
+      fields: Object.keys(body).slice(0, 50)
+    };
+  }
+  return { type: typeof body, present: body !== undefined && body !== null };
+}
+
+/** Log parsed request-body metadata after Express completes JSON parsing. */
+function logParsedRequestBody(request, response, next) {
+  const method = String(request.method || "GET").toUpperCase();
+  const bodyMethods = ["POST", "PUT", "PATCH", "DELETE"];
+  if (request.requestId && bodyMethods.indexOf(method) >= 0 && request.body !== undefined) {
+    legacyApi.writeServerLog(
+      "RECEIVE BODY",
+      method + " " + String(request.originalUrl || request.url || ""),
+      createRequestBodySummary(request.body),
+      request.requestId
+    );
+  }
+  next();
+}
+
+module.exports = {
+  attachRequestContext: attachRequestContext,
+  logParsedRequestBody: logParsedRequestBody
+};

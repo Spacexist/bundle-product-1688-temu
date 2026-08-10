@@ -1,11 +1,9 @@
-var collectButton = document.getElementById("collectButton");
-var renderButton = document.getElementById("renderButton");
 var jsonExportButton = document.getElementById("jsonExportButton");
-var batchExportButton = document.getElementById("batchExportButton");
 var clearBatchButton = document.getElementById("clearBatchButton");
 var batchCountElement = document.getElementById("batchCount");
 var statusElement = document.getElementById("status");
 var popupConfigPromise = null;
+var extensionCacheStorageKey = "autoPackingExtensionCache";
 
 /** Read packaged extension configuration once for popup API calls. */
 function getPopupConfig() {
@@ -28,10 +26,7 @@ document.addEventListener("DOMContentLoaded", initializePopup);
 
 /** 初始化扩展弹窗。 */
 function initializePopup() {
-  collectButton.addEventListener("click", handleCollectClick);
-  renderButton.addEventListener("click", handleRenderButtonClick);
   jsonExportButton.addEventListener("click", handleJsonExportClick);
-  batchExportButton.addEventListener("click", handleBatchExportClick);
   clearBatchButton.addEventListener("click", handleClearBatchClick);
   refreshBatchCount();
 }
@@ -223,33 +218,52 @@ function removeUnifiedHomeCategoryPrefix(value) {
   return text;
 }
 
-/** 从本地 cache 服务读取 JSON 批次。 */
+/** Read the independent extension cache from chrome.storage.local. */
 function getBatchData() {
-  return getPopupApiUrl("/workbench").then(function requestPopupWorkbench(endpoint) {
-    return fetch(endpoint, { cache: "no-store" });
-  }).then(function handleCacheRead(response) {
-    if (!response.ok) {
-      throw new Error("无法读取本地 cache，请先运行 npm run dev。 ");
-    }
-    return response.json();
-  }).then(function handleCachePayload(payload) {
-    return payload && payload.data && Array.isArray(payload.data.records) ? payload.data.records : [];
+  return new Promise(function readExtensionCache(resolve, reject) {
+    chrome.storage.local.get([extensionCacheStorageKey], function handleExtensionCacheRead(payload) {
+      var lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      var cache = payload && payload[extensionCacheStorageKey];
+      resolve(cache && Array.isArray(cache.records) ? cache.records : []);
+    });
   });
 }
 
-/** 把 JSON 批次直接写入本地 cache 服务。 */
+/** Write the independent extension cache to chrome.storage.local. */
 function saveBatchData(batch) {
-  throw new Error("扩展不再直接覆盖 cache，请通过采集按钮提交原始商品数据。");
+  var payload = {};
+  payload[extensionCacheStorageKey] = {
+    version: 1,
+    updated_at: new Date().toISOString(),
+    records: Array.isArray(batch) ? batch : []
+  };
+  return new Promise(function writeExtensionCache(resolve, reject) {
+    chrome.storage.local.set(payload, function handleExtensionCacheWrite() {
+      var lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      resolve();
+    });
+  });
 }
 
-/** 清空当前 JSON 批次。 */
+/** Clear only the independent extension cache. */
 function clearBatchData() {
-  return getPopupApiUrl("/products").then(function requestPopupClear(endpoint) {
-    return fetch(endpoint, { method: "DELETE" });
-  }).then(function handleCacheResponse(response) {
-    if (!response.ok) {
-      throw new Error("清空本地 cache 失败。 ");
-    }
+  return new Promise(function clearExtensionCache(resolve, reject) {
+    chrome.storage.local.remove([extensionCacheStorageKey], function handleExtensionCacheClear() {
+      var lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      resolve();
+    });
   });
 }
 
@@ -260,26 +274,6 @@ async function refreshBatchCount() {
     batchCountElement.textContent = String(batch.length);
   } catch (error) {
     setStatus("读取批次失败：" + (error.message || "未知错误"), "error");
-  }
-}
-
-/** 处理“导出当前批次”按钮。 */
-async function handleBatchExportClick() {
-  batchExportButton.disabled = true;
-  setStatus("正在读取批次并生成 Excel…", "");
-  try {
-    var batch = await getBatchData();
-    if (!batch.length) {
-      throw new Error("当前批次为空，请先采集商品。");
-    }
-    var workbookBytes = createXlsxWorkbook(batch);
-    var fileName = createBatchFileName(batch);
-    startDownload(workbookBytes, fileName, function (errorMessage) {
-      handleBatchDownloadFinished(errorMessage);
-    });
-  } catch (error) {
-    batchExportButton.disabled = false;
-    setStatus(error.message || "批量导出失败。", "error");
   }
 }
 
@@ -669,23 +663,6 @@ function startJsonDownload(jsonText, fileName, callback) {
 /** 延迟释放下载对象 URL。 */
 function revokeDownloadUrl(objectUrl) {
   URL.revokeObjectURL(objectUrl);
-}
-
-/** 处理批量下载结果，成功后清空 JSON 暂存批次。 */
-async function handleBatchDownloadFinished(errorMessage) {
-  batchExportButton.disabled = false;
-  if (errorMessage) {
-    setStatus("下载失败：" + errorMessage, "error");
-    return;
-  }
-
-  try {
-    await clearBatchData();
-    batchCountElement.textContent = "0";
-    setStatus("批次已下载，JSON 暂存已清空。", "success");
-  } catch (error) {
-    setStatus("文件已开始下载，但清空暂存失败：" + (error.message || "未知错误"), "error");
-  }
 }
 
 /** 把值转换成工作表单元格文字。 */
@@ -1197,6 +1174,21 @@ function getUnifiedSkuRows(record) {
   var result = [];
   if (platform === "1688") {
     var eightEightRows = Array.isArray(source.skuRows) ? source.skuRows : [];
+    if (!eightEightRows.length && record && Array.isArray(record.sku)) {
+      for (var canonicalAliIndex = 0; canonicalAliIndex < record.sku.length; canonicalAliIndex += 1) {
+        var canonicalAliSku = record.sku[canonicalAliIndex] || {};
+        result.push({
+          skuId: canonicalAliSku.sku_id || "",
+          subSku: [canonicalAliSku.SubSku1 || "", canonicalAliSku.SubSku2 || ""],
+          price: canonicalAliSku.sku_price,
+          originalPrice: canonicalAliSku.sku_original_price,
+          stock: canonicalAliSku.sku_stock,
+          imageUrl: canonicalAliSku.sku_image_url || "",
+          imageUrls: Array.isArray(canonicalAliSku.sku_image_urls) ? canonicalAliSku.sku_image_urls : []
+        });
+      }
+      return result;
+    }
     var propertyNames = getUnified1688PropertyNames(source);
     for (var eightIndex = 0; eightIndex < eightEightRows.length; eightIndex += 1) {
       var eightItem = eightEightRows[eightIndex] || {};
@@ -1213,6 +1205,21 @@ function getUnifiedSkuRows(record) {
     return result;
   }
   var temuRows = Array.isArray(source.sku) ? source.sku : [];
+  if (!temuRows.length && record && Array.isArray(record.sku)) {
+    for (var canonicalTemuIndex = 0; canonicalTemuIndex < record.sku.length; canonicalTemuIndex += 1) {
+      var canonicalTemuSku = record.sku[canonicalTemuIndex] || {};
+      result.push({
+        skuId: canonicalTemuSku.sku_id || "",
+        subSku: [canonicalTemuSku.SubSku1 || "", canonicalTemuSku.SubSku2 || ""],
+        price: canonicalTemuSku.sku_price,
+        originalPrice: canonicalTemuSku.sku_original_price,
+        stock: canonicalTemuSku.sku_stock,
+        imageUrl: canonicalTemuSku.sku_image_url || "",
+        imageUrls: Array.isArray(canonicalTemuSku.sku_image_urls) ? canonicalTemuSku.sku_image_urls : []
+      });
+    }
+    return result;
+  }
   for (var temuIndex = 0; temuIndex < temuRows.length; temuIndex += 1) {
     var temuItem = temuRows[temuIndex] || {};
     result.push({
@@ -1231,6 +1238,16 @@ function getUnifiedSkuRows(record) {
 /** Return a newline-separated URL field from a platform source. */
 function getUnifiedImageUrls(record, detail) {
   var source = getUnifiedSourceData(record);
+  var directUrls = detail ? record && record.detail_image_urls : record && record.gallery_image_urls;
+  if (Array.isArray(directUrls) && directUrls.length) {
+    return directUrls.join("\n");
+  }
+  if (typeof directUrls === "string" && directUrls.trim()) {
+    return directUrls;
+  }
+  if (!detail && record && record.main_image_url) {
+    return String(record.main_image_url);
+  }
   var urls = [];
   if (record && record.platform === "1688") {
     urls = detail ? source.detailImageUrls : source.galleryImageUrls;

@@ -150,7 +150,7 @@ button { cursor: pointer; }
 .cache-state.connected { background: #ecfdf5; color: #047857; }
 .render-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .listing-rail { position: sticky; top: 16px; max-height: calc(100vh - 150px); overflow: auto; padding: 12px; }
-.listing-card { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; width: 100%; margin: 8px 0; padding: 7px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f8fafc; text-align: left; }
+.listing-card { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; width: 100%; margin: 8px 0; padding: 7px 25px 7px 7px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f8fafc; text-align: left; }
 .listing-card.active { border-color: #ff6b35; background: #fff7f3; box-shadow: 0 4px 12px rgba(255, 107, 53, .12); }
 .listing-card img, .listing-image-empty { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: #e2e8f0; }
 .listing-image-empty { display: grid; place-items: center; color: #94a3b8; }
@@ -438,6 +438,8 @@ body::before {
 .listing-card { position: relative; overflow: hidden; border-color: rgba(255, 255, 255, .55); background: rgba(255, 255, 255, .24); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .58); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease; }
 .listing-card:hover { background: rgba(255, 255, 255, .7); box-shadow: 0 10px 24px rgba(61, 72, 91, .1), inset 0 1px 0 #fff; transform: translateY(-2px); }
 .listing-card.active { border-color: rgba(102, 122, 168, .72); background: rgba(242, 245, 252, .74); box-shadow: 0 0 0 3px rgba(102, 122, 168, .09), 0 12px 28px rgba(66, 82, 119, .12), inset 0 1px 0 #fff; }
+.listing-card-delete { position: absolute; top: 7px; right: 6px; z-index: 2; display: grid; width: 18px; height: 18px; place-items: center; border: 0; border-radius: 50%; background: #ef4444; color: #fff; cursor: pointer; font-size: 12px; line-height: 1; }
+.listing-card-delete:hover, .listing-card-delete:focus-visible { background: #dc2626; outline: none; }
 
 .platform-render { border-radius: 22px; animation: glass-rise .46s cubic-bezier(.2, .8, .2, 1) both; }
 .render-heading { border-bottom: 1px solid rgba(126, 139, 159, .13); }

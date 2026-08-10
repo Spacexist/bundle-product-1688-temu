@@ -199,7 +199,7 @@ const app = createApp({
         <div v-if="!records.length" class="panel empty">{{ renderMode === 'realtime' ? '等待扩展采集商品并写入本地 cache。' : '请先导入统一 JSON 文件。' }}</div>
         <div v-else class="render-layout">
           <aside class="panel listing-rail">
-            <div class="listing-rail-heading"><h3 class="panel-title">Temu Listing <span class="count">{{ temuRecords.length }}</span></h3><div class="listing-cache-actions"><button class="listing-current-delete" type="button" aria-label="删除当前 Temu 缓存" :disabled="!selectedTemuRecord" @click="deleteSelectedTemuRecord">×</button><button type="button" :disabled="!temuRecords.length" @click="clearTemuCache">清空</button></div></div>
+            <div class="listing-rail-heading"><div class="listing-cache-actions"><button type="button" :disabled="!temuRecords.length" @click="clearTemuCache">清空</button></div></div>
             <button
               v-for="record in temuRecords"
               :key="record.main_id"
@@ -210,7 +210,8 @@ const app = createApp({
             >
               <img v-if="record.main_image_url" :src="imageSource(record.main_image_url)" referrerpolicy="no-referrer" alt="Temu 主图">
               <span v-else class="listing-image-empty">—</span>
-              <span class="listing-copy"><strong>{{ record.platform_id }}</strong><span>{{ record.product_name }}</span><small>main_id {{ record.main_id }}</small></span>
+              <span class="listing-copy"><span>{{ record.product_name }}</span></span>
+              <span class="listing-card-delete" role="button" tabindex="0" aria-label="删除此 Temu 商品" @click.stop="deleteSelectedTemuRecord(record)" @keydown.enter.stop="deleteSelectedTemuRecord(record)">×</span>
             </button>
             <div v-if="!temuRecords.length" class="muted">暂无 Temu 商品。</div>
           </aside>
@@ -220,13 +221,13 @@ const app = createApp({
             <div class="render-gallery">
                <div class="gallery-thumbs" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord)">
                 <div v-for="(image, imageIndex) in galleryImages(selectedTemuRecord)" :key="image" class="thumb-item" draggable="true" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', imageIndex), 'is-ai-selected': isTemuGalleryEditSelected(selectedTemuRecord, imageIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, imageIndex)">
-                  <button class="thumb" :class="{ active: selectedTemuGalleryIndex === imageIndex }" type="button" draggable="true" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @click="handleTemuGallerySelection($event, selectedTemuRecord, imageIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品图片" draggable="false"><span v-if="isTemuGalleryEditSelected(selectedTemuRecord, imageIndex)" class="gallery-ai-check">✓</span></button>
+                  <button class="thumb" :class="{ active: selectedTemuGalleryIndex === imageIndex }" type="button" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @click="handleTemuGallerySelection($event, selectedTemuRecord, imageIndex)" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, imageIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品图片" draggable="false"><span v-if="isTemuGalleryEditSelected(selectedTemuRecord, imageIndex)" class="gallery-ai-check">✓</span></button>
                   <button class="image-delete-button" type="button" aria-label="删除图片" @click.stop="removeGalleryImage(selectedTemuRecord, imageIndex, 'temu')">×</button>
                 </div>
                 <button v-if="galleryEditSelection.length" class="gallery-ai-edit-button" type="button" @click.stop="openGalleryImageEditor(selectedTemuRecord)">AI 编辑 {{ galleryEditSelection.length }} 张</button>
                 <label class="image-upload-button">+ 上传<input type="file" accept="image/*" multiple @change="handleGalleryUpload($event, selectedTemuRecord, 'temu')"></label>
               </div>
-               <div class="gallery-main" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery', 0), 'is-image-reorder-target': isImageReorderTarget('temu-gallery', 0) }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, 0)"><img v-if="currentImage(selectedTemuRecord, 'temu')" :key="currentImage(selectedTemuRecord, 'temu')" :src="imageSource(currentImage(selectedTemuRecord, 'temu'))" referrerpolicy="no-referrer" alt="Temu 主图" draggable="true" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', selectedTemuGalleryIndex)" @dragend="endImageReorder"><span v-else class="muted">拖入 1688 图片或暂无图片</span></div>
+               <div class="gallery-main" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery', 0), 'is-image-reorder-target': isImageReorderTarget('temu-gallery', 0) }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, 0)"><img v-if="currentImage(selectedTemuRecord, 'temu')" :key="currentImage(selectedTemuRecord, 'temu')" :src="imageSource(currentImage(selectedTemuRecord, 'temu'))" referrerpolicy="no-referrer" alt="Temu 主图" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', selectedTemuGalleryIndex)" @dragend="endImageReorder" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, selectedTemuGalleryIndex)"><span v-else class="muted">拖入 1688 图片或暂无图片</span></div>
             </div>
             <div class="facts compact-facts"><div class="fact wide"><label>分类 ID（逗号分隔）</label><input class="fact-edit-input" type="text" :value="stringifyField(selectedTemuRecord.category_ids)" @input="updateCategoryIds(selectedTemuRecord, $event.target.value)" @change="saveProductModule(selectedTemuRecord, 'basic')" aria-label="Temu 分类 ID"></div></div>
              <div class="sku-panel sku-spec-panel" :class="{ 'is-drop-mode': dragSkuReference }" @change="saveProductModule(selectedTemuRecord, 'skus')" @dragover.prevent @drop.prevent="ignoreNativeDrop">
@@ -250,14 +251,13 @@ const app = createApp({
                  <tr v-if="!selectedTemuRecord.sku.length"><td :colspan="skuSpecGroups(selectedTemuRecord).length + 4" class="empty">暂无 SKU 数据</td></tr>
                </tbody></table>
              </div>
-               <div class="detail-section" :class="{ 'is-image-drop-target': isImageDropTarget('temu-detail') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail')" @dragover.prevent.stop="setImageInteractionTarget('temu-detail')" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord)"><h3>商品详情</h3><div v-if="selectedTemuRecord.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selectedTemuRecord.detail_image_urls" :key="image" class="detail-image-editor" draggable="true" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-detail', detailIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'detail', detailIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord, detailIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品详情图" draggable="false"><button class="image-delete-button" type="button" aria-label="删除详情图" @click="removeDetailImage(selectedTemuRecord, detailIndex)">×</button></div></div><div v-else class="detail-empty-upload"><label class="detail-empty-upload-button" title="上传详情图">+<input type="file" accept="image/*" multiple @change="handleDetailUpload($event, selectedTemuRecord)"></label><span>将右侧 1688 主图/详情图拖到这里。</span></div></div>
+               <div class="detail-section" :class="{ 'is-image-drop-target': isImageDropTarget('temu-detail') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail')" @dragover.prevent.stop="setImageInteractionTarget('temu-detail')" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord)"><h3>商品详情</h3><div v-if="selectedTemuRecord.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selectedTemuRecord.detail_image_urls" :key="image" class="detail-image-editor" draggable="true" title="双击打开 Edits" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-detail', detailIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'detail', detailIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord, detailIndex)" @dblclick.stop="openDetailImageEditor(selectedTemuRecord, image, detailIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品详情图" draggable="false"><button class="image-delete-button" type="button" aria-label="删除详情图" @click="removeDetailImage(selectedTemuRecord, detailIndex)">×</button></div></div><div v-else class="detail-empty-upload"><label class="detail-empty-upload-button" title="上传详情图">+<input type="file" accept="image/*" multiple @change="handleDetailUpload($event, selectedTemuRecord)"></label><span>将右侧 1688 主图/详情图拖到这里。</span></div></div>
           </section>
           <section v-else class="panel platform-render empty">请选择 Temu 商品。</section>
 
           <section v-if="workspaceMode === 'smart'" class="panel platform-render smart-workflow-render">
             <div class="smart-workflow-heading">
               <div><span class="platform-label ali-label">智能组货</span><h2>Temu 选品 · 1688 搜款</h2><p>在当前页面完成分析、生图和搜款准备。</p></div>
-              <span class="smart-workflow-id">main_id {{ selectedTemuMainId || '—' }}</span>
             </div>
             <section v-if="workflowPrompts.length" class="smart-workflow-step">
               <header><span>01</span><div><strong>组货建议</strong><small>先看商品和图片，需要时再修改生图提示词。</small></div></header>
@@ -350,6 +350,10 @@ const app = createApp({
       imagePreviewUrl: "",
       galleryEditRecordKey: "",
       galleryEditSelection: [],
+      imageEditorSourceType: "gallery",
+      imageEditorSourceUrls: [],
+      imageEditorDetailIndex: -1,
+      imageEditorRecordKey: "",
       imageEditorOpen: false,
       imageEditorPrompt: "",
       imageEditorEditPrompt: "",
@@ -764,6 +768,10 @@ const app = createApp({
       this.selected1688GalleryIndex = 0;
       this.galleryEditRecordKey = "";
       this.galleryEditSelection = [];
+      this.imageEditorSourceType = "gallery";
+      this.imageEditorSourceUrls = [];
+      this.imageEditorDetailIndex = -1;
+      this.imageEditorRecordKey = "";
       this.syncWorkflowSelection();
       this.imageEditorOpen = false;
       if (payload && Array.isArray(payload.mappings)) {
@@ -1131,12 +1139,13 @@ const app = createApp({
       this.selected1688GalleryIndex = 0;
       this.galleryEditRecordKey = "";
       this.galleryEditSelection = [];
+      this.closeGalleryImageEditor();
       this.syncWorkflowSelection();
     },
 
-    /** Delete the currently selected Temu product directly from the backend cache. */
-    deleteSelectedTemuRecord: async function deleteSelectedTemuRecord() {
-      const record = this.selectedTemuRecord;
+    /** Delete the selected or explicitly targeted Temu product directly from the backend cache. */
+    deleteSelectedTemuRecord: async function deleteSelectedTemuRecord(targetRecord) {
+      const record = targetRecord || this.selectedTemuRecord;
       if (!record || !window.confirm("确认删除当前 Temu 缓存？")) {
         return;
       }
@@ -1169,6 +1178,24 @@ const app = createApp({
         this.setStatus("Temu 缓存已清空，1688 缓存已保留。", "success");
       } catch (error) {
         this.setStatus("清空 Temu 缓存失败：" + error.message, "error");
+      }
+    },
+
+    /** Clear every product from the Server cache without touching extension cache. */
+    clearServerCache: async function clearServerCache() {
+      if (!this.records.length || !window.confirm("确认清空 Server cache？扩展 cache 不会删除。")) {
+        return;
+      }
+      try {
+        const response = await fetch(apiUrl("/products"), { method: "DELETE" });
+        const payload = await response.json();
+        if (!response.ok || !payload || !payload.ok) {
+          throw new Error(payload && payload.error || "清空失败。");
+        }
+        this.applyCachePayload(payload.data || {});
+        this.setStatus("Server cache 已清空，扩展 cache 已保留。", "success");
+      } catch (error) {
+        this.setStatus("清空 Server cache 失败：" + error.message, "error");
       }
     },
 
@@ -2444,8 +2471,47 @@ const app = createApp({
       }
     },
 
+    /** Open single-image Edits for one Temu gallery image on double click. */
+    openSingleGalleryImageEditor: function openSingleGalleryImageEditor(record, index) {
+      const imageIndex = Number(index);
+      const images = this.galleryImages(record);
+      if (!record || !images[imageIndex]) {
+        return;
+      }
+      this.galleryEditRecordKey = this.imageRecordKey(record);
+      this.galleryEditSelection = [imageIndex];
+      this.imageEditorSourceType = "gallery";
+      this.imageEditorSourceUrls = [];
+      this.imageEditorDetailIndex = -1;
+      this.imageEditorRecordKey = this.galleryEditRecordKey;
+      this.selectGallery(imageIndex, "temu");
+      this.openGalleryImageEditor(record);
+    },
+
+    /** Open single-image Edits for one Temu detail image on double click. */
+    openDetailImageEditor: function openDetailImageEditor(record, image, index) {
+      const source = String(image || "").trim();
+      if (!record || !source) {
+        return;
+      }
+      this.galleryEditRecordKey = this.imageRecordKey(record);
+      this.galleryEditSelection = [];
+      this.imageEditorSourceType = "detail";
+      this.imageEditorSourceUrls = [source];
+      this.imageEditorDetailIndex = Number(index);
+      this.imageEditorRecordKey = this.galleryEditRecordKey;
+      this.imageEditorPrompt = this.imageEditorEditPrompt;
+      this.imageEditorGeneratedUrl = "";
+      this.imageEditorError = "";
+      this.imageEditorOpen = true;
+    },
+
     /** Return the selected Temu gallery image sources shown in the editor dialog. */
     galleryImageEditorSources: function galleryImageEditorSources(record) {
+      if (this.imageEditorSourceType === "detail"
+        && this.imageEditorRecordKey === this.imageRecordKey(record)) {
+        return this.imageEditorSourceUrls.slice();
+      }
       const images = this.galleryImages(record);
       const sources = [];
       for (let index = 0; index < this.galleryEditSelection.length; index += 1) {
@@ -2464,6 +2530,10 @@ const app = createApp({
         this.setStatus("请选择一张图片，或按住 Shift 选择两张图片。", "normal");
         return;
       }
+      this.imageEditorSourceType = "gallery";
+      this.imageEditorSourceUrls = [];
+      this.imageEditorDetailIndex = -1;
+      this.imageEditorRecordKey = this.imageRecordKey(record);
       this.imageEditorPrompt = sources.length === 2 ? this.imageEditorFusionPrompt : this.imageEditorEditPrompt;
       this.imageEditorGeneratedUrl = "";
       this.imageEditorError = "";
@@ -2522,6 +2592,17 @@ const app = createApp({
       if (!record || !generatedUrl || this.imageEditorBusy) {
         return;
       }
+      if (this.imageEditorSourceType === "detail") {
+        const detailList = this.imageListForType(record, "detail");
+        const detailIndex = Number(this.imageEditorDetailIndex);
+        if (detailIndex < 0 || detailIndex >= detailList.length) {
+          return;
+        }
+        detailList.splice(detailIndex, 1, generatedUrl);
+        this.setStatus("已确认编辑并替换详情图。", "success");
+        this.closeGalleryImageEditor();
+        return;
+      }
       const list = this.imageListForType(record, "gallery");
       const indices = this.galleryEditSelection.slice().sort(function sortImageIndices(first, second) {
         return first - second;
@@ -2550,6 +2631,10 @@ const app = createApp({
       this.imageEditorError = "";
       this.galleryEditRecordKey = "";
       this.galleryEditSelection = [];
+      this.imageEditorSourceType = "gallery";
+      this.imageEditorSourceUrls = [];
+      this.imageEditorDetailIndex = -1;
+      this.imageEditorRecordKey = "";
     },
 
     /** Return the image currently shown for one platform render column. */

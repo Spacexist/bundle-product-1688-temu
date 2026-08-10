@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const createWorkflowService = require("./workflow-service").createWorkflowService;
 const createBindingService = require("./binding-service").createBindingService;
+const ImageTaskQueue = require("./services/image-task-queue").ImageTaskQueue;
 
 const port = Number(process.env.PORT || 5173);
 const projectRoot = path.resolve(__dirname, "..");
@@ -23,11 +24,13 @@ const maxApiRequestLogs = 100;
 const serverLogClients = [];
 const serverLogEntries = [];
 const maxServerLogEntries = 300;
+let serverLogSequence = 0;
 const operationUndoEntries = {};
 const operationUndoOrder = [];
 const maxOperationUndoEntries = 200;
 let workflowService = null;
 let bindingService = null;
+const imageTaskQueue = new ImageTaskQueue({ getConcurrency: getImageTaskConcurrency });
 
 if (!fs.existsSync(cacheDirectory)) {
   fs.mkdirSync(cacheDirectory, { recursive: true });
@@ -110,6 +113,24 @@ function createSafeLogValue(value, keyName) {
   return value;
 }
 
+/** Map one lifecycle direction to the transport flow shown by server/logs. */
+function resolveLogFlow(direction) {
+  const normalizedDirection = String(direction || "INFO").toUpperCase();
+  if (normalizedDirection === "RECEIVE" || normalizedDirection === "RECEIVE BODY") {
+    return { key: "frontend_request", label: "前端 → 后端" };
+  }
+  if (normalizedDirection === "BROADCAST") {
+    return { key: "backend_broadcast", label: "后端 → 前端广播" };
+  }
+  if (normalizedDirection === "OUTBOUND" || normalizedDirection === "UPSTREAM") {
+    return { key: "backend_proxy", label: "后端 → 上游中转" };
+  }
+  if (normalizedDirection === "SEND" || normalizedDirection === "DONE") {
+    return { key: "backend_response", label: "后端 → 前端响应" };
+  }
+  return { key: "system", label: "服务器内部" };
+}
+
 /** Send one new server log entry to every connected log page. */
 function broadcastServerLogEntry(entry) {
   const message = "data: " + JSON.stringify(entry) + "\n\n";
@@ -126,16 +147,21 @@ function broadcastServerLogEntry(entry) {
 function writeServerLog(direction, label, payload, requestId) {
   const time = formatCacheTime(new Date());
   const normalizedRequestId = String(requestId || "-");
+  const flow = resolveLogFlow(direction);
   const safePayload = payload === undefined ? null : createSafeLogValue(payload, "");
   const entry = {
+    event_id: ++serverLogSequence,
     time: time,
     request_id: normalizedRequestId,
     direction: String(direction || "INFO"),
+    flow: flow.key,
+    flow_label: flow.label,
     label: String(label || ""),
     payload: safePayload
   };
   const prefix = "[" + time + "]"
     + " [" + normalizedRequestId + "]"
+    + " [" + flow.label + "]"
     + " [" + direction + "] " + label;
   serverLogEntries.push(entry);
   if (serverLogEntries.length > maxServerLogEntries) {
@@ -257,17 +283,25 @@ function startApiRequestTrace(request, response) {
   if (requestUrl.pathname.indexOf("/api/") !== 0) {
     return;
   }
+  if (request.skipLegacyTrace) {
+    return;
+  }
   const startedAt = Date.now();
-  const requestId = createApiRequestId();
+  const hasExternalTrace = Boolean(request.requestId);
+  const requestId = String(request.requestId || createApiRequestId());
   request.apiRequestId = requestId;
-  response.apiRequestLabel = String(request.method || "GET") + " " + requestUrl.pathname;
+  if (!response.apiRequestLabel) {
+    response.apiRequestLabel = String(request.method || "GET") + " " + requestUrl.pathname;
+  }
   response.setHeader("X-Request-Id", requestId);
-  writeServerLog(
-    "RECEIVE",
-    String(request.method || "GET") + " " + requestUrl.pathname + requestUrl.search,
-    undefined,
-    requestId
-  );
+  if (!hasExternalTrace) {
+    writeServerLog(
+      "RECEIVE",
+      String(request.method || "GET") + " " + requestUrl.pathname + requestUrl.search,
+      undefined,
+      requestId
+    );
+  }
   /** Store a completed API request summary for the local debug endpoint. */
   response.on("finish", function handleApiRequestFinished() {
     apiRequestLogs.unshift({
@@ -281,12 +315,14 @@ function startApiRequestTrace(request, response) {
     if (apiRequestLogs.length > maxApiRequestLogs) {
       apiRequestLogs.length = maxApiRequestLogs;
     }
-    writeServerLog(
-      "DONE",
-      String(request.method || "GET") + " " + requestUrl.pathname,
-      { status: response.statusCode, duration_ms: Date.now() - startedAt },
-      requestId
-    );
+    if (!hasExternalTrace) {
+      writeServerLog(
+        "DONE",
+        String(request.method || "GET") + " " + requestUrl.pathname,
+        { status: response.statusCode, duration_ms: Date.now() - startedAt },
+        requestId
+      );
+    }
   });
 }
 
@@ -296,22 +332,33 @@ function getApiRequestId(request) {
 }
 
 /** Notify all real-time Vue clients that the cache file changed. */
-function broadcastCachePayload(payload) {
+function broadcastCachePayload(payload, requestId) {
   const message = "data: " + JSON.stringify(payload) + "\n\n";
+  const subscriberCount = eventClients.length;
+  let deliveredCount = 0;
   for (let index = eventClients.length - 1; index >= 0; index -= 1) {
     try {
       eventClients[index].write(message);
+      deliveredCount += 1;
     } catch (error) {
       eventClients.splice(index, 1);
     }
   }
+  writeServerLog("BROADCAST", "Cache SSE broadcast", {
+    stream: "product-cache",
+    subscriber_count: subscriberCount,
+    delivered_count: deliveredCount,
+    version: payload && payload.version,
+    record_count: payload && Array.isArray(payload.records) ? payload.records.length : 0,
+    update_instruction: payload && payload.update_instruction ? payload.update_instruction : null
+  }, requestId);
 }
 
 /** Persist a cache update and broadcast it to connected Vue clients. */
-function writeCachePayload(payload, callback) {
+function writeCachePayload(payload, callback, requestId) {
   fs.writeFile(cacheFilePath, JSON.stringify(payload, null, 2), "utf8", function handleCacheWrite(error) {
     if (!error) {
-      broadcastCachePayload(payload);
+      broadcastCachePayload(payload, requestId);
     }
     callback(error);
   });
@@ -398,6 +445,17 @@ function readImageEditConfig() {
   } catch (error) {
     return null;
   }
+}
+
+/** Read the shared edits and generation concurrency from server/config.json. */
+function getImageTaskConcurrency() {
+  const config = readImageEditConfig() || {};
+  const queue = config.image_queue && typeof config.image_queue === "object" ? config.image_queue : {};
+  const configured = Number(queue.concurrency || config.image_queue_concurrency || 3);
+  if (!Number.isFinite(configured) || configured < 1) {
+    return 3;
+  }
+  return Math.max(1, Math.min(32, Math.floor(configured)));
 }
 
 /** Build the configured Kimi chat-completions endpoint URL. */
@@ -898,7 +956,7 @@ function extractImageEditError(payload, fallbackText) {
 }
 
 /** Process one image-edit request and return its generated image to the Vue page. */
-async function processImageEditRequest(body, request, response, mode) {
+async function executeImageEditRequest(body, request, response, mode) {
   let input;
   try {
     input = JSON.parse(body || "{}");
@@ -1023,6 +1081,22 @@ async function processImageEditRequest(body, request, response, mode) {
       error: stageMessage + "：" + (cause || error.message || "未知错误。")
     });
   }
+}
+
+/** Queue one edits or fusion provider request behind the shared image limit. */
+function processImageEditRequest(body, request, response, mode) {
+  const requestId = getApiRequestId(request);
+  imageTaskQueue.run(function executeQueuedImageEdit() {
+    return executeImageEditRequest(body, request, response, mode);
+  }, { type: "edits", request_id: requestId }).catch(function handleQueuedImageEditError(error) {
+    if (response.writableEnded) {
+      return;
+    }
+    sendJson(response, 502, {
+      ok: false,
+      error: error && error.message ? error.message : "图片服务请求失败。"
+    });
+  });
 }
 
 /** Read and dispatch one local image-edit request body. */
@@ -1303,6 +1377,7 @@ function getWorkflowService() {
       compactValue: compactListingValue,
       readImageSource: readImageEditSource,
       cacheGeneratedImage: cacheWorkflowGeneratedImage,
+      imageTaskQueue: imageTaskQueue,
       writeLog: writeServerLog,
       formatTime: formatCacheTime
     });
@@ -1385,7 +1460,7 @@ function handleWorkflowBindingOperation(request, response) {
       const binding = getBindingService().bindTemuTo1688(input);
       const payload = getWorkflowService().complete(input, requestId);
       payload.binding = binding;
-      broadcastCachePayload(createBindingCacheUpdate(getBindingService().readCachePayload(), binding));
+      broadcastCachePayload(createBindingCacheUpdate(getBindingService().readCachePayload(), binding), requestId);
       sendJson(response, 200, payload);
     } catch (error) {
       sendJson(response, Number(error.statusCode || 500), { ok: false, error: error.message || "服务器绑定失败。" });
@@ -1408,7 +1483,7 @@ function handleWorkflowCollectionBindingOperation(request, response) {
     try {
       const result = getBindingService().collectAndBind1688(input);
       const workflowPayload = getWorkflowService().complete(result.binding, requestId);
-      broadcastCachePayload(createBindingCacheUpdate(result.cache, result.binding));
+      broadcastCachePayload(createBindingCacheUpdate(result.cache, result.binding), requestId);
       sendJson(response, 200, {
         ok: true,
         workflow_completed: true,
@@ -1591,7 +1666,7 @@ function handleApiRequest(request, response) {
         };
         writeCachePayload(payload, function handleCacheWrite(error) {
           sendJson(response, error ? 500 : 200, error ? { ok: false, error: error.message } : payload);
-        });
+        }, getApiRequestId(request));
       } catch (error) {
         sendJson(response, 400, { ok: false, error: "缓存 JSON 格式错误。" });
       }

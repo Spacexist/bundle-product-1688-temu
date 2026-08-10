@@ -20,6 +20,33 @@ describe("Express API", function describeExpressApi() {
     expect(Array.isArray(response.body.data.records)).toBe(true);
   });
 
+  /** Verify that frontend requests, backend responses, broadcasts and proxy calls have distinct flow labels. */
+  it("separates server log transport flows", async function serverLogFlowTest() {
+    const app = createApp();
+    const legacyApi = require("../legacy-api");
+    const eventModule = require("../events/event-hub");
+    legacyApi.writeServerLog("RECEIVE", "test frontend request", { method: "GET" }, "test-front-flow");
+    legacyApi.writeServerLog("SEND", "test backend response", { status: 200 }, "test-response-flow");
+    legacyApi.writeServerLog("OUTBOUND", "test upstream request", { url: "https://upstream.test" }, "test-proxy-flow");
+    const eventHub = new eventModule.EventHub({ writeLog: legacyApi.writeServerLog });
+    eventHub.publish({ resource: "test", action: "refresh", ids: [] }, "test-broadcast-flow");
+    const logsResponse = await request(app).get("/api/v1/logs");
+    const logs = logsResponse.body.logs || [];
+    /** Find one log entry by its synthetic test request identifier. */
+    const findLog = function findLog(requestId) {
+      for (let index = 0; index < logs.length; index += 1) {
+        if (logs[index].request_id === requestId) {
+          return logs[index];
+        }
+      }
+      return null;
+    };
+    expect(findLog("test-front-flow").flow).toBe("frontend_request");
+    expect(findLog("test-response-flow").flow).toBe("backend_response");
+    expect(findLog("test-proxy-flow").flow).toBe("backend_proxy");
+    expect(findLog("test-broadcast-flow").flow).toBe("backend_broadcast");
+  });
+
   it("exposes both restore API path conventions", async function restoreRouteCompatibilityTest() {
     const canonical = await request(createApp()).post("/api/v1/restore").send({});
     const compatible = await request(createApp()).post("/v1/api/restore").send({});

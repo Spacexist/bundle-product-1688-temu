@@ -15,19 +15,19 @@ class ProductService {
   }
 
   /** Clear every cached product through one backend-owned mutation. */
-  clearAll() {
+  clearAll(requestId) {
     const payload = this.repository.read();
     if (payload.records.length) {
       this.repository.createHistorySnapshot({ platform: "system", platform_id: "all", records: payload.records }, "clear_all");
     }
     payload.records = [];
     this.repository.write(payload);
-    this.events.publish({ resource: "product", action: "cleared", ids: [], version: Number(payload.version || 1) });
+    this.events.publish({ resource: "product", action: "cleared", ids: [], version: Number(payload.version || 1) }, requestId);
     return this.viewModels.createWorkbench(payload);
   }
 
   /** Delete one cached product using its stable platform identifier. */
-  deleteOne(platform, platformId) {
+  deleteOne(platform, platformId, requestId) {
     const payload = this.repository.read();
     const found = this.findRecord(payload.records, platform, platformId);
     if (!found) {
@@ -43,12 +43,12 @@ class ProductService {
       action: "deleted",
       ids: [String(platform), String(platformId)],
       version: Number(payload.version || 1)
-    });
+    }, requestId);
     return this.viewModels.createWorkbench(payload);
   }
 
   /** Clear every cached product belonging to one platform. */
-  clearPlatform(platform) {
+  clearPlatform(platform, requestId) {
     const payload = this.repository.read();
     const retainedRecords = [];
     const deletedRecords = [];
@@ -70,12 +70,12 @@ class ProductService {
       action: "platform_cleared",
       ids: [String(platform)],
       version: Number(payload.version || 1)
-    });
+    }, requestId);
     return this.viewModels.createWorkbench(payload);
   }
 
   /** Parse and persist an imported JSON document entirely on the backend. */
-  async importJson(input) {
+  async importJson(input, requestId) {
     let imported;
     try {
       imported = JSON.parse(String(input.json_text || ""));
@@ -102,13 +102,13 @@ class ProductService {
       await this.images.cacheRecordImages(payload.records[recordIndex]);
     }
     this.repository.write(payload);
-    this.events.publish({ resource: "product", action: "imported", ids: [], version: Number(payload.version || 1) });
+    this.events.publish({ resource: "product", action: "imported", ids: [], version: Number(payload.version || 1) }, requestId);
     return this.viewModels.createWorkbench(payload);
   }
 
   /** Restore the original JSON format exported by the browser extension. */
-  async restoreJson(input) {
-    return this.importJson(input);
+  async restoreJson(input, requestId) {
+    return this.importJson(input, requestId);
   }
 
   /** Locate a raw record using stable platform identifiers. */
@@ -124,7 +124,7 @@ class ProductService {
   }
 
   /** Save one product module with optimistic concurrency validation. */
-  async saveModule(input) {
+  async saveModule(input, requestId) {
     const payload = this.repository.read();
     const found = this.findRecord(payload.records, input.platform, input.platform_id);
     if (!found) {
@@ -151,7 +151,7 @@ class ProductService {
       action: "updated",
       ids: [String(input.platform), String(input.platform_id)],
       version: found.record.version
-    });
+    }, requestId);
     return {
       product: this.viewModels.normalizeRecord(found.record),
       undo_token: undoToken
@@ -183,7 +183,7 @@ class ProductService {
   }
 
   /** Restore one product snapshot using a durable undo token. */
-  undo(input) {
+  undo(input, requestId) {
     const snapshot = this.repository.consumeHistorySnapshot(input.token);
     if (!snapshot || !snapshot.record) {
       const undoError = new Error("返回记录不存在或已经使用。");
@@ -206,7 +206,7 @@ class ProductService {
       action: "restored",
       ids: [String(record.platform), String(record.platform_id)],
       version: record.version
-    });
+    }, requestId);
     return { product: this.viewModels.normalizeRecord(record) };
   }
 }

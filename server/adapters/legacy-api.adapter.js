@@ -9,6 +9,7 @@ function createLegacyApiAdapter(targetPath) {
     const queryIndex = originalUrl.indexOf("?");
     const query = queryIndex >= 0 ? originalUrl.slice(queryIndex) : "";
     request.isLegacyApiAdapter = true;
+    request.skipLegacyTrace = targetPath === "/api/debug/logs" || targetPath === "/api/debug/logs/events";
     response.apiRequestLabel = String(request.method || "GET") + " " + String(originalRequestUrl || originalUrl).split("?")[0];
     request.url = targetPath + query;
     request.originalUrl = targetPath + query;
@@ -16,12 +17,14 @@ function createLegacyApiAdapter(targetPath) {
       const handled = legacyApi.handleApiRequest(request, response);
       if (!handled) {
         request.isLegacyApiAdapter = false;
+        request.skipLegacyTrace = false;
         request.url = originalUrl;
         request.originalUrl = originalRequestUrl;
         next();
       }
     } catch (error) {
       request.isLegacyApiAdapter = false;
+      request.skipLegacyTrace = false;
       request.url = originalUrl;
       request.originalUrl = originalRequestUrl;
       next(error);

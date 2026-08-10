@@ -58,7 +58,6 @@ const workflowApp = createApp({
         <main v-if="selectedTemu" class="workflow-main">
           <section class="product-summary">
             <div><span class="eyebrow">当前 Temu</span><h2>{{ selectedTemu.product_name }}</h2><p>{{ selectedTemu.product_category || '未提供分类' }}</p></div>
-            <span class="main-id">main_id {{ selectedTemu.main_id }}</span>
           </section>
 
           <div class="workflow-status" :class="statusType">{{ statusText }}</div>
