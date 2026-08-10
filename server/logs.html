@@ -24,8 +24,10 @@
     .network-card[data-status="success"] { border-left-color: #22c55e; }
     .network-card[data-status="error"] { border-left-color: #ef4444; }
     .network-card[data-status="pending"] { border-left-color: #f59e0b; }
-    .network-head { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 100px 160px; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #1e293b; background: #101c30; }
+    .network-head { display: grid; grid-template-columns: minmax(260px, 1fr) 110px 160px; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #1e293b; background: #101c30; }
+    .request-summary { display: flex; min-width: 0; align-items: center; gap: 14px; }
     .request-name { color: #f8fafc; font-size: 13px; font-weight: 800; }
+    .request-meta { display: inline-flex; flex-shrink: 0; align-items: center; gap: 12px; }
     .time, .request-id { color: #94a3b8; font: 11px/1.5 Consolas, monospace; word-break: break-all; }
     .status-code { display: inline-flex; width: fit-content; min-width: 54px; justify-content: center; padding: 4px 8px; border-radius: 999px; background: #334155; color: #e2e8f0; font: 800 11px/1.3 Consolas, monospace; }
     .network-card[data-status="success"] .status-code { background: rgba(34, 197, 94, .16); color: #86efac; }
@@ -44,6 +46,7 @@
       header { align-items: flex-start; flex-wrap: wrap; }
       .actions { width: 100%; margin-left: 0; overflow-x: auto; }
       .network-head { grid-template-columns: 1fr 70px; }
+      .request-summary { align-items: flex-start; flex-direction: column; gap: 4px; }
       .request-id, .time { grid-column: span 1; }
       .network-columns { grid-template-columns: 1fr; }
     }
@@ -97,6 +100,18 @@
       return JSON.stringify(payload, null, 2);
     }
 
+    /** Convert a request duration from milliseconds into a seconds label. */
+    function formatDurationSeconds(durationMs) {
+      var safeDuration = Math.max(0, Number(durationMs) || 0);
+      return "耗时 " + (safeDuration / 1000).toFixed(2) + " 秒";
+    }
+
+    /** Parse the server local timestamp for pending request duration updates. */
+    function parseServerTime(time) {
+      var timestamp = new Date(String(time || "").replace(" ", "T")).getTime();
+      return Number.isFinite(timestamp) ? timestamp : Date.now();
+    }
+
     /** Return the grouped display status for one complete or pending request. */
     function getRequestGroupStatus(group) {
       if (!group || group.status === null || group.status === undefined) {
@@ -121,6 +136,7 @@
         request_id: String(entry.request_id || "-"),
         first_time: String(entry.time || ""),
         last_time: String(entry.time || ""),
+        started_ms: parseServerTime(entry.time),
         label: "等待请求信息",
         status: null,
         duration_ms: null,
@@ -215,7 +231,10 @@
     function createNetworkCard(group) {
       var card = document.createElement("article");
       var head = document.createElement("div");
+      var summary = document.createElement("div");
       var name = document.createElement("div");
+      var meta = document.createElement("div");
+      var startedTime = document.createElement("div");
       var status = document.createElement("div");
       var duration = document.createElement("div");
       var identity = document.createElement("div");
@@ -224,17 +243,28 @@
       card.className = "network-card";
       card.dataset.status = groupStatus;
       head.className = "network-head";
+      summary.className = "request-summary";
       name.className = "request-name";
       name.textContent = group.label;
+      meta.className = "request-meta";
+      startedTime.className = "time";
+      startedTime.textContent = group.first_time;
       status.className = "status-code";
       status.textContent = group.status === null ? "PENDING" : String(group.status);
       duration.className = "time";
-      duration.textContent = group.duration_ms === null ? group.last_time : String(group.duration_ms) + " ms";
+      duration.textContent = formatDurationSeconds(group.duration_ms === null ? Date.now() - group.started_ms : group.duration_ms);
+      if (group.duration_ms === null) {
+        duration.className = "time pending-duration";
+        duration.dataset.startedMs = String(group.started_ms);
+      }
       identity.className = "request-id";
       identity.textContent = group.request_id;
-      head.appendChild(name);
+      meta.appendChild(startedTime);
+      meta.appendChild(duration);
+      summary.appendChild(name);
+      summary.appendChild(meta);
+      head.appendChild(summary);
       head.appendChild(status);
-      head.appendChild(duration);
       head.appendChild(identity);
       columns.className = "network-columns";
       columns.appendChild(createPhaseElement("Request", ["RECEIVE", "RECEIVE BODY"], group));
@@ -284,7 +314,7 @@
     /** Load the current in-memory server log history. */
     async function loadLogHistory() {
       try {
-        var response = await fetch("/api/debug/logs", { cache: "no-store" });
+        var response = await fetch("/api/v1/logs", { cache: "no-store" });
         var payload = await response.json();
         logEntries = payload && Array.isArray(payload.logs) ? payload.logs : [];
         rebuildRequestGroups();
@@ -315,7 +345,7 @@
 
     /** Connect the page to the server-side live log event stream. */
     function connectServerLogs() {
-      var eventSource = new EventSource("/api/debug/logs/events");
+      var eventSource = new EventSource("/api/v1/logs/events");
       eventSource.onmessage = handleServerLogMessage;
       eventSource.onopen = handleServerLogOpen;
       eventSource.onerror = handleServerLogError;
@@ -342,6 +372,18 @@
       renderLogs();
     }
 
+    /** Refresh only pending duration labels without rebuilding the log cards. */
+    function refreshPendingDurations() {
+      if (isPaused) {
+        return;
+      }
+      var durations = document.querySelectorAll(".pending-duration");
+      for (var index = 0; index < durations.length; index += 1) {
+        var duration = durations[index];
+        duration.textContent = formatDurationSeconds(Date.now() - Number(duration.dataset.startedMs));
+      }
+    }
+
     /** Load history first and then connect the live grouped request stream. */
     async function initializeLogPage() {
       await loadLogHistory();
@@ -352,6 +394,7 @@
     pauseButton.addEventListener("click", handlePauseClick);
     clearButton.addEventListener("click", handleClearClick);
     window.addEventListener("load", initializeLogPage);
+    window.setInterval(refreshPendingDurations, 1000);
   </script>
 </body>
 </html>

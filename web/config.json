@@ -1,0 +1,5 @@
+{
+  "apiBaseUrl": "http://127.0.0.1:3000/api/v1",
+  "eventUrl": "http://127.0.0.1:3000/api/v1/events",
+  "logEventUrl": "http://127.0.0.1:3000/api/v1/logs/events"
+}

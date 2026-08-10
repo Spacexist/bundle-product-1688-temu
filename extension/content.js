@@ -116,6 +116,26 @@ function getUnifiedBindingImage(record) {
   return "";
 }
 
+/** Fall back from the local hash image to the original CDN image once. */
+function handleUnifiedBindingImageError(event) {
+  var image = event.currentTarget;
+  var fallbackUrl = String(image && image.dataset ? image.dataset.fallbackSrc || "" : "");
+  if (!fallbackUrl) {
+    return;
+  }
+  image.dataset.fallbackSrc = "";
+  image.src = fallbackUrl;
+}
+
+/** Apply the local hash image first and retain the CDN source as fallback. */
+function applyUnifiedBindingImageSource(image, record) {
+  var primaryUrl = getUnifiedBindingImage(record);
+  var fallbackUrl = String(record && record.cdn_image_url || "");
+  image.dataset.fallbackSrc = fallbackUrl && fallbackUrl !== primaryUrl ? fallbackUrl : "";
+  image.src = primaryUrl || fallbackUrl;
+  image.addEventListener("error", handleUnifiedBindingImageError);
+}
+
 /** Read the compact Listing title displayed in the 1688 binding modal. */
 function getUnifiedBindingListingTitle(record) {
   var source = record && record.source_data ? record.source_data : {};
@@ -202,7 +222,7 @@ function openUnifiedBindingModal(record) {
   closeButton.addEventListener("click", closeUnifiedBindingModal);
   var image = document.createElement("img");
   image.className = "unified-binding-main-image";
-  image.src = getUnifiedBindingImage(record);
+  applyUnifiedBindingImageSource(image, record);
   image.alt = "Temu 主图";
   var copy = document.createElement("div");
   copy.className = "unified-binding-copy";
@@ -323,7 +343,7 @@ function renderUnifiedBindingPanel(payload) {
     var selected = mainId === selectedTemuMainId;
     card.className = "unified-binding-card" + (selected ? " is-active" : "");
     var image = document.createElement("img");
-    image.src = getUnifiedBindingImage(record);
+    applyUnifiedBindingImageSource(image, record);
     image.alt = "Temu";
     var copy = document.createElement("span");
     var cardTitle = document.createElement("strong");

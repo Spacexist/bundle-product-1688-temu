@@ -1,0 +1,33 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 3000,
+    "corsOrigins": ["http://127.0.0.1:5173", "http://localhost:5173", "chrome-extension://*"]
+  },
+  "storage": {
+    "cacheDirectory": "../cache",
+    "imageDirectory": "../cache/image",
+    "historyDirectory": "../cache/history",
+    "historyLimit": 200
+  },
+  "baseurl": "https://beeapi.ai",
+  "endpoint": "/v1/images/edits",
+  "generation_endpoint": "/v1/images/generations",
+  "generation_size": "1024x1024",
+  "model": "gpt-image-2",
+  "edit_prompt": "",
+  "fusion_prompt": "",
+  "price": { "1k": 0.02, "2k": 0.04, "4K": 0.08 },
+  "apikey": "",
+  "kimi": {
+    "baseurl": "https://api.moonshot.cn",
+    "endpoint": "/v1/chat/completions",
+    "model": "kimi-k2.6",
+    "timeout_ms": 60000,
+    "workflow_system_prompt": "",
+    "workflow_prompt": "",
+    "listing_system_prompt": "",
+    "listing_prompt": "",
+    "apikey": ""
+  }
+}

@@ -43,7 +43,7 @@ function readWorkflowProviderError(payload, fallbackText) {
   return text ? text.slice(0, 300) : "上游服务请求失败。";
 }
 
-/** Parse exactly four structured product-packing prompts from a Kimi response. */
+/** Parse exactly four structured product suggestions from a Kimi response. */
 function parseWorkflowPromptContent(content) {
   let text = String(content || "").trim();
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
@@ -58,20 +58,28 @@ function parseWorkflowPromptContent(content) {
     }
     payload = JSON.parse(text.slice(firstBrace, lastBrace + 1));
   }
-  const sourcePrompts = payload && Array.isArray(payload.prompts) ? payload.prompts : [];
+  const sourcePrompts = payload && Array.isArray(payload.products)
+    ? payload.products
+    : payload && Array.isArray(payload.prompts) ? payload.prompts : [];
   if (sourcePrompts.length !== 4) {
-    throw createWorkflowError("Kimi 必须返回四组组货提示词。", 502);
+    throw createWorkflowError("Kimi 必须返回四个组货商品。", 502);
   }
+  const fixedRelations = ["相似替代品", "功能互补品", "配套附件", "同风格关联品"];
   const prompts = [];
   for (let index = 0; index < sourcePrompts.length; index += 1) {
     const source = sourcePrompts[index] && typeof sourcePrompts[index] === "object" ? sourcePrompts[index] : {};
-    const prompt = String(source.prompt || "").trim();
+    const productIntro = String(source.product_intro || source.product_name || source.product || "").trim();
+    const prompt = String(source.image_prompt || source.prompt || "").trim();
+    if (!productIntro) {
+      throw createWorkflowError("Kimi 返回的第 " + (index + 1) + " 个商品简介为空。", 502);
+    }
     if (!prompt) {
-      throw createWorkflowError("Kimi 返回的第 " + (index + 1) + " 组提示词为空。", 502);
+      throw createWorkflowError("Kimi 返回的第 " + (index + 1) + " 个生图提示词为空。", 502);
     }
     prompts.push({
-      relation: String(source.relation || "组货方向" + (index + 1)).trim(),
-      product_name: String(source.product_name || source.product || "候选商品" + (index + 1)).trim(),
+      relation: fixedRelations[index],
+      product_name: String(source.product_name || productIntro).trim(),
+      product_intro: productIntro,
       prompt: prompt,
       image_url: "",
       status: "prompt_ready",
@@ -91,6 +99,7 @@ class WorkflowService {
     this.getKimiEndpoint = settings.getKimiEndpoint;
     this.compactValue = settings.compactValue;
     this.readImageSource = settings.readImageSource;
+    this.cacheGeneratedImage = settings.cacheGeneratedImage;
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
     this.eventClients = [];
@@ -217,7 +226,7 @@ class WorkflowService {
     const systemPrompt = String(kimi.workflow_system_prompt || "").trim();
     const taskPrompt = String(kimi.workflow_prompt || "").trim();
     if (!endpoint || !kimi.apikey || !systemPrompt || !taskPrompt) {
-      throw createWorkflowError("根目录 config.json 未配置智能组货 Kimi 提示词。", 500);
+      throw createWorkflowError("server/config.json 未配置智能组货 Kimi 提示词。", 500);
     }
     const sourceImage = await this.readImageSource(imageUrl, requestId);
     const dataUrl = "data:" + sourceImage.mimeType + ";base64," + sourceImage.buffer.toString("base64");
@@ -291,7 +300,7 @@ class WorkflowService {
     const baseurl = String(config && config.baseurl || "").trim();
     const endpointPath = String(config && config.generation_endpoint || "").trim();
     if (!baseurl || !endpointPath) {
-      throw createWorkflowError("根目录 config.json 未配置 BeeAPI 生图 endpoint。", 500);
+      throw createWorkflowError("server/config.json 未配置 BeeAPI 生图 endpoint。", 500);
     }
     const endpoint = new URL(endpointPath, baseurl).toString();
     const providerRequestPayload = {
@@ -324,6 +333,9 @@ class WorkflowService {
     if (!imageUrl) {
       throw createWorkflowError("BeeAPI 已响应，但没有找到生成图片。", 502);
     }
+    if (typeof this.cacheGeneratedImage === "function") {
+      return this.cacheGeneratedImage(imageUrl);
+    }
     return imageUrl;
   }
 
@@ -343,7 +355,7 @@ class WorkflowService {
     const requestedIndex = input.index === undefined || input.index === null ? -1 : Number(input.index);
     const config = this.readConfig();
     if (!config || !config.apikey || !config.generation_endpoint) {
-      throw createWorkflowError("根目录 config.json 未配置完整的 BeeAPI 生图接口。", 500);
+      throw createWorkflowError("server/config.json 未配置完整的 BeeAPI 生图接口。", 500);
     }
     task.status = "generating";
     task.error = "";

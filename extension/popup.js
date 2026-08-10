@@ -5,7 +5,24 @@ var batchExportButton = document.getElementById("batchExportButton");
 var clearBatchButton = document.getElementById("clearBatchButton");
 var batchCountElement = document.getElementById("batchCount");
 var statusElement = document.getElementById("status");
-var unifiedCacheEndpoint = "http://127.0.0.1:5173/api/cache";
+var popupConfigPromise = null;
+
+/** Read packaged extension configuration once for popup API calls. */
+function getPopupConfig() {
+  if (!popupConfigPromise) {
+    popupConfigPromise = fetch(chrome.runtime.getURL("config.json")).then(function parsePopupConfig(response) {
+      return response.json();
+    });
+  }
+  return popupConfigPromise;
+}
+
+/** Resolve one popup backend endpoint from extension configuration. */
+function getPopupApiUrl(pathname) {
+  return getPopupConfig().then(function buildPopupApiUrl(config) {
+    return String(config.apiBaseUrl || "http://127.0.0.1:3000/api/v1").replace(/\/$/, "") + pathname;
+  });
+}
 
 document.addEventListener("DOMContentLoaded", initializePopup);
 
@@ -208,36 +225,27 @@ function removeUnifiedHomeCategoryPrefix(value) {
 
 /** 从本地 cache 服务读取 JSON 批次。 */
 function getBatchData() {
-  return fetch(unifiedCacheEndpoint, { cache: "no-store" }).then(function handleCacheRead(response) {
+  return getPopupApiUrl("/workbench").then(function requestPopupWorkbench(endpoint) {
+    return fetch(endpoint, { cache: "no-store" });
+  }).then(function handleCacheRead(response) {
     if (!response.ok) {
       throw new Error("无法读取本地 cache，请先运行 npm run dev。 ");
     }
     return response.json();
   }).then(function handleCachePayload(payload) {
-    return payload && Array.isArray(payload.records) ? payload.records : [];
+    return payload && payload.data && Array.isArray(payload.data.records) ? payload.data.records : [];
   });
 }
 
 /** 把 JSON 批次直接写入本地 cache 服务。 */
 function saveBatchData(batch) {
-  return fetch(unifiedCacheEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ records: Array.isArray(batch) ? batch : [] })
-  }).then(function handleCacheResponse(response) {
-    if (!response.ok) {
-      throw new Error("写入本地 cache 失败，请确认 npm run dev 正在运行。 ");
-    }
-    return response.json();
-  });
+  throw new Error("扩展不再直接覆盖 cache，请通过采集按钮提交原始商品数据。");
 }
 
 /** 清空当前 JSON 批次。 */
 function clearBatchData() {
-  return fetch(unifiedCacheEndpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ records: [] })
+  return getPopupApiUrl("/products").then(function requestPopupClear(endpoint) {
+    return fetch(endpoint, { method: "DELETE" });
   }).then(function handleCacheResponse(response) {
     if (!response.ok) {
       throw new Error("清空本地 cache 失败。 ");

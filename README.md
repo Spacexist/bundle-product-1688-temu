@@ -2,6 +2,17 @@
 
 这是 Temu 和 1688 的合并版 Chrome Extension。两个平台继续使用各自已经验证过的页面内存采集器，但统一使用同一个批次、同一个 JSON 结构和同一个 Excel 导出格式。
 
+## 当前架构
+
+- `web/`：独立 Vue/Vite 前端，默认端口 5173，只消费后端 ViewModel、维护界面交互状态并提交模块草稿。
+- `server/`：独立 Express API，默认端口 3000，统一使用 `/api/v1`，负责标准化、校验、业务计算、持久化、版本冲突、历史返回和第三方调用。
+- `extension/`：采集原始页面数据并提交 `/api/v1/products/collect`，API 地址来自 `extension/config.json`。
+- `cache/`：由后端独占读写；`cache/history/` 保存可跨重启使用的操作快照。
+
+运行 `npm run dev` 会同时启动前后端。服务器 Network 风格日志页面为 `http://127.0.0.1:5173/server/logs`。
+
+公开配置位于 `web/config.json` 和 `extension/config.json`。私有配置位于不会提交的 `server/config.json`，仓库只保留 `server/config.example.json`。
+
 ## 加载方式
 
 1. 打开 `chrome://extensions/`。
@@ -110,7 +121,7 @@ npm run dev
 
 服务端启动后会在终端实时打印 `RECEIVE`、`RECEIVE BODY`、`OUTBOUND`、`UPSTREAM`、`SEND` 和 `DONE` 六类日志，用同一个 `request_id` 串联一次完整请求。浏览器打开 `http://127.0.0.1:5173/server/logs` 可以查看相同的实时日志页面。日志会隐藏 API Key，并把 Base64 图片压缩成图片类型和字符长度，避免密钥泄露或终端被图片内容刷满。
 
-根目录 `config.json` 用于配置溶图服务（该文件已加入 `.gitignore`，不会提交 API key）。当 Temu SKU 图片格中有两张或以上图片时，点击“溶图”会先在浏览器端把当前图片全部转换为 base64，再交给本地 Node 服务调用图片编辑接口，避免把 alicdn URL 交给中转服务；生成图会置于该 SKU 图片列表首位，原图继续保留。提示词固定为“第一张图片作为主体构图，后续图片作为同一商品的细节、颜色、版型和材质参考，融合为一张自然完整的电商 SKU 商品图，消除重影、错位和拼接边缘，不拼贴、不添加文字水印或额外商品”。
+`server/config.json` 用于配置溶图服务和提示词（该文件已加入 `.gitignore`，不会提交 API key）。图片由本地 Express API 转为 base64 后发送给第三方服务，避免第三方服务直接请求 alicdn。
 
 右侧 1688 SKU 会拆成 `SubSku1` 和 `SubSku2` 两列，整行和单个 SubSku 都可以拖到 Temu 的规格组、具体规格选项或 SKU 表格单元格。拖到规格组会作用于全部 Temu SKU，拖到具体选项只作用于匹配行，拖到 SKU 单元格会追加规格值而不会覆盖原值；拖拽会追加对应规格和图片，并直接把 1688 价格加入 Temu 的 `sku_price`。顶部笛卡尔积投放区已移除。
 
@@ -151,16 +162,20 @@ Temu 规格区支持直接改规格名、改选项、删除选项、删除整组
 扩展不再写入 `chrome.storage.local`，本地 cache 服务是唯一数据源。每次采集成功后，扩展会把完整批次 POST 到本地服务：
 
 ```text
-POST http://127.0.0.1:5173/api/cache
+POST http://127.0.0.1:3000/api/v1/products/collect
 GET  http://127.0.0.1:5173/cache.json
-SSE  http://127.0.0.1:5173/api/cache/events
+SSE  http://127.0.0.1:3000/api/v1/events
 ```
 
-本地服务把数据写到项目根目录的 `cache/cache.json`，并通过 `/api/cache/events` 推送给已经打开的 Vue 页面。`cache/` 已加入 `.gitignore`，它是本机运行数据，不会提交到仓库；首次启动时会自动兼容迁移旧的 `web/cache.json`。服务未启动时，采集和导出都会明确提示先运行 `npm run dev`，不会再写入另一份浏览器缓存。
+Express 服务把数据写到项目根目录的 `cache/cache.json`，并通过 `/api/v1/events` 发送轻量刷新通知。前端收到通知后重新获取 `/api/v1/workbench`，不会直接读取缓存文件。
+
+图片由后端统一保存到 `cache/image/temu`、`cache/image/1688` 和 `cache/image/transfer`。文件名使用内容 SHA-256，JSON 只保存 `/api/v1/cache/image/...` 地址；`cache/image/source-index.json` 用远程源 URL 的 SHA-256 命中已有文件，命中时不会再次请求 CDN。运行 `npm run cache:images` 可以迁移已有缓存图片。
+
+扩展导出的原格式 JSON 可以提交到 `POST /api/v1/restore`，兼容路径为 `POST /v1/api/restore`。
 
 图片不经过本地缓存，主图、轮播图、SKU 图和详情图都直接使用 Temu/1688 CDN URL。详情图为空时，工作台会通过下面的接口临时读取详情描述并解析图片 URL，只放入当前 Vue 页面内存，不写入 `cache.json` 或其他图片缓存文件：
 
-- `GET /api/detail-images?url=1688详情描述地址`：实时读取 1688 详情描述内容并返回详情图 URL。
+- `GET /api/v1/images/details?url=1688详情描述地址`：由后端读取 1688 详情描述并返回详情图 URL。
 
 `cache/cache.json` 仍然只保存采集到的商品数据；图片缓存后续再单独设计。
 

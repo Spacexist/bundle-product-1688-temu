@@ -1,8 +1,26 @@
 importScripts("collector-temu.js", "collector-1688.js");
 
-var unifiedCacheEndpoint = "http://127.0.0.1:5173/api/cache";
-var unifiedWorkflowActiveEndpoint = "http://127.0.0.1:5173/api/workflow/active";
-var unifiedWorkflowBindEndpoint = "http://127.0.0.1:5173/api/workflow/bind";
+var unifiedConfigPromise = null;
+
+/** Read extension API configuration once from the packaged config file. */
+function getUnifiedExtensionConfig() {
+  if (!unifiedConfigPromise) {
+    unifiedConfigPromise = fetch(chrome.runtime.getURL("config.json")).then(function parseUnifiedExtensionConfig(response) {
+      if (!response.ok) {
+        throw new Error("扩展 config.json 读取失败。");
+      }
+      return response.json();
+    });
+  }
+  return unifiedConfigPromise;
+}
+
+/** Resolve one versioned backend URL from extension configuration. */
+function getUnifiedApiUrl(pathname) {
+  return getUnifiedExtensionConfig().then(function buildUnifiedApiUrl(config) {
+    return String(config.apiBaseUrl || "http://127.0.0.1:3000/api/v1").replace(/\/$/, "") + pathname;
+  });
+}
 
 /** Handle collection requests from either platform page. */
 chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(message, sender, sendResponse) {
@@ -31,7 +49,7 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
   }
   collectUnifiedFromTab(tabId, platform).then(function handleUnifiedCollection(data) {
     if (platform !== "1688") {
-      return addUnifiedDataToBatch(data, platform, "");
+      return submitUnifiedCollection(data, platform, "", "");
     }
     if (message.targetTemuMainId) {
       return submitUnified1688Binding(data, String(message.targetTemuMainId), String(message.targetTemuPlatformId || ""));
@@ -43,7 +61,7 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
       if (workflowTemuMainId) {
         return submitUnified1688Binding(data, workflowTemuMainId, "");
       }
-      return addUnifiedDataToBatch(data, platform, "");
+      return submitUnifiedCollection(data, platform, "", "");
     });
   }).then(function handleUnifiedCollectionResult(result) {
     sendResponse(result);
@@ -237,13 +255,15 @@ function getNextUnifiedPlatformId(batch, platform) {
 
 /** Read the unified JSON batch from the single local cache service. */
 function getUnifiedBatchData() {
-  return fetch(unifiedCacheEndpoint, { cache: "no-store" }).then(function handleCacheRead(response) {
+  return getUnifiedApiUrl("/workbench").then(function requestUnifiedWorkbench(endpoint) {
+    return fetch(endpoint, { cache: "no-store" });
+  }).then(function handleCacheRead(response) {
     if (!response.ok) {
       throw new Error("无法读取本地 cache，请先运行 npm run dev。 ");
     }
     return response.json();
   }).then(function handleCachePayload(payload) {
-    return payload && Array.isArray(payload.records) ? payload.records : [];
+    return payload && payload.data && Array.isArray(payload.data.records) ? payload.data.records : [];
   });
 }
 
@@ -263,7 +283,9 @@ function saveUnifiedBatchData(batch) {
 
 /** Read the single Temu task currently waiting for a 1688 confirmation. */
 function getUnifiedActiveWorkflow() {
-  return fetch(unifiedWorkflowActiveEndpoint, { cache: "no-store" }).then(function handleActiveWorkflowResponse(response) {
+  return getUnifiedApiUrl("/workflow/active").then(function requestUnifiedActiveWorkflow(endpoint) {
+    return fetch(endpoint, { cache: "no-store" });
+  }).then(function handleActiveWorkflowResponse(response) {
     if (!response.ok) {
       throw new Error("无法读取当前智能组货任务。");
     }
@@ -271,8 +293,35 @@ function getUnifiedActiveWorkflow() {
   });
 }
 
+/** Resolve a local hash image against the configured backend origin. */
+function resolveUnifiedBindingPanelImageUrl(source, apiBaseUrl) {
+  var imageUrl = String(source || "");
+  if (imageUrl.indexOf("/api/v1/cache/image/") !== 0) {
+    return imageUrl;
+  }
+  return new URL(imageUrl, apiBaseUrl).href;
+}
+
+/** Read the original CDN main image retained in source data or the product URL. */
+function getUnifiedBindingPanelCdnImageUrl(item, source, galleryUrl) {
+  var directUrl = String(source.mainImageUrl || galleryUrl || "");
+  if (/^https?:\/\//i.test(directUrl)) {
+    return directUrl;
+  }
+  var pageUrl = String(item.page_url || source.pageUrl || "");
+  if (!pageUrl) {
+    return "";
+  }
+  try {
+    var topGalleryUrl = new URL(pageUrl).searchParams.get("top_gallery_url") || "";
+    return /^https?:\/\//i.test(topGalleryUrl) ? topGalleryUrl : "";
+  } catch (error) {
+    return "";
+  }
+}
+
 /** Create a compact Temu summary for the floating panel on 1688 detail pages. */
-function createUnifiedBindingPanelRecord(record) {
+function createUnifiedBindingPanelRecord(record, apiBaseUrl) {
   var item = record || {};
   var source = item.source_data || {};
   var goods = source.goods || {};
@@ -281,7 +330,11 @@ function createUnifiedBindingPanelRecord(record) {
   var galleryUrl = typeof firstGallery === "string"
     ? firstGallery
     : firstGallery && (firstGallery.url || firstGallery.imageUrl) || "";
-  var sourceSkus = Array.isArray(source.sku) ? source.sku : [];
+  var cdnImageUrl = getUnifiedBindingPanelCdnImageUrl(item, source, galleryUrl);
+  var cachedImageUrl = item.main_image_url || "";
+  var sourceSkus = Array.isArray(item.sku)
+    ? item.sku
+    : Array.isArray(source.sku) ? source.sku : [];
   var skus = [];
   for (var index = 0; index < sourceSkus.length; index += 1) {
     var sourceSku = sourceSkus[index] || {};
@@ -299,7 +352,8 @@ function createUnifiedBindingPanelRecord(record) {
     main_id: item.main_id === undefined ? item.mainid || "" : item.main_id,
     platform_id: item.platform_id || "",
     product_name: item.product_name || goods.goodsName || "未命名 Temu 商品",
-    main_image_url: item.main_image_url || source.mainImageUrl || galleryUrl,
+    main_image_url: resolveUnifiedBindingPanelImageUrl(cachedImageUrl || cdnImageUrl, apiBaseUrl),
+    cdn_image_url: cdnImageUrl,
     listing_json: { title: String(listing.title || item.product_name || goods.goodsName || "") },
     sku: skus
   };
@@ -309,11 +363,12 @@ function createUnifiedBindingPanelRecord(record) {
 async function getUnifiedBindingPanelData() {
   var batch = await getUnifiedBatchData();
   var active = await getUnifiedActiveWorkflow();
+  var apiBaseUrl = await getUnifiedApiUrl("");
   var temuRecords = [];
   for (var index = 0; index < batch.length; index += 1) {
     var item = batch[index] || {};
     if (item.platform === "temu") {
-      temuRecords.push(createUnifiedBindingPanelRecord(item));
+      temuRecords.push(createUnifiedBindingPanelRecord(item, apiBaseUrl));
     }
   }
   return {
@@ -324,14 +379,22 @@ async function getUnifiedBindingPanelData() {
 
 /** Submit raw 1688 collection data so the server performs cache binding atomically. */
 function submitUnified1688Binding(data, temuMainId, temuPlatformId) {
-  return fetch(unifiedWorkflowBindEndpoint, {
+  return submitUnifiedCollection(data, "1688", temuMainId, temuPlatformId);
+}
+
+/** Submit raw collector output so all normalization and persistence stay on the backend. */
+function submitUnifiedCollection(data, platform, temuMainId, temuPlatformId) {
+  return getUnifiedApiUrl("/products/collect").then(function postUnifiedCollection(endpoint) {
+    return fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      temu_main_id: String(temuMainId || ""),
-      temu_platform_id: String(temuPlatformId || ""),
+      platform: String(platform || ""),
+      target_temu_main_id: String(temuMainId || ""),
+      target_temu_platform_id: String(temuPlatformId || ""),
       source_data: data && typeof data === "object" ? data : {}
     })
+    });
   }).then(function handleWorkflowBindingResponse(response) {
     if (!response.ok) {
       return response.json().catch(function handleWorkflowBindingErrorBody() {

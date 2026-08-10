@@ -3,7 +3,27 @@
   "private": true,
   "version": "1.0.0",
   "scripts": {
-    "dev": "node server/server.js",
-    "start": "node server/server.js"
+    "dev": "concurrently -n WEB,API -c cyan,yellow \"npm:dev:web\" \"npm:dev:server\"",
+    "dev:web": "vite --host 127.0.0.1 --port 5173",
+    "dev:server": "node --watch server/server.js",
+    "start": "node server/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "cache:images": "node server/scripts/migrate-image-cache.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "vue": "^3.5.18",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.54.2",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "concurrently": "^9.2.0",
+    "supertest": "^7.1.4",
+    "vite": "^7.1.1",
+    "vitest": "^3.2.4"
   }
 }

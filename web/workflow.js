@@ -1,5 +1,16 @@
 const { createApp } = Vue;
 
+const workflowPageParameters = new URLSearchParams(window.location.search);
+if (workflowPageParameters.get("embedded") === "1") {
+  document.body.classList.add("workflow-embedded");
+}
+
+/** Resolve one intelligent-packing API URL from frontend configuration. */
+function workflowApiUrl(pathname) {
+  const config = window.APP_CONFIG || {};
+  return String(config.apiBaseUrl || "http://127.0.0.1:3000/api/v1").replace(/\/$/, "") + pathname;
+}
+
 /** Return a safe array for one workflow field. */
 function workflowArray(value) {
   return Array.isArray(value) ? value : [];
@@ -11,47 +22,6 @@ function readWorkflowRecords(payload) {
     return payload.records;
   }
   return Array.isArray(payload) ? payload : [];
-}
-
-/** Read ordered image URLs from strings or collector image objects. */
-function readWorkflowImageUrls(value) {
-  const images = [];
-  const list = workflowArray(value);
-  for (let index = 0; index < list.length; index += 1) {
-    const item = list[index];
-    const url = typeof item === "string" ? item : item && (item.url || item.imageUrl);
-    if (url && images.indexOf(String(url)) < 0) {
-      images.push(String(url));
-    }
-  }
-  return images;
-}
-
-/** Normalize one cached Temu record for the intelligent-packing page. */
-function normalizeWorkflowTemuRecord(record) {
-  const source = record || {};
-  const collected = source.source_data || {};
-  const goods = collected.goods || {};
-  const gallery = readWorkflowImageUrls(source.gallery_image_urls);
-  const sourceGallery = readWorkflowImageUrls(goods.gallery);
-  for (let index = 0; index < sourceGallery.length; index += 1) {
-    if (gallery.indexOf(sourceGallery[index]) < 0) {
-      gallery.push(sourceGallery[index]);
-    }
-  }
-  const mainImage = source.main_image_url || collected.mainImageUrl || gallery[0] || "";
-  if (mainImage && gallery.indexOf(String(mainImage)) < 0) {
-    gallery.unshift(String(mainImage));
-  }
-  return {
-    main_id: source.main_id === undefined ? source.mainid || "" : source.main_id,
-    platform_id: source.platform_id || "",
-    product_name: source.product_name || goods.goodsName || "未命名 Temu 商品",
-    product_category: source.product_category || "",
-    attributes: source.attributes_json || collected.attributes || goods.goodsProperty || {},
-    gallery_image_urls: gallery,
-    main_image_url: mainImage
-  };
 }
 
 /** Send one JSON request and reject non-success API payloads. */
@@ -134,10 +104,11 @@ const workflowApp = createApp({
     </div>
   `,
   data: function createWorkflowState() {
+    const pageParameters = new URLSearchParams(window.location.search);
     return {
       records: [],
       workflow: { active_temu_main_id: "", tasks: {} },
-      selectedTemuMainId: "",
+      selectedTemuMainId: String(pageParameters.get("temu_main_id") || ""),
       selectedImageUrl: "",
       selectedResultIndex: -1,
       localPrompts: [],
@@ -147,8 +118,7 @@ const workflowApp = createApp({
       statusText: "等待选择 Temu 商品。",
       statusType: "normal",
       cacheSource: null,
-      workflowSource: null,
-      redirectedTaskKey: ""
+      workflowSource: null
     };
   },
   /** Connect the page to cache and workflow SSE streams. */
@@ -172,7 +142,7 @@ const workflowApp = createApp({
       for (let index = 0; index < this.records.length; index += 1) {
         const record = this.records[index] || {};
         if (String(record.platform || "").toLowerCase() === "temu") {
-          result.push(normalizeWorkflowTemuRecord(record));
+          result.push(record);
         }
       }
       return result;
@@ -210,26 +180,28 @@ const workflowApp = createApp({
     /** Start receiving unified product cache updates. */
     startCacheStream: function startWorkflowCacheStream() {
       const view = this;
-      fetch("/cache.json", { cache: "no-store" }).then(function readInitialCache(response) {
+      fetch(workflowApiUrl("/workbench"), { cache: "no-store" }).then(function readInitialCache(response) {
         return response.json();
       }).then(function applyInitialCache(payload) {
-        view.applyWorkflowCache(payload);
+        view.applyWorkflowCache(payload.data || {});
       }).catch(function handleInitialCacheError(error) {
         view.setWorkflowStatus(error.message || "无法读取商品 cache。", "error");
       });
-      this.cacheSource = new EventSource("/api/cache/events");
-      this.cacheSource.onmessage = function applyCacheEvent(event) {
-        try {
-          view.applyWorkflowCache(JSON.parse(event.data));
-        } catch (error) {
-          view.setWorkflowStatus("商品 cache 数据格式错误。", "error");
-        }
+      this.cacheSource = new EventSource(String((window.APP_CONFIG || {}).eventUrl || workflowApiUrl("/events")));
+      this.cacheSource.onmessage = function applyCacheEvent() {
+        fetch(workflowApiUrl("/workbench"), { cache: "no-store" }).then(function readRefreshedCache(response) {
+          return response.json();
+        }).then(function applyRefreshedCache(payload) {
+          view.applyWorkflowCache(payload.data || {});
+        }).catch(function handleRefreshedCacheError(error) {
+          view.setWorkflowStatus(error.message || "商品数据刷新失败。", "error");
+        });
       };
     },
     /** Start receiving intelligent-packing task updates. */
     startWorkflowStream: function startWorkflowTaskStream() {
       const view = this;
-      this.workflowSource = new EventSource("/api/workflow/events");
+      this.workflowSource = new EventSource(workflowApiUrl("/workflow/events"));
       this.workflowSource.onmessage = function applyWorkflowEvent(event) {
         try {
           view.applyWorkflowPayload(JSON.parse(event.data));
@@ -243,9 +215,11 @@ const workflowApp = createApp({
       this.records = readWorkflowRecords(payload);
       if (!this.selectedTemuMainId && this.temuRecords.length) {
         this.selectTemu(this.temuRecords[0]);
+      } else if (this.selectedTemu && !this.selectedImageUrl) {
+        this.selectTemu(this.selectedTemu);
       }
     },
-    /** Apply one workflow state snapshot and redirect after extension completion. */
+    /** Apply one workflow state snapshot without changing the current page. */
     applyWorkflowPayload: function applyWorkflowPayload(payload) {
       const state = payload && payload.workflow ? payload.workflow : payload;
       this.workflow = state && typeof state === "object" ? state : { active_temu_main_id: "", tasks: {} };
@@ -255,13 +229,6 @@ const workflowApp = createApp({
       }
       if (task && !this.promptBusy && !this.generateBusy && !this.searchBusy) {
         this.setWorkflowStatus(this.taskStatusText(this.selectedTemuMainId), task.status === "completed" ? "success" : "normal");
-      }
-      if (task && task.status === "completed" && task.bound_ali_main_id) {
-        const redirectKey = String(task.temu_main_id) + ":" + String(task.bound_ali_main_id);
-        if (this.redirectedTaskKey !== redirectKey) {
-          this.redirectedTaskKey = redirectKey;
-          window.location.href = "/?mode=realtime&temu_main_id=" + encodeURIComponent(task.temu_main_id) + "&ali_main_id=" + encodeURIComponent(task.bound_ali_main_id);
-        }
       }
     },
     /** Select one Temu task and restore its persisted workflow state. */
@@ -304,7 +271,7 @@ const workflowApp = createApp({
       this.promptBusy = true;
       this.setWorkflowStatus("Kimi 正在分析商品并生成四个组货方向…", "normal");
       const view = this;
-      requestWorkflowJson("/api/workflow/prompts", {
+      requestWorkflowJson(workflowApiUrl("/workflow/prompts"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -342,7 +309,7 @@ const workflowApp = createApp({
         body.index = Number(index);
       }
       const view = this;
-      requestWorkflowJson("/api/workflow/generate", {
+      requestWorkflowJson(workflowApiUrl("/workflow/generate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
@@ -369,7 +336,7 @@ const workflowApp = createApp({
       this.searchBusy = true;
       this.setWorkflowStatus("正在上传图片到 1688 搜款…", "normal");
       const view = this;
-      requestWorkflowJson("/api/workflow/search", {
+      requestWorkflowJson(workflowApiUrl("/workflow/search"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ temu_main_id: this.selectedTemu.main_id, index: this.selectedResultIndex })
