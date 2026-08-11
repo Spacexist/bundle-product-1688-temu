@@ -46,7 +46,7 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
     notifyUnifiedCollectionStatus(replaceTabId, "collecting", "正在读取当前 1688 SKU", "replaceSku");
     collectUnifiedFromTab(replaceTabId, "1688").then(function handleUnifiedSkuCollection(data) {
       notifyUnifiedCollectionStatus(replaceTabId, "broadcasting", "正在替换 Temu SKU 并更新 cache", "replaceSku");
-      return submitUnifiedSkuReplacement(data, String(message.targetTemuMainId || ""), String(message.targetTemuPlatformId || ""));
+      return submitUnifiedSkuReplacement(data, String(message.targetTemuMainId || ""), String(message.targetTemuPlatformId || ""), Number(message.targetTemuVersion || 0));
     }).then(function handleUnifiedSkuReplacementResult(result) {
       var count = Number(result && result.data && result.data.replaced_sku_count || 0);
       notifyUnifiedCollectionStatus(replaceTabId, "completed", "已替换 Temu SKU " + count + " 条", "replaceSku");
@@ -357,6 +357,14 @@ function getUnifiedActiveWorkflow() {
       throw new Error("无法读取当前智能组货任务。");
     }
     return response.json();
+  }).then(function unwrapActiveWorkflowPayload(payload) {
+    if (payload && payload.ok === false) {
+      var errorMessage = payload.error && payload.error.message
+        ? payload.error.message
+        : payload.error || "无法读取当前智能组货任务。";
+      throw new Error(errorMessage);
+    }
+    return payload && payload.data && typeof payload.data === "object" ? payload.data : payload;
   });
 }
 
@@ -462,7 +470,10 @@ function submitUnifiedCollection(data, platform, temuMainId, temuPlatformId) {
       return response.json().catch(function handleWorkflowBindingErrorBody() {
         return {};
       }).then(function throwWorkflowBindingError(payload) {
-        throw new Error(payload.error || "服务器绑定 1688 商品失败。");
+        var errorMessage = payload && payload.error && payload.error.message
+          ? payload.error.message
+          : payload && payload.error || "服务器绑定 1688 商品失败。";
+        throw new Error(errorMessage);
       });
     }
     return response.json();
@@ -482,17 +493,21 @@ function submitAndCacheUnifiedCollection(data, platform, temuMainId, temuPlatfor
 }
 
 /** Replace every SKU in one selected Temu record with the current 1688 capture. */
-function submitUnifiedSkuReplacement(data, temuMainId, temuPlatformId) {
+function submitUnifiedSkuReplacement(data, temuMainId, temuPlatformId, temuVersion) {
   return getUnifiedApiUrl("/replaceSku").then(function postUnifiedSkuReplacement(endpoint) {
+    var requestBody = {
+      target_temu_main_id: String(temuMainId || ""),
+      target_temu_platform_id: String(temuPlatformId || ""),
+      source_data: data && typeof data === "object" ? data : {},
+      replace_all_skus: true
+    };
+    if (Number(temuVersion) > 0) {
+      requestBody.target_temu_version = Number(temuVersion);
+    }
     return fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        target_temu_main_id: String(temuMainId || ""),
-        target_temu_platform_id: String(temuPlatformId || ""),
-        source_data: data && typeof data === "object" ? data : {},
-        replace_all_skus: true
-      })
+      body: JSON.stringify(requestBody)
     });
   }).then(function handleUnifiedSkuReplacementResponse(response) {
     return response.json().catch(function handleUnifiedSkuReplacementBodyError() {

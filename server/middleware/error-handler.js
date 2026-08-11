@@ -9,7 +9,7 @@ function handleApiError(error, request, response, next) {
     ok: false,
     data: null,
     error: {
-      code: statusCode === 409 ? "VERSION_CONFLICT" : "REQUEST_FAILED",
+      code: statusCode === 409 ? String(error.code || "VERSION_CONFLICT") : "REQUEST_FAILED",
       message: error.message || "服务器处理失败。",
       details: error.details || null
     },

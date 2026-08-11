@@ -24,14 +24,34 @@ function readWorkflowRecords(payload) {
   return Array.isArray(payload) ? payload : [];
 }
 
+/** Return one readable message from the shared API error envelope. */
+function getWorkflowErrorMessage(payload, fallbackMessage) {
+  const error = payload && payload.error;
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object" && error.message) {
+    return String(error.message);
+  }
+  return String(fallbackMessage || "请求失败。");
+}
+
+/** Unwrap one shared API response while retaining raw SSE payload compatibility. */
+function readWorkflowData(payload) {
+  if (payload && Object.prototype.hasOwnProperty.call(payload, "data")) {
+    return payload.data;
+  }
+  return payload;
+}
+
 /** Send one JSON request and reject non-success API payloads. */
 function requestWorkflowJson(url, options) {
   return fetch(url, options).then(function parseWorkflowResponse(response) {
     return response.json().then(function validateWorkflowPayload(payload) {
       if (!response.ok || !payload || payload.ok === false) {
-        throw new Error(payload && payload.error ? payload.error : "请求失败。");
+        throw new Error(getWorkflowErrorMessage(payload, "请求失败。"));
       }
-      return payload;
+      return readWorkflowData(payload);
     });
   });
 }
@@ -117,6 +137,10 @@ const workflowApp = createApp({
       statusText: "等待选择 Temu 商品。",
       statusType: "normal",
       cacheSource: null,
+      cacheRefreshTimer: null,
+      cacheRefreshQueued: false,
+      cacheRefreshInFlight: false,
+      cacheLastEventId: 0,
       workflowSource: null
     };
   },
@@ -129,6 +153,10 @@ const workflowApp = createApp({
   beforeUnmount: function unmountWorkflowPage() {
     if (this.cacheSource) {
       this.cacheSource.close();
+    }
+    if (this.cacheRefreshTimer) {
+      clearTimeout(this.cacheRefreshTimer);
+      this.cacheRefreshTimer = null;
     }
     if (this.workflowSource) {
       this.workflowSource.close();
@@ -179,23 +207,62 @@ const workflowApp = createApp({
     /** Start receiving unified product cache updates. */
     startCacheStream: function startWorkflowCacheStream() {
       const view = this;
-      fetch(workflowApiUrl("/workbench"), { cache: "no-store" }).then(function readInitialCache(response) {
-        return response.json();
-      }).then(function applyInitialCache(payload) {
-        view.applyWorkflowCache(payload.data || {});
-      }).catch(function handleInitialCacheError(error) {
-        view.setWorkflowStatus(error.message || "无法读取商品 cache。", "error");
-      });
       this.cacheSource = new EventSource(String((window.APP_CONFIG || {}).eventUrl || workflowApiUrl("/events")));
-      this.cacheSource.onmessage = function applyCacheEvent() {
-        fetch(workflowApiUrl("/workbench"), { cache: "no-store" }).then(function readRefreshedCache(response) {
-          return response.json();
-        }).then(function applyRefreshedCache(payload) {
-          view.applyWorkflowCache(payload.data || {});
-        }).catch(function handleRefreshedCacheError(error) {
-          view.setWorkflowStatus(error.message || "商品数据刷新失败。", "error");
-        });
+      this.cacheSource.onmessage = function applyCacheEvent(event) {
+        let message = {};
+        try {
+          message = JSON.parse(String(event && event.data || "{}"));
+        } catch (error) {
+          message = {};
+        }
+        if (message.action === "connected") {
+          return;
+        }
+        view.cacheLastEventId = Number(event && event.lastEventId) || view.cacheLastEventId;
+        view.queueWorkflowCacheRefresh();
       };
+      this.cacheRefreshQueued = true;
+      this.refreshWorkflowCache();
+    },
+
+    /** Queue several close-together product events into one cache refresh. */
+    queueWorkflowCacheRefresh: function queueWorkflowCacheRefresh() {
+      this.cacheRefreshQueued = true;
+      if (this.cacheRefreshTimer || this.cacheRefreshInFlight) {
+        return;
+      }
+      const view = this;
+      /** Start one coalesced workflow cache refresh after the current event burst. */
+      function startQueuedWorkflowCacheRefresh() {
+        view.cacheRefreshTimer = null;
+        view.refreshWorkflowCache();
+      }
+      this.cacheRefreshTimer = setTimeout(startQueuedWorkflowCacheRefresh, 120);
+    },
+
+    /** Read one cache snapshot and apply it after coalesced SSE invalidations. */
+    refreshWorkflowCache: function refreshWorkflowCache() {
+      if (this.cacheRefreshInFlight || !this.cacheRefreshQueued) {
+        return;
+      }
+      this.cacheRefreshQueued = false;
+      this.cacheRefreshInFlight = true;
+      const view = this;
+      fetch(workflowApiUrl("/workbench"), { cache: "no-store" }).then(function readWorkflowCache(response) {
+        if (!response.ok) {
+          throw new Error("无法读取商品 cache。 ");
+        }
+        return response.json();
+      }).then(function applyWorkflowCachePayload(payload) {
+        view.applyWorkflowCache(payload.data || {});
+      }).catch(function handleWorkflowCacheError(error) {
+        view.setWorkflowStatus(error.message || "商品数据刷新失败。", "error");
+      }).finally(function finishWorkflowCacheRefresh() {
+        view.cacheRefreshInFlight = false;
+        if (view.cacheRefreshQueued) {
+          view.queueWorkflowCacheRefresh();
+        }
+      });
     },
     /** Start receiving intelligent-packing task updates. */
     startWorkflowStream: function startWorkflowTaskStream() {
@@ -341,7 +408,7 @@ const workflowApp = createApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image_url: selectedImage })
       }).then(function handleWorkflowSearchSuccess(payload) {
-        const searchData = payload && payload.data && typeof payload.data === "object" ? payload.data : {};
+        const searchData = payload && typeof payload === "object" ? payload : {};
         const searchUrl = String(searchData.search_url || "");
         if (!searchUrl) {
           throw new Error("search-1688 未返回搜款地址。");

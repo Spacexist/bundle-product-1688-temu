@@ -42,6 +42,7 @@ const imageSearchSchema = z.union([
 const replaceSkuSchema = z.object({
   target_temu_platform_id: z.union([z.string(), z.number()]).optional(),
   target_temu_main_id: z.union([z.string(), z.number()]).optional(),
+  target_temu_version: z.number().int().positive().optional(),
   target_sku_index: z.number().int().nonnegative().optional(),
   target_sku_id: z.union([z.string(), z.number()]).optional(),
   source_1688_platform_id: z.union([z.string(), z.number()]).optional(),
@@ -60,6 +61,40 @@ const dollarTransferSchema = z.object({
   to_currency: z.string().optional()
 });
 
+const listingMergeSchema = z.object({
+  temu_listing: z.record(z.string(), z.unknown()),
+  ali_listing: z.record(z.string(), z.unknown())
+});
+
+const operationUndoSchema = z.object({ undo_token: z.string().min(1) });
+
+const imageEditSchema = z.object({
+  image_urls: z.array(z.string().min(1)).min(1).max(2),
+  prompt: z.string().optional(),
+  size: z.string().optional()
+});
+
+const workflowPromptSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]),
+  image_url: z.string().min(1),
+  product: z.record(z.string(), z.unknown())
+});
+
+const workflowGenerateSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]),
+  prompts: z.array(z.string()).length(4),
+  index: z.number().int().min(0).max(3).optional()
+});
+
+const workflowCompleteSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]).optional(),
+  temu_platform_id: z.union([z.string(), z.number()]).optional(),
+  ali_main_id: z.union([z.string(), z.number()]),
+  ali_platform_id: z.union([z.string(), z.number()]).optional()
+});
+
+const detailImagesQuerySchema = z.object({ url: z.string().min(1) });
+
 module.exports = {
   moduleSaveSchema: moduleSaveSchema,
   collectionSchema: collectionSchema,
@@ -69,5 +104,12 @@ module.exports = {
   imageCacheSchema: imageCacheSchema,
   imageSearchSchema: imageSearchSchema,
   dollarTransferSchema: dollarTransferSchema,
-  replaceSkuSchema: replaceSkuSchema
+  replaceSkuSchema: replaceSkuSchema,
+  listingMergeSchema: listingMergeSchema,
+  operationUndoSchema: operationUndoSchema,
+  imageEditSchema: imageEditSchema,
+  workflowPromptSchema: workflowPromptSchema,
+  workflowGenerateSchema: workflowGenerateSchema,
+  workflowCompleteSchema: workflowCompleteSchema,
+  detailImagesQuerySchema: detailImagesQuerySchema
 };

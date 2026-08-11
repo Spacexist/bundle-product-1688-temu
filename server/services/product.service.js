@@ -14,64 +14,70 @@ class ProductService {
     return this.viewModels.createWorkbench(this.repository.read());
   }
 
-  /** Clear every cached product through one backend-owned mutation. */
-  clearAll(requestId) {
-    const payload = this.repository.read();
-    if (payload.records.length) {
-      this.repository.createHistorySnapshot({ platform: "system", platform_id: "all", records: payload.records }, "clear_all");
-    }
-    payload.records = [];
-    this.repository.write(payload);
-    this.events.publish({ resource: "product", action: "cleared", ids: [], version: Number(payload.version || 1) }, requestId);
-    return this.viewModels.createWorkbench(payload);
+  /** Clear every cached product through the serialized backend mutation queue. */
+  async clearAll(requestId) {
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateAllProducts(payload) {
+      if (payload.records.length) {
+        service.repository.createHistorySnapshot({ platform: "system", platform_id: "all", records: payload.records }, "clear_all");
+      }
+      payload.records = [];
+      return null;
+    });
+    this.events.publish({ resource: "product", action: "cleared", ids: [], version: Number(transaction.payload.version || 1) }, requestId);
+    return this.viewModels.createWorkbench(transaction.payload);
   }
 
   /** Delete one cached product using its stable platform identifier. */
-  deleteOne(platform, platformId, requestId) {
-    const payload = this.repository.read();
-    const found = this.findRecord(payload.records, platform, platformId);
-    if (!found) {
-      const missingError = new Error("商品不存在或已被删除。");
-      missingError.statusCode = 404;
-      throw missingError;
-    }
-    this.repository.createHistorySnapshot(found.record, "delete");
-    payload.records.splice(found.index, 1);
-    this.repository.write(payload);
+  async deleteOne(platform, platformId, requestId) {
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateOneProductDelete(payload) {
+      const found = service.findRecord(payload.records, platform, platformId);
+      if (!found) {
+        const missingError = new Error("商品不存在或已被删除。");
+        missingError.statusCode = 404;
+        throw missingError;
+      }
+      service.repository.createHistorySnapshot(found.record, "delete");
+      payload.records.splice(found.index, 1);
+      return null;
+    });
     this.events.publish({
       resource: "product",
       action: "deleted",
       ids: [String(platform), String(platformId)],
-      version: Number(payload.version || 1)
+      version: Number(transaction.payload.version || 1)
     }, requestId);
-    return this.viewModels.createWorkbench(payload);
+    return this.viewModels.createWorkbench(transaction.payload);
   }
 
   /** Clear every cached product belonging to one platform. */
-  clearPlatform(platform, requestId) {
-    const payload = this.repository.read();
-    const retainedRecords = [];
-    const deletedRecords = [];
-    for (let index = 0; index < payload.records.length; index += 1) {
-      const record = payload.records[index];
-      if (String(record.platform) === String(platform)) {
-        deletedRecords.push(record);
-      } else {
-        retainedRecords.push(record);
+  async clearPlatform(platform, requestId) {
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutatePlatformClear(payload) {
+      const retainedRecords = [];
+      const deletedRecords = [];
+      for (let index = 0; index < payload.records.length; index += 1) {
+        const record = payload.records[index];
+        if (String(record.platform) === String(platform)) {
+          deletedRecords.push(record);
+        } else {
+          retainedRecords.push(record);
+        }
       }
-    }
-    if (deletedRecords.length) {
-      this.repository.createHistorySnapshot({ platform: platform, platform_id: "all", records: deletedRecords }, "clear_platform");
-    }
-    payload.records = retainedRecords;
-    this.repository.write(payload);
+      if (deletedRecords.length) {
+        service.repository.createHistorySnapshot({ platform: platform, platform_id: "all", records: deletedRecords }, "clear_platform");
+      }
+      payload.records = retainedRecords;
+      return null;
+    });
     this.events.publish({
       resource: "product",
       action: "platform_cleared",
       ids: [String(platform)],
-      version: Number(payload.version || 1)
+      version: Number(transaction.payload.version || 1)
     }, requestId);
-    return this.viewModels.createWorkbench(payload);
+    return this.viewModels.createWorkbench(transaction.payload);
   }
 
   /** Parse and persist an imported JSON document entirely on the backend. */
@@ -92,18 +98,26 @@ class ProductService {
       emptyError.statusCode = 400;
       throw emptyError;
     }
-    const previous = this.repository.read();
-    this.repository.createHistorySnapshot({ platform: "system", platform_id: "all", records: previous.records }, "import");
-    const payload = imported && typeof imported === "object" && !Array.isArray(imported)
+    const importedPayload = imported && typeof imported === "object" && !Array.isArray(imported)
       ? imported
       : { records: records };
-    payload.records = records;
-    for (let recordIndex = 0; recordIndex < payload.records.length; recordIndex += 1) {
-      await this.images.cacheRecordImages(payload.records[recordIndex]);
-    }
-    this.repository.write(payload);
-    this.events.publish({ resource: "product", action: "imported", ids: [], version: Number(payload.version || 1) }, requestId);
-    return this.viewModels.createWorkbench(payload);
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateJsonImport(payload) {
+      service.repository.createHistorySnapshot({ platform: "system", platform_id: "all", records: payload.records }, "import");
+      payload.records = records;
+      if (Object.prototype.hasOwnProperty.call(importedPayload, "mappings")) {
+        payload.mappings = importedPayload.mappings;
+      }
+      if (Object.prototype.hasOwnProperty.call(importedPayload, "update_instruction")) {
+        payload.update_instruction = importedPayload.update_instruction;
+      }
+      for (let recordIndex = 0; recordIndex < payload.records.length; recordIndex += 1) {
+        await service.images.cacheRecordImages(payload.records[recordIndex]);
+      }
+      return null;
+    });
+    this.events.publish({ resource: "product", action: "imported", ids: [], version: Number(transaction.payload.version || 1) }, requestId);
+    return this.viewModels.createWorkbench(transaction.payload);
   }
 
   /** Restore the original JSON format exported by the browser extension. */
@@ -138,37 +152,44 @@ class ProductService {
 
   /** Save one product module with optimistic concurrency validation. */
   async saveModule(input, requestId) {
-    const payload = this.repository.read();
-    const found = this.findRecord(payload.records, input.platform, input.platform_id);
-    if (!found) {
-      const missingError = new Error("商品不存在或已被删除。");
-      missingError.statusCode = 404;
-      throw missingError;
-    }
-    const currentVersion = Number(found.record.version || 1);
-    if (Number(input.version) !== currentVersion) {
-      const conflictError = new Error("商品已被其他操作更新，请刷新后重试。");
-      conflictError.statusCode = 409;
-      conflictError.details = { current_version: currentVersion };
-      throw conflictError;
-    }
-    const undoToken = this.repository.createHistorySnapshot(found.record, input.module);
-    this.applyModule(found.record, input.module, input.data);
-    if (input.module === "images" || input.module === "skus") {
-      await this.images.cacheRecordImages(found.record);
-    }
-    found.record.version = currentVersion + 1;
-    this.repository.write(payload);
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateProductModule(payload) {
+      const found = service.findRecord(payload.records, input.platform, input.platform_id);
+      if (!found) {
+        const missingError = new Error("商品不存在或已被删除。");
+        missingError.statusCode = 404;
+        throw missingError;
+      }
+      const currentVersion = Number(found.record.version || 1);
+      if (Number(input.version) !== currentVersion) {
+        const conflictError = new Error("商品已被其他操作更新，请刷新后重试。");
+        conflictError.statusCode = 409;
+        conflictError.code = "PRODUCT_VERSION_CONFLICT";
+        conflictError.details = {
+          expected_version: Number(input.version),
+          current_version: currentVersion,
+          product: service.viewModels.normalizeRecord(found.record)
+        };
+        throw conflictError;
+      }
+      const undoToken = service.repository.createHistorySnapshot(found.record, input.module);
+      service.applyModule(found.record, input.module, input.data);
+      if (input.module === "images" || input.module === "skus") {
+        await service.images.cacheRecordImages(found.record);
+      }
+      found.record.version = currentVersion + 1;
+      return {
+        product: service.viewModels.normalizeRecord(found.record),
+        undo_token: undoToken
+      };
+    });
     this.events.publish({
       resource: "product",
       action: "updated",
       ids: [String(input.platform), String(input.platform_id)],
-      version: found.record.version
+      version: transaction.result.product.version
     }, requestId);
-    return {
-      product: this.viewModels.normalizeRecord(found.record),
-      undo_token: undoToken
-    };
+    return transaction.result;
   }
 
   /** Return the raw SKU rows retained by one cached product. */
@@ -307,86 +328,99 @@ class ProductService {
 
   /** Replace selected Temu SKU rows with current 1688 SKU rows and publish the update. */
   async replaceSku(input, requestId) {
-    const payload = this.repository.read();
-    const target = input.target_temu_platform_id
-      ? this.findRecord(payload.records, "temu", input.target_temu_platform_id)
-      : this.findRecordByMainId(payload.records, "temu", input.target_temu_main_id);
-    if (!target) {
-      const targetError = new Error("找不到待替换的 Temu 商品。 ");
-      targetError.statusCode = 404;
-      throw targetError;
-    }
-    let source = input.source_1688_platform_id
-      ? this.findRecord(payload.records, "1688", input.source_1688_platform_id)
-      : this.findRecordByMainId(payload.records, "1688", input.source_1688_main_id);
-    const sourceData = input.source_data && typeof input.source_data === "object" ? input.source_data : null;
-    if (!source && sourceData) {
-      source = {
-        record: {
-          platform: "1688",
-          platform_id: String(input.source_1688_platform_id || ""),
-          main_id: String(input.source_1688_main_id || ""),
-          product_name: String(sourceData.productName || ""),
-          source_data: sourceData,
-          sku: Array.isArray(sourceData.skuRows) ? sourceData.skuRows : []
-        },
-        index: -1
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateSkuReplacement(payload) {
+      const target = input.target_temu_platform_id
+        ? service.findRecord(payload.records, "temu", input.target_temu_platform_id)
+        : service.findRecordByMainId(payload.records, "temu", input.target_temu_main_id);
+      if (!target) {
+        const targetError = new Error("找不到待替换的 Temu 商品。 ");
+        targetError.statusCode = 404;
+        throw targetError;
+      }
+      let source = input.source_1688_platform_id
+        ? service.findRecord(payload.records, "1688", input.source_1688_platform_id)
+        : service.findRecordByMainId(payload.records, "1688", input.source_1688_main_id);
+      const sourceData = input.source_data && typeof input.source_data === "object" ? input.source_data : null;
+      if (!source && sourceData) {
+        source = {
+          record: {
+            platform: "1688",
+            platform_id: String(input.source_1688_platform_id || ""),
+            main_id: String(input.source_1688_main_id || ""),
+            product_name: String(sourceData.productName || ""),
+            source_data: sourceData,
+            sku: Array.isArray(sourceData.skuRows) ? sourceData.skuRows : []
+          },
+          index: -1
+        };
+      }
+      if (!source) {
+        const sourceError = new Error("找不到当前 1688 商品，请先采集或刷新工作台。 ");
+        sourceError.statusCode = 404;
+        throw sourceError;
+      }
+      const currentVersion = Number(target.record.version || 1);
+      if (input.target_temu_version !== undefined && Number(input.target_temu_version) !== currentVersion) {
+        const conflictError = new Error("商品已被其他操作更新，请刷新后重试。");
+        conflictError.statusCode = 409;
+        conflictError.code = "PRODUCT_VERSION_CONFLICT";
+        conflictError.details = {
+          expected_version: Number(input.target_temu_version),
+          current_version: currentVersion,
+          product: service.viewModels.normalizeRecord(target.record)
+        };
+        throw conflictError;
+      }
+      const targetRows = service.getStoredSkuRows(target.record, "temu");
+      const sourceRows = service.getStoredSkuRows(source.record, "1688");
+      const replaceAll = Boolean(input.replace_all_skus || sourceData);
+      let targetSelection = null;
+      let sourceSelection = null;
+      if (!replaceAll) {
+        targetSelection = service.findSkuRow(targetRows, input.target_sku_index, input.target_sku_id, "Temu SKU");
+        sourceSelection = service.findSkuRow(sourceRows, input.source_sku_index, input.source_sku_id, "1688 SKU");
+      }
+      if (!Array.isArray(target.record.sku) || !target.record.sku.length) {
+        target.record.sku = [];
+        for (let rowIndex = 0; rowIndex < targetRows.length; rowIndex += 1) {
+          target.record.sku.push(service.copySkuRow(targetRows[rowIndex]));
+        }
+      }
+      const undoToken = service.repository.createHistorySnapshot(target.record, "replace_sku");
+      if (replaceAll) {
+        if (!sourceRows.length) {
+          const emptyError = new Error("当前 1688 商品没有可替换的 SKU。 ");
+          emptyError.statusCode = 400;
+          throw emptyError;
+        }
+        target.record.sku = [];
+        for (let sourceIndex = 0; sourceIndex < sourceRows.length; sourceIndex += 1) {
+          const baseTargetSku = targetRows[sourceIndex] || {};
+          target.record.sku.push(service.createReplacementSku(baseTargetSku, sourceRows[sourceIndex], source.record, sourceIndex));
+        }
+      } else {
+        const replacement = service.createReplacementSku(targetSelection.row, sourceSelection.row, source.record, sourceSelection.index);
+        target.record.sku[targetSelection.index] = replacement;
+      }
+      await service.images.cacheRecordImages(target.record);
+      target.record.version = currentVersion + 1;
+      return {
+        product: service.viewModels.normalizeRecord(target.record),
+        source_product: service.viewModels.normalizeRecord(source.record),
+        target_sku_index: replaceAll ? null : targetSelection.index,
+        source_sku_index: replaceAll ? null : sourceSelection.index,
+        replaced_sku_count: replaceAll ? target.record.sku.length : 1,
+        undo_token: undoToken
       };
-    }
-    if (!source) {
-      const sourceError = new Error("找不到当前 1688 商品，请先采集或刷新工作台。 ");
-      sourceError.statusCode = 404;
-      throw sourceError;
-    }
-    const targetRows = this.getStoredSkuRows(target.record, "temu");
-    const sourceRows = this.getStoredSkuRows(source.record, "1688");
-    const replaceAll = Boolean(input.replace_all_skus || sourceData);
-    let targetSelection = null;
-    let sourceSelection = null;
-    if (!replaceAll) {
-      targetSelection = this.findSkuRow(targetRows, input.target_sku_index, input.target_sku_id, "Temu SKU");
-      sourceSelection = this.findSkuRow(sourceRows, input.source_sku_index, input.source_sku_id, "1688 SKU");
-    }
-    if (!Array.isArray(target.record.sku) || !target.record.sku.length) {
-      target.record.sku = [];
-      for (let rowIndex = 0; rowIndex < targetRows.length; rowIndex += 1) {
-        target.record.sku.push(this.copySkuRow(targetRows[rowIndex]));
-      }
-    }
-    const currentVersion = Number(target.record.version || 1);
-    const undoToken = this.repository.createHistorySnapshot(target.record, "replace_sku");
-    if (replaceAll) {
-      if (!sourceRows.length) {
-        const emptyError = new Error("当前 1688 商品没有可替换的 SKU。 ");
-        emptyError.statusCode = 400;
-        throw emptyError;
-      }
-      target.record.sku = [];
-      for (let sourceIndex = 0; sourceIndex < sourceRows.length; sourceIndex += 1) {
-        const baseTargetSku = targetRows[sourceIndex] || {};
-        target.record.sku.push(this.createReplacementSku(baseTargetSku, sourceRows[sourceIndex], source.record, sourceIndex));
-      }
-    } else {
-      const replacement = this.createReplacementSku(targetSelection.row, sourceSelection.row, source.record, sourceSelection.index);
-      target.record.sku[targetSelection.index] = replacement;
-    }
-    await this.images.cacheRecordImages(target.record);
-    target.record.version = currentVersion + 1;
-    this.repository.write(payload);
+    });
     this.events.publish({
       resource: "product",
       action: "sku_replaced",
-      ids: ["temu", String(target.record.platform_id), "1688", String(source.record.platform_id)],
-      version: target.record.version
+      ids: ["temu", String(transaction.result.product.platform_id), "1688", String(transaction.result.source_product.platform_id)],
+      version: transaction.result.product.version
     }, requestId);
-    return {
-      product: this.viewModels.normalizeRecord(target.record),
-      source_product: this.viewModels.normalizeRecord(source.record),
-      target_sku_index: replaceAll ? null : targetSelection.index,
-      source_sku_index: replaceAll ? null : sourceSelection.index,
-      replaced_sku_count: replaceAll ? target.record.sku.length : 1,
-      undo_token: undoToken
-    };
+    return transaction.result;
   }
 
   /** Apply an allow-listed module payload to a raw product record. */
@@ -414,31 +448,33 @@ class ProductService {
   }
 
   /** Restore one product snapshot using a durable undo token. */
-  undo(input, requestId) {
-    const snapshot = this.repository.consumeHistorySnapshot(input.token);
-    if (!snapshot || !snapshot.record) {
-      const undoError = new Error("返回记录不存在或已经使用。");
-      undoError.statusCode = 404;
-      throw undoError;
-    }
-    const payload = this.repository.read();
-    const record = snapshot.record;
-    const found = this.findRecord(payload.records, record.platform, record.platform_id);
-    if (!found) {
-      const missingError = new Error("原商品已经不存在，无法返回。");
-      missingError.statusCode = 404;
-      throw missingError;
-    }
-    record.version = Number(found.record.version || 1) + 1;
-    payload.records[found.index] = record;
-    this.repository.write(payload);
+  async undo(input, requestId) {
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateProductUndo(payload) {
+      const snapshot = service.repository.consumeHistorySnapshot(input.token);
+      if (!snapshot || !snapshot.record) {
+        const undoError = new Error("返回记录不存在或已经使用。");
+        undoError.statusCode = 404;
+        throw undoError;
+      }
+      const record = snapshot.record;
+      const found = service.findRecord(payload.records, record.platform, record.platform_id);
+      if (!found) {
+        const missingError = new Error("原商品已经不存在，无法返回。");
+        missingError.statusCode = 404;
+        throw missingError;
+      }
+      record.version = Number(found.record.version || 1) + 1;
+      payload.records[found.index] = record;
+      return { product: service.viewModels.normalizeRecord(record) };
+    });
     this.events.publish({
       resource: "product",
       action: "restored",
-      ids: [String(record.platform), String(record.platform_id)],
-      version: record.version
+      ids: [String(transaction.result.product.platform), String(transaction.result.product.platform_id)],
+      version: transaction.result.product.version
     }, requestId);
-    return { product: this.viewModels.normalizeRecord(record) };
+    return transaction.result;
   }
 }
 

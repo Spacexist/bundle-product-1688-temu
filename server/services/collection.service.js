@@ -34,26 +34,30 @@ class CollectionService {
 
   /** Cache one collected record without blocking the collection response. */
   async cacheRecordImagesInBackground(platform, platformId, productId, requestId) {
-    const initialPayload = this.repository.read();
-    const record = this.findExisting(initialPayload.records, platform, productId);
-    if (!record || String(record.platform_id || "") !== String(platformId || "")) {
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateBackgroundImageCache(payload) {
+      const record = service.findExisting(payload.records, platform, productId);
+      if (!record || String(record.platform_id || "") !== String(platformId || "")) {
+        return { cached: false };
+      }
+      const expectedVersion = Number(record.version || 1);
+      await service.images.cacheRecordImages(record);
+      const latestRecord = service.findExisting(payload.records, platform, productId);
+      if (!latestRecord || String(latestRecord.platform_id || "") !== String(platformId || "")
+        || Number(latestRecord.version || 1) !== expectedVersion) {
+        return { cached: false };
+      }
+      service.copyCachedImageFields(latestRecord, record);
+      return { cached: true };
+    });
+    if (!transaction.result.cached) {
       return;
     }
-    const expectedVersion = Number(record.version || 1);
-    await this.images.cacheRecordImages(record);
-    const latestPayload = this.repository.read();
-    const latestRecord = this.findExisting(latestPayload.records, platform, productId);
-    if (!latestRecord || String(latestRecord.platform_id || "") !== String(platformId || "")
-      || Number(latestRecord.version || 1) !== expectedVersion) {
-      return;
-    }
-    this.copyCachedImageFields(latestRecord, record);
-    this.repository.write(latestPayload);
     this.events.publish({
       resource: "product",
       action: "images_cached",
       ids: [platform, platformId],
-      version: Number(latestPayload.version || 1)
+      version: Number(transaction.payload.version || 1)
     }, requestId);
   }
 
@@ -175,51 +179,58 @@ class CollectionService {
     const platform = String(input.platform || "").toLowerCase();
     const source = input.source_data && typeof input.source_data === "object" ? input.source_data : {};
     const priceInfo = this.currency ? await this.currency.normalizeSourcePrices(source, platform) : null;
-    const payload = this.repository.read();
-    payload.records = this.dedupeRecords(payload.records);
-    const records = payload.records;
-    const productId = this.getProductId(platform, source);
-    let record = this.findExisting(records, platform, productId);
-    if (!record) {
-      record = {
-        main_id: this.getNextIdentifier(records, "main_id", ""),
-        platform_id: this.getNextIdentifier(records, "platform_id", platform),
-        platform: platform,
-        product_id: productId,
-        product_name: this.getProductName(platform, source),
-        version: 1,
-        source_data: source,
-        bound_1688_platform_id: "",
-        linked_temu_platform_id: ""
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateCollection(payload) {
+      payload.records = service.dedupeRecords(payload.records);
+      const records = payload.records;
+      const productId = service.getProductId(platform, source);
+      let record = service.findExisting(records, platform, productId);
+      if (!record) {
+        record = {
+          main_id: service.getNextIdentifier(records, "main_id", ""),
+          platform_id: service.getNextIdentifier(records, "platform_id", platform),
+          platform: platform,
+          product_id: productId,
+          product_name: service.getProductName(platform, source),
+          version: 1,
+          source_data: source,
+          bound_1688_platform_id: "",
+          linked_temu_platform_id: ""
+        };
+        records.push(record);
+      } else {
+        record.source_data = source;
+        record.product_name = service.getProductName(platform, source) || record.product_name;
+        record.version = Number(record.version || 1) + 1;
+      }
+      if (service.currency && priceInfo) {
+        const sourceRows = platform === "1688" ? source.skuRows : source.sku;
+        if (Array.isArray(record.sku) && Array.isArray(sourceRows)) {
+          service.currency.syncStoredSkuPrices(record.sku, sourceRows);
+        }
+        record.original_currency = priceInfo.original_currency;
+        record.price_currency = priceInfo.price_currency;
+        record.price_update_time = priceInfo.update_time;
+      }
+      let temuRecord = null;
+      if (platform === "1688" && (input.target_temu_platform_id || input.target_temu_main_id)) {
+        const targetTemu = input.target_temu_platform_id
+          ? service.findByPlatformId(records, "temu", input.target_temu_platform_id)
+          : service.findByMainId(records, "temu", input.target_temu_main_id);
+        if (!targetTemu) {
+          const targetError = new Error("找不到待绑定的 Temu 商品。");
+          targetError.statusCode = 404;
+          throw targetError;
+        }
+        temuRecord = service.bindOneToOne(records, record, targetTemu.platform_id);
+      }
+      return {
+        record: record,
+        temuRecord: temuRecord
       };
-      records.push(record);
-    } else {
-      record.source_data = source;
-      record.product_name = this.getProductName(platform, source) || record.product_name;
-      record.version = Number(record.version || 1) + 1;
-    }
-    if (this.currency && priceInfo) {
-      const sourceRows = platform === "1688" ? source.skuRows : source.sku;
-      if (Array.isArray(record.sku) && Array.isArray(sourceRows)) {
-        this.currency.syncStoredSkuPrices(record.sku, sourceRows);
-      }
-      record.original_currency = priceInfo.original_currency;
-      record.price_currency = priceInfo.price_currency;
-      record.price_update_time = priceInfo.update_time;
-    }
-    let temuRecord = null;
-    if (platform === "1688" && (input.target_temu_platform_id || input.target_temu_main_id)) {
-      const targetTemu = input.target_temu_platform_id
-        ? this.findByPlatformId(records, "temu", input.target_temu_platform_id)
-        : this.findByMainId(records, "temu", input.target_temu_main_id);
-      if (!targetTemu) {
-        const targetError = new Error("找不到待绑定的 Temu 商品。");
-        targetError.statusCode = 404;
-        throw targetError;
-      }
-      temuRecord = this.bindOneToOne(records, record, targetTemu.platform_id);
-    }
-    this.repository.write(payload);
+    });
+    const record = transaction.result.record;
+    const temuRecord = transaction.result.temuRecord;
     this.scheduleImageCache(record, requestId);
     const ids = [platform, String(record.platform_id)];
     if (temuRecord) {
@@ -232,7 +243,7 @@ class CollectionService {
         }, requestId);
       }
     }
-    this.events.publish({ resource: "product", action: temuRecord ? "bound" : "collected", ids: ids, version: Number(payload.version || 1) }, requestId);
+    this.events.publish({ resource: "product", action: temuRecord ? "bound" : "collected", ids: ids, version: Number(transaction.payload.version || 1) }, requestId);
     return {
       product: this.viewModels.normalizeRecord(record),
       bound_temu: temuRecord ? this.viewModels.normalizeRecord(temuRecord) : null,

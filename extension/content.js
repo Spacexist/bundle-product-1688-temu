@@ -145,6 +145,9 @@ function handleUnifiedCollectorClick(event) {
   var targetTemuPlatformId = platform === "1688" && unifiedSelectedTemuRecord
     ? String(unifiedSelectedTemuRecord.platform_id || "")
     : "";
+  var targetTemuVersion = platform === "1688" && unifiedSelectedTemuRecord
+    ? Number(unifiedSelectedTemuRecord.version || 0)
+    : 0;
   button.disabled = true;
   renderUnifiedCollectorButton(button, "collecting", "正在读取商品页面");
   var actionType = button.dataset.action === "replaceSku"
@@ -154,7 +157,8 @@ function handleUnifiedCollectorClick(event) {
     type: actionType,
     platform: platform,
     targetTemuMainId: targetTemuMainId,
-    targetTemuPlatformId: targetTemuPlatformId
+    targetTemuPlatformId: targetTemuPlatformId,
+    targetTemuVersion: targetTemuVersion
   }, function handleUnifiedResponse(response) {
     var lastError = chrome.runtime.lastError;
     if (lastError || !response || !response.ok) {
@@ -162,9 +166,10 @@ function handleUnifiedCollectorClick(event) {
       window.setTimeout(resetUnifiedCollectorButton, 2600, button);
       return;
     }
+    var responseData = response.data && typeof response.data === "object" ? response.data : {};
     var completedMessage = actionType === "replaceUnifiedSku"
-      ? "已替换 " + String(response.data && response.data.replaced_sku_count || 0) + " 条 Temu SKU"
-      : response.workflow_completed ? "已绑定 Temu" : response.replaced ? "重复商品已更新" : "已写入 cache";
+      ? "已替换 " + String(responseData.replaced_sku_count || 0) + " 条 Temu SKU"
+      : response.workflow_completed || responseData.bound_temu ? "已绑定 Temu" : response.replaced ? "重复商品已更新" : "已写入 cache";
     renderUnifiedCollectorButton(button, "completed", completedMessage);
     window.setTimeout(resetUnifiedCollectorButton, 2400, button);
   });

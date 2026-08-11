@@ -18,18 +18,19 @@ class ProductController {
   }
 
   /** Clear the complete product cache via the backend repository. */
-  clearAll(request, response, next) {
+  async clearAll(request, response, next) {
     try {
-      response.json({ ok: true, data: this.products.clearAll(request.requestId), error: null, meta: { request_id: request.requestId } });
+      const result = await this.products.clearAll(request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
     }
   }
 
   /** Delete one cached product selected by platform and platform identifier. */
-  deleteOne(request, response, next) {
+  async deleteOne(request, response, next) {
     try {
-      const result = this.products.deleteOne(request.params.platform, request.params.platformId, request.requestId);
+      const result = await this.products.deleteOne(request.params.platform, request.params.platformId, request.requestId);
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
@@ -37,9 +38,9 @@ class ProductController {
   }
 
   /** Clear only the cached products that belong to one platform. */
-  clearPlatform(request, response, next) {
+  async clearPlatform(request, response, next) {
     try {
-      const result = this.products.clearPlatform(request.params.platform, request.requestId);
+      const result = await this.products.clearPlatform(request.params.platform, request.requestId);
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
@@ -71,9 +72,9 @@ class ProductController {
   }
 
   /** Restore one previous module snapshot. */
-  undo(request, response, next) {
+  async undo(request, response, next) {
     try {
-      const result = this.products.undo(request.validatedBody, request.requestId);
+      const result = await this.products.undo(request.validatedBody, request.requestId);
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

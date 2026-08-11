@@ -22,6 +22,26 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+/** Return one readable message from the shared API error envelope. */
+function getApiErrorMessage(payload, fallbackMessage) {
+  const error = payload && payload.error;
+  if (typeof error === "string") {
+    return error;
+  }
+  if (error && typeof error === "object" && error.message) {
+    return String(error.message);
+  }
+  return String(fallbackMessage || "请求失败。");
+}
+
+/** Unwrap one shared API response while retaining compatibility with raw data payloads. */
+function readApiData(payload) {
+  if (payload && Object.prototype.hasOwnProperty.call(payload, "data")) {
+    return payload.data;
+  }
+  return payload;
+}
+
 /** Read URL values from a collector image array without altering their order. */
 function readStoredImageUrls(value) {
   const result = [];
@@ -174,9 +194,9 @@ function requestWorkflowJson(url, options) {
   return fetch(url, options).then(function parseWorkflowResponse(response) {
     return response.json().then(function validateWorkflowPayload(payload) {
       if (!response.ok || !payload || payload.ok === false) {
-        throw new Error(payload && payload.error ? payload.error : "智能组货请求失败。");
+        throw new Error(getApiErrorMessage(payload, "智能组货请求失败。"));
       }
-      return payload;
+      return readApiData(payload);
     });
   });
 }
@@ -332,6 +352,10 @@ const app = createApp({
       workspaceMode: "realtime",
       realtimeConnected: false,
       realtimeSource: null,
+      realtimeRefreshTimer: null,
+      realtimeRefreshQueued: false,
+      realtimeRefreshInFlight: false,
+      realtimeLastEventId: 0,
       activePlatform: "temu",
       selectedMainId: "",
       selectedGalleryIndex: 0,
@@ -396,6 +420,7 @@ const app = createApp({
        workflowStatusType: "normal",
        workflowSource: null,
        pendingCacheEvents: {},
+       productSaveStates: {},
        miaoshouExportBusy: false
     };
   },
@@ -616,7 +641,7 @@ const app = createApp({
       }).then(function handleSecretSaveResponse(response) {
         return response.json().then(function validateSecretSavePayload(payload) {
           if (!response.ok || !payload.ok) {
-            throw new Error(payload && payload.error ? payload.error.message : "API 设置保存失败。");
+            throw new Error(getApiErrorMessage(payload, "API 设置保存失败。"));
           }
           return payload.data;
         });
@@ -632,12 +657,46 @@ const app = createApp({
       });
     },
 
-    /** Write one edited product module directly back to the backend cache. */
-    saveProductModule: function saveProductModule(record, moduleName) {
-      if (!record) {
-        return;
+    /** Clone one JSON-compatible product module snapshot before a request starts. */
+    cloneProductSaveData: function cloneProductSaveData(data) {
+      if (!data || typeof data !== "object") {
+        return {};
       }
-      const pendingCacheEventKey = this.markPendingCacheEvent(record);
+      return JSON.parse(JSON.stringify(data));
+    },
+
+    /** Find one currently rendered record by its stable cache key. */
+    findProductByCacheKey: function findProductByCacheKey(cacheKey) {
+      const key = String(cacheKey || "");
+      for (let index = 0; index < this.records.length; index += 1) {
+        if (this.productCacheEventKey(this.records[index]) === key) {
+          return this.records[index];
+        }
+      }
+      return null;
+    },
+
+    /** Return or create the single save state shared by every module of one product. */
+    getProductSaveState: function getProductSaveState(record) {
+      const key = this.productCacheEventKey(record);
+      if (!key) {
+        return null;
+      }
+      if (!this.productSaveStates[key]) {
+        this.productSaveStates[key] = {
+          pendingModules: {},
+          inFlight: null,
+          generation: 0,
+          conflict: false,
+          remoteProduct: null,
+          timer: null
+        };
+      }
+      return this.productSaveStates[key];
+    },
+
+    /** Build the allow-listed module snapshot sent to the backend. */
+    createProductModuleData: function createProductModuleData(record, moduleName) {
       const data = {};
       if (moduleName === "basic") {
         data.product_name = record.product_name;
@@ -654,28 +713,149 @@ const app = createApp({
         data.product_name = record.product_name;
         data.listing_json = record.listing_json;
       }
+      return data;
+    },
+
+    /** Queue the next module snapshot for one product without allowing parallel writes. */
+    saveProductModule: function saveProductModule(record, moduleName) {
+      if (!record) {
+        return;
+      }
+      const key = this.productCacheEventKey(record);
+      const state = this.getProductSaveState(record);
+      if (!key || !state) {
+        return;
+      }
+      state.pendingModules[moduleName] = this.cloneProductSaveData(this.createProductModuleData(record, moduleName));
+      state.generation += 1;
+      if (state.conflict) {
+        state.conflict = false;
+        state.remoteProduct = null;
+      }
+      if (state.timer) {
+        window.clearTimeout(state.timer);
+      }
+      const view = this;
+      /** Start one coalesced product save after the input burst settles. */
+      function startCoalescedProductSave() {
+        state.timer = null;
+        view.flushProductSave(key);
+      }
+      state.timer = window.setTimeout(startCoalescedProductSave, 260);
+    },
+
+    /** Flush one queued module snapshot while keeping every product save serialized. */
+    flushProductSave: function flushProductSave(cacheKey) {
+      const key = String(cacheKey || "");
+      const state = this.productSaveStates[key];
+      if (!state || state.inFlight || state.conflict) {
+        return;
+      }
+      let moduleName = "";
+      for (const pendingModuleName in state.pendingModules) {
+        if (Object.prototype.hasOwnProperty.call(state.pendingModules, pendingModuleName)) {
+          moduleName = pendingModuleName;
+          break;
+        }
+      }
+      if (!moduleName) {
+        return;
+      }
+      const record = this.findProductByCacheKey(key);
+      if (!record) {
+        delete state.pendingModules[moduleName];
+        return;
+      }
+      const data = state.pendingModules[moduleName];
+      delete state.pendingModules[moduleName];
+      const generation = state.generation;
+      const version = Number(record.version || 1);
+      state.inFlight = { moduleName: moduleName, generation: generation, data: data, version: version };
+      this.markPendingCacheEvent(record);
       const view = this;
       const endpoint = "/products/" + encodeURIComponent(record.platform) + "/" + encodeURIComponent(record.platform_id) + "/modules/" + encodeURIComponent(moduleName);
       fetch(apiUrl(endpoint), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ version: Number(record.version || 1), data: data })
+        body: JSON.stringify({ version: version, data: data })
       }).then(function handleModuleSaveResponse(response) {
         return response.json().then(function validateModuleSavePayload(payload) {
           if (!response.ok || !payload.ok) {
-            throw new Error(payload && payload.error ? payload.error.message : "保存失败。");
+            const saveError = new Error(getApiErrorMessage(payload, "保存失败。"));
+            saveError.status = response.status;
+            saveError.payload = payload;
+            throw saveError;
           }
           return payload.data;
         });
       }).then(function applySavedModule(result) {
-        view.replaceProductViewModel(result.product);
-        view.setStatus("cache 已更新。", "success");
+        view.finishProductSave(key, result);
       }).catch(function handleModuleSaveError(error) {
-        if (pendingCacheEventKey) {
-          view.clearPendingCacheEvent(pendingCacheEventKey);
-        }
-        view.setStatus(error.message || "cache 更新失败。", "error");
+        view.failProductSave(key, error);
       });
+    },
+
+    /** Apply one successful save response without overwriting newer local edits. */
+    finishProductSave: function finishProductSave(cacheKey, result) {
+      const state = this.productSaveStates[String(cacheKey || "")];
+      if (!state || !state.inFlight) {
+        return;
+      }
+      const request = state.inFlight;
+      state.inFlight = null;
+      const product = result && result.product ? result.product : null;
+      const record = this.findProductByCacheKey(cacheKey);
+      if (record && product) {
+        record.version = Number(product.version || record.version || 1);
+      }
+      if (product && state.generation === request.generation && !this.hasPendingProductModules(state)) {
+        this.replaceProductViewModel(product);
+      }
+      if (this.hasPendingProductModules(state)) {
+        this.flushProductSave(cacheKey);
+        return;
+      }
+      this.setStatus("cache 已更新。", "success");
+    },
+
+    /** Check whether one product has module snapshots waiting behind its current request. */
+    hasPendingProductModules: function hasPendingProductModules(state) {
+      const pending = state && state.pendingModules ? state.pendingModules : {};
+      for (const moduleName in pending) {
+        if (Object.prototype.hasOwnProperty.call(pending, moduleName)) {
+          return true;
+        }
+      }
+      return false;
+    },
+
+    /** Retain a failed module snapshot and expose a recoverable conflict state. */
+    failProductSave: function failProductSave(cacheKey, error) {
+      const key = String(cacheKey || "");
+      const state = this.productSaveStates[key];
+      if (!state || !state.inFlight) {
+        return;
+      }
+      const request = state.inFlight;
+      state.inFlight = null;
+      this.clearPendingCacheEvent(key);
+      if (!state.pendingModules[request.moduleName]) {
+        state.pendingModules[request.moduleName] = request.data;
+      }
+      const payload = error && error.payload ? error.payload : null;
+      const errorBody = payload && payload.error && typeof payload.error === "object" ? payload.error : {};
+      const details = errorBody.details && typeof errorBody.details === "object" ? errorBody.details : {};
+      if (error && Number(error.status) === 409) {
+        const record = this.findProductByCacheKey(key);
+        state.conflict = true;
+        state.remoteProduct = details.product || null;
+        if (record && details.current_version) {
+          record.version = Number(details.current_version);
+        }
+        this.setStatus("商品已被其他页面更新，当前修改已暂存；继续编辑将保留本页修改重试。", "error");
+        return;
+      }
+      this.setStatus(error && error.message ? error.message : "cache 更新失败。", "error");
     },
 
     /** Replace one rendered product with the fresh server ViewModel. */
@@ -754,9 +934,9 @@ const app = createApp({
       }).then(function handleListingMergeResponse(response) {
         return response.json().then(function handleListingMergePayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(payload && payload.error ? payload.error : "Kimi 合并 Listing 失败。");
+            throw new Error(getApiErrorMessage(payload, "Kimi 合并 Listing 失败。"));
           }
-          return payload;
+          return readApiData(payload);
         });
       }).then(function handleListingMergeSuccess(payload) {
         const undoKey = view.getListingUndoKey(temuRecord);
@@ -792,9 +972,9 @@ const app = createApp({
       }).then(function handleListingUndoResponse(response) {
         return response.json().then(function handleListingUndoPayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(payload && payload.error ? payload.error : "Listing 返回失败。");
+            throw new Error(getApiErrorMessage(payload, "Listing 返回失败。"));
           }
-          return payload;
+          return readApiData(payload);
         });
       }).then(function handleListingUndoSuccess(payload) {
         view.applyListingToRecord(temuRecord, payload.listing);
@@ -814,7 +994,42 @@ const app = createApp({
       const previousAliMainId = String(this.selected1688MainId || "");
       const previousTemuGalleryIndex = Number(this.selectedTemuGalleryIndex);
       const previousAliGalleryIndex = Number(this.selected1688GalleryIndex);
-      this.records = records;
+      const previousRecords = this.records;
+      const mergedRecords = [];
+      const retainedKeys = {};
+      const incomingRecords = Array.isArray(records) ? records : [];
+      for (let recordIndex = 0; recordIndex < incomingRecords.length; recordIndex += 1) {
+        const incomingRecord = incomingRecords[recordIndex];
+        const key = this.productCacheEventKey(incomingRecord);
+        const state = key ? this.productSaveStates[key] : null;
+        let localRecord = null;
+        for (let localIndex = 0; localIndex < previousRecords.length; localIndex += 1) {
+          if (this.productCacheEventKey(previousRecords[localIndex]) === key) {
+            localRecord = previousRecords[localIndex];
+            break;
+          }
+        }
+        const hasLocalChanges = state && (state.inFlight || this.hasPendingProductModules(state) || state.conflict);
+        if (hasLocalChanges && localRecord) {
+          if (Number(incomingRecord.version || 0) > Number(localRecord.version || 0)) {
+            state.remoteProduct = incomingRecord;
+          }
+          mergedRecords.push(localRecord);
+          retainedKeys[key] = true;
+        } else {
+          mergedRecords.push(incomingRecord);
+        }
+      }
+      for (let localIndex = 0; localIndex < previousRecords.length; localIndex += 1) {
+        const localRecord = previousRecords[localIndex];
+        const key = this.productCacheEventKey(localRecord);
+        const state = key ? this.productSaveStates[key] : null;
+        const hasLocalChanges = state && (state.inFlight || this.hasPendingProductModules(state) || state.conflict);
+        if (hasLocalChanges && !retainedKeys[key]) {
+          mergedRecords.push(localRecord);
+        }
+      }
+      this.records = mergedRecords;
       this.sourceFileName = sourceFileName || "";
       this.selectedMainId = records.length ? records[0].main_id : "";
       for (let recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
@@ -908,17 +1123,6 @@ const app = createApp({
     startRealtimeCache: function startRealtimeCache() {
       this.stopRealtimeCache();
       const view = this;
-      /** Handle the initial cache HTTP response. */
-      fetch(apiUrl("/workbench"), { cache: "no-store" }).then(function handleCacheResponse(response) {
-        if (!response.ok) {
-          throw new Error("本地 cache 服务未启动。 ");
-        }
-        return response.json();
-      }).then(function handleInitialCachePayload(payload) {
-        view.applyCachePayload(payload.data || {});
-      }).catch(function handleInitialCacheError() {
-        view.setStatus("未连接到本地 cache，请先运行 npm run dev。", "normal");
-      });
       const source = new EventSource(String((window.APP_CONFIG || {}).eventUrl || apiUrl("/events")));
       /** Mark the real-time cache stream as connected. */
       source.onopen = function handleCacheOpen() {
@@ -938,19 +1142,60 @@ const app = createApp({
         if (view.consumePendingCacheEvent(message)) {
           return;
         }
-        fetch(apiUrl("/workbench"), { cache: "no-store" }).then(function handleRefreshResponse(response) {
-          return response.json();
-        }).then(function handleRefreshPayload(payload) {
-          view.applyCachePayload(payload.data || {});
-        }).catch(function handleRefreshError() {
-          view.setStatus("实时数据刷新失败。", "error");
-        });
+        view.realtimeLastEventId = Number(event && event.lastEventId) || view.realtimeLastEventId;
+        view.queueRealtimeCacheRefresh();
       };
       /** Mark the cache stream as disconnected without clearing loaded data. */
       source.onerror = function handleCacheError() {
         view.realtimeConnected = false;
       };
       this.realtimeSource = source;
+      this.realtimeRefreshQueued = true;
+      this.refreshRealtimeCache();
+    },
+
+    /** Queue several close-together product events into one cache refresh. */
+    queueRealtimeCacheRefresh: function queueRealtimeCacheRefresh() {
+      this.realtimeRefreshQueued = true;
+      if (this.realtimeRefreshTimer || this.realtimeRefreshInFlight) {
+        return;
+      }
+      const view = this;
+      /** Start one coalesced cache refresh after the current event burst. */
+      function startQueuedRealtimeCacheRefresh() {
+        view.realtimeRefreshTimer = null;
+        view.refreshRealtimeCache();
+      }
+      this.realtimeRefreshTimer = setTimeout(startQueuedRealtimeCacheRefresh, 120);
+    },
+
+    /** Read one cache snapshot and apply it after coalesced SSE invalidations. */
+    refreshRealtimeCache: function refreshRealtimeCache() {
+      if (this.realtimeRefreshInFlight || !this.realtimeRefreshQueued) {
+        return;
+      }
+      this.realtimeRefreshQueued = false;
+      this.realtimeRefreshInFlight = true;
+      const view = this;
+      fetch(apiUrl("/workbench"), { cache: "no-store" }).then(function handleCacheResponse(response) {
+        if (!response.ok) {
+          throw new Error("本地 cache 服务未启动。 ");
+        }
+        return response.json();
+      }).then(function handleCachePayload(payload) {
+        view.applyCachePayload(payload.data || {});
+      }).catch(function handleCacheRefreshError(error) {
+        if (error && error.message === "本地 cache 服务未启动。 ") {
+          view.setStatus("未连接到本地 cache，请先运行 npm run dev。", "normal");
+          return;
+        }
+        view.setStatus("实时数据刷新失败。", "error");
+      }).finally(function handleCacheRefreshFinished() {
+        view.realtimeRefreshInFlight = false;
+        if (view.realtimeRefreshQueued) {
+          view.queueRealtimeCacheRefresh();
+        }
+      });
     },
 
     /** Close the current real-time cache stream. */
@@ -959,6 +1204,11 @@ const app = createApp({
         this.realtimeSource.close();
         this.realtimeSource = null;
       }
+      if (this.realtimeRefreshTimer) {
+        clearTimeout(this.realtimeRefreshTimer);
+        this.realtimeRefreshTimer = null;
+      }
+      this.realtimeRefreshQueued = false;
       this.realtimeConnected = false;
     },
 
@@ -1190,7 +1440,7 @@ const app = createApp({
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
           return;
         }
-        const searchData = payload && payload.data && typeof payload.data === "object" ? payload.data : {};
+        const searchData = payload && typeof payload === "object" ? payload : {};
         const searchUrl = String(searchData.search_url || "");
         if (!searchUrl) {
           throw new Error("search-1688 未返回搜款地址。");
@@ -1300,7 +1550,7 @@ const app = createApp({
         const response = await fetch(apiUrl(endpoint), { method: "DELETE" });
         const payload = await response.json();
         if (!response.ok || !payload || !payload.ok) {
-          throw new Error(payload && payload.error || "删除失败。");
+          throw new Error(getApiErrorMessage(payload, "删除失败。"));
         }
         this.applyCachePayload(payload.data || {});
         this.setStatus("已删除当前 Temu 缓存。", "success");
@@ -1318,7 +1568,7 @@ const app = createApp({
         const response = await fetch(apiUrl("/products/platform/temu"), { method: "DELETE" });
         const payload = await response.json();
         if (!response.ok || !payload || !payload.ok) {
-          throw new Error(payload && payload.error || "清空失败。");
+          throw new Error(getApiErrorMessage(payload, "清空失败。"));
         }
         this.applyCachePayload(payload.data || {});
         this.setStatus("Temu 缓存已清空，1688 缓存已保留。", "success");
@@ -1336,7 +1586,7 @@ const app = createApp({
         const response = await fetch(apiUrl("/products"), { method: "DELETE" });
         const payload = await response.json();
         if (!response.ok || !payload || !payload.ok) {
-          throw new Error(payload && payload.error || "清空失败。");
+          throw new Error(getApiErrorMessage(payload, "清空失败。"));
         }
         this.applyCachePayload(payload.data || {});
         this.setStatus("Server cache 已清空，扩展 cache 已保留。", "success");
@@ -1387,7 +1637,7 @@ const app = createApp({
       }).then(function handleImageSearchResponse(response) {
         return response.json().then(function handleImageSearchPayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(payload && payload.error && payload.error.message ? payload.error.message : "1688 搜图失败。");
+            throw new Error(getApiErrorMessage(payload, "1688 搜图失败。"));
           }
           return payload.data || {};
         });
@@ -1478,9 +1728,9 @@ const app = createApp({
       }).then(function handleImageEditResponse(response) {
         return response.json().then(function handleImageEditPayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(payload && payload.error ? payload.error : "溶图服务请求失败。");
+            throw new Error(getApiErrorMessage(payload, "溶图服务请求失败。"));
           }
-          return payload;
+          return readApiData(payload);
         });
       }).then(function handleImageEditSuccess(payload) {
         const imageUrl = String(payload.image_url || "").trim();
@@ -1518,9 +1768,9 @@ const app = createApp({
       }).then(function handleFusionUndoResponse(response) {
         return response.json().then(function handleFusionUndoPayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(payload && payload.error ? payload.error : "溶图返回失败。");
+            throw new Error(getApiErrorMessage(payload, "溶图返回失败。"));
           }
-          return payload;
+          return readApiData(payload);
         });
       }).then(function handleFusionUndoSuccess(payload) {
         const imageUrls = Array.isArray(payload.image_urls) ? payload.image_urls.slice() : [];
@@ -1867,7 +2117,7 @@ const app = createApp({
         }).then(function handleImageCacheResponse(response) {
           return response.json().then(function validateImageCachePayload(payload) {
             if (!response.ok || !payload.ok) {
-              throw new Error(payload && payload.error ? payload.error.message : "图片缓存失败。");
+              throw new Error(getApiErrorMessage(payload, "图片缓存失败。"));
             }
             return payload.data;
           });
@@ -2469,7 +2719,8 @@ const app = createApp({
             return response.json();
           })
           .then(function handleDetailPayload(payload) {
-            const imageUrls = asArray(payload && payload.image_urls);
+            const detailData = readApiData(payload);
+            const imageUrls = asArray(detailData && detailData.image_urls);
             if (!imageUrls.length) {
               return;
             }
@@ -2507,7 +2758,7 @@ const app = createApp({
         }).then(function handleJsonImportResponse(response) {
           return response.json().then(function validateJsonImportPayload(payload) {
             if (!response.ok || !payload.ok) {
-              throw new Error(payload && payload.error ? payload.error.message : "JSON 导入失败。");
+              throw new Error(getApiErrorMessage(payload, "JSON 导入失败。"));
             }
             return payload.data;
           });
@@ -2540,7 +2791,7 @@ const app = createApp({
         }).then(function handleRestoreResponse(response) {
           return response.json().then(function validateRestorePayload(payload) {
             if (!response.ok || !payload.ok) {
-              throw new Error(payload && payload.error ? payload.error.message : "恢复失败。");
+              throw new Error(getApiErrorMessage(payload, "恢复失败。"));
             }
             return payload.data;
           });
@@ -2748,9 +2999,9 @@ const app = createApp({
       }).then(function handleGalleryEditResponse(response) {
         return response.json().then(function handleGalleryEditPayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(payload && payload.error ? payload.error : "图片生成失败。");
+            throw new Error(getApiErrorMessage(payload, "图片生成失败。"));
           }
-          return payload;
+          return readApiData(payload);
         });
       }).then(function handleGalleryEditSuccess(payload) {
         if (requestId !== view.imageEditorRequestId || !view.imageEditorOpen) {

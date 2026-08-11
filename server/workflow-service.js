@@ -106,6 +106,10 @@ class WorkflowService {
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
     this.eventClients = [];
+    this.eventHistory = [];
+    this.eventSequence = 0;
+    this.maxEventHistory = Number(settings.maxEventHistory || 100);
+    this.eventHeartbeatMs = Number(settings.eventHeartbeatMs || 15000);
     this.generationQueue = [];
     this.generationQueueActive = false;
     this.recoverInterruptedTasks();
@@ -141,17 +145,97 @@ class WorkflowService {
     }
   }
 
+  /** Create one workflow SSE frame with a browser-resumable event identifier. */
+  createEventMessage(payload, eventId) {
+    const idLine = eventId === undefined || eventId === null ? "" : "id: " + String(eventId) + "\n";
+    return idLine + "data: " + JSON.stringify(payload) + "\n\n";
+  }
+
+  /** Read the last workflow event cursor sent by a browser during reconnect. */
+  getEventCursor(request) {
+    const headers = request && request.headers ? request.headers : {};
+    const query = request && request.query ? request.query : {};
+    const headerValue = headers["last-event-id"] || headers["Last-Event-ID"];
+    const queryValue = query.after || query.lastEventId || query.last_event_id;
+    const cursor = Number(headerValue || queryValue || 0);
+    return Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
+  }
+
+  /** Store one bounded workflow snapshot for reconnect replay. */
+  rememberEvent(payload) {
+    this.eventHistory.push(payload);
+    if (this.eventHistory.length > this.maxEventHistory) {
+      this.eventHistory.splice(0, this.eventHistory.length - this.maxEventHistory);
+    }
+  }
+
+  /** Create and remember one workflow stream snapshot. */
+  createEventPayload(payload) {
+    const eventPayload = Object.assign({}, payload || {});
+    eventPayload.event_id = ++this.eventSequence;
+    this.rememberEvent(eventPayload);
+    return eventPayload;
+  }
+
+  /** Remove one workflow SSE client and stop its heartbeat timer. */
+  removeEventClient(client) {
+    if (!client || client.closed) {
+      return;
+    }
+    client.closed = true;
+    if (client.heartbeat) {
+      clearInterval(client.heartbeat);
+      client.heartbeat = null;
+    }
+    const index = this.eventClients.indexOf(client);
+    if (index >= 0) {
+      this.eventClients.splice(index, 1);
+    }
+  }
+
+  /** Write one workflow SSE frame and evict a slow or disconnected client. */
+  writeEventClient(client, message) {
+    if (!client || client.closed) {
+      return false;
+    }
+    try {
+      const writable = client.response.write(message);
+      if (writable === false) {
+        this.removeEventClient(client);
+        if (client.response && typeof client.response.destroy === "function") {
+          client.response.destroy();
+        }
+        return false;
+      }
+      return true;
+    } catch (error) {
+      this.removeEventClient(client);
+      return false;
+    }
+  }
+
+  /** Start a bounded heartbeat that keeps one workflow stream observable. */
+  startEventHeartbeat(client) {
+    const service = this;
+    /** Write one heartbeat comment and remove an unresponsive client. */
+    function writeHeartbeat() {
+      service.writeEventClient(client, ": heartbeat\n\n");
+    }
+    client.heartbeat = setInterval(writeHeartbeat, this.eventHeartbeatMs);
+    if (client.heartbeat && typeof client.heartbeat.unref === "function") {
+      client.heartbeat.unref();
+    }
+  }
+
   /** Broadcast one task snapshot to all workflow SSE clients. */
   broadcast(payload, requestId) {
-    const message = "data: " + JSON.stringify(payload) + "\n\n";
+    const eventPayload = this.createEventPayload(payload);
+    const message = this.createEventMessage(eventPayload, eventPayload.event_id);
     const subscriberCount = this.eventClients.length;
     let deliveredCount = 0;
     for (let index = this.eventClients.length - 1; index >= 0; index -= 1) {
-      try {
-        this.eventClients[index].write(message);
+      if (this.writeEventClient(this.eventClients[index], message)) {
         deliveredCount += 1;
-      } catch (error) {
-        this.eventClients.splice(index, 1);
       }
     }
     if (typeof this.writeLog === "function") {
@@ -215,29 +299,57 @@ class WorkflowService {
     response.writeHead(200, {
       "Access-Control-Allow-Origin": "*",
       "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive"
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no"
     });
-    const initialPayload = this.readPayload();
-    response.write("data: " + JSON.stringify(initialPayload) + "\n\n");
-    this.eventClients.push(response);
+    if (typeof response.flushHeaders === "function") {
+      response.flushHeaders();
+    }
+    const client = { response: response, heartbeat: null, closed: false };
+    const cursor = this.getEventCursor(request);
+    this.eventClients.push(client);
+    this.writeEventClient(client, "retry: 1000\n\n");
+    let replayedCount = 0;
+    if (cursor > 0) {
+      for (let index = 0; index < this.eventHistory.length; index += 1) {
+        const eventPayload = this.eventHistory[index];
+        if (Number(eventPayload.event_id) <= cursor) {
+          continue;
+        }
+        if (!this.writeEventClient(client, this.createEventMessage(eventPayload, eventPayload.event_id))) {
+          break;
+        }
+        replayedCount += 1;
+      }
+    }
+    if (cursor === 0 || replayedCount === 0) {
+      const initialPayload = this.createEventPayload(this.readPayload());
+      this.writeEventClient(client, this.createEventMessage(initialPayload, initialPayload.event_id));
+    }
+    if (!client.closed) {
+      this.startEventHeartbeat(client);
+    }
     if (typeof this.writeLog === "function") {
       this.writeLog("BROADCAST", "Workflow SSE initial snapshot", {
         stream: "workflow",
         subscriber_count: this.eventClients.length,
-        delivered_count: 1,
-        active_temu_main_id: initialPayload.active_temu_main_id,
-        updated_at: initialPayload.updated_at
+        delivered_count: client.closed ? 0 : 1,
+        replayed_count: replayedCount,
+        cursor: cursor
       }, request.requestId);
     }
     const service = this;
     /** Remove one disconnected workflow page from the live stream. */
     request.on("close", function handleWorkflowClientClose() {
-      const index = service.eventClients.indexOf(response);
-      if (index >= 0) {
-        service.eventClients.splice(index, 1);
-      }
+      service.removeEventClient(client);
     });
+    if (typeof response.on === "function") {
+      /** Remove one workflow client when the response stream fails. */
+      response.on("error", function handleWorkflowResponseError() {
+        service.removeEventClient(client);
+      });
+    }
   }
 
   /** Ask Kimi for four white-background products related to one Temu item. */

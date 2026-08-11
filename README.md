@@ -9,6 +9,8 @@
 - `extension/`：采集原始页面数据并提交 `/api/v1/products/collect`，同时把原始批次保存到 `chrome.storage.local` 的 extension cache。
 - `cache/`：由后端独占读写 Server cache；`cache/history/` 保存可跨重启使用的操作快照。
 
+所有后端接口只使用 `/api/v1` 前缀，JSON 接口统一返回 `{ ok, data, error, meta }`；工作流、商品刷新、日志和队列继续使用 SSE。旧的 `/api/*`、`/v1/api/*` 和 Legacy Adapter 已移除，前端和扩展不得再拼接旧路径。
+
 运行 `npm run dev` 会同时启动前后端。服务器 Network 风格日志页面为 `http://127.0.0.1:5173/server/logs`。
 
 公开配置位于 `web/config.json` 和 `extension/config.json`。私有配置位于不会提交的 `server/config.json`，仓库只保留 `server/config.example.json`。
@@ -106,7 +108,7 @@ npm run dev
 
 然后打开 `http://127.0.0.1:5173`，点击“导入统一 JSON”。页面包含 Temu 和 1688 两个详情页，左侧选择商品，中间重渲染图片、商品信息和 SKU。
 
-服务端启动后会在终端实时打印 `RECEIVE`、`RECEIVE BODY`、`OUTBOUND`、`UPSTREAM`、`SEND` 和 `DONE` 六类日志，用同一个 `request_id` 串联一次完整请求。浏览器打开 `http://127.0.0.1:5173/server/logs` 可以查看相同的实时日志页面。日志会隐藏 API Key，并把 Base64 图片压缩成图片类型和字符长度，避免密钥泄露或终端被图片内容刷满。
+服务端启动后会在终端实时打印 `RECEIVE`、`RECEIVE BODY`、`OUTBOUND`、`UPSTREAM`、`SEND` 等日志，用同一个 `request_id` 串联一次完整请求。浏览器打开 `http://127.0.0.1:5173/server/logs` 可以查看相同的实时日志页面。日志会隐藏 API Key，并把 Base64 图片压缩成图片类型和字符长度，避免密钥泄露或终端被图片内容刷满。
 
 `server/config.json` 用于配置溶图服务和提示词（该文件已加入 `.gitignore`，不会提交 API key）。图片由本地 Express API 转为 base64 后发送给第三方服务，避免第三方服务直接请求 alicdn。
 
@@ -157,7 +159,7 @@ Express 服务把数据写到项目根目录的 `cache/cache.json`，并通过 `
 
 图片由后端统一保存到 `cache/image/temu`、`cache/image/1688` 和 `cache/image/transfer`。文件名使用内容 SHA-256，JSON 只保存 `/api/v1/cache/image/...` 地址；`cache/image/source-index.json` 用远程源 URL 的 SHA-256 命中已有文件，命中时不会再次请求 CDN。运行 `npm run cache:images` 可以迁移已有缓存图片。
 
-扩展导出的原格式 JSON 可以提交到 `POST /api/v1/restore`，兼容路径为 `POST /v1/api/restore`。
+扩展导出的原格式 JSON 可以提交到 `POST /api/v1/restore`。
 
 扩展弹窗的“清空扩展 cache”只清除 `chrome.storage.local`；前端工作台的“清空 Server cache”只清除 Server 的 `cache/cache.json`。扩展已有的“打开实时渲染”功能保持不变。
 

@@ -146,6 +146,9 @@
     var logEntries = [];
     var requestGroups = [];
     var isPaused = false;
+    var logRenderScheduled = false;
+    var lastLogEventId = 0;
+    var formattedPayloadCache = {};
     var statusFilter = document.getElementById("statusFilter");
     var flowFilter = document.getElementById("flowFilter");
     var logList = document.getElementById("logList");
@@ -162,6 +165,7 @@
     var queuePendingLabel = document.getElementById("queuePendingLabel");
     var queueActiveList = document.getElementById("queueActiveList");
     var queuePendingList = document.getElementById("queuePendingList");
+    var serverLogEventSource = null;
     var queueEventSource = null;
     var queueState = {
       concurrency: 3,
@@ -178,11 +182,35 @@
     }
 
     /** Convert one structured payload into readable JSON text. */
-    function formatPayload(payload) {
+    function formatPayload(payload, cacheKey) {
       if (payload === null || payload === undefined) {
         return "";
       }
-      return JSON.stringify(payload, null, 2);
+      var normalizedKey = cacheKey === undefined || cacheKey === null ? "" : String(cacheKey);
+      if (normalizedKey && Object.prototype.hasOwnProperty.call(formattedPayloadCache, normalizedKey)) {
+        return formattedPayloadCache[normalizedKey];
+      }
+      var text = JSON.stringify(payload, null, 2);
+      if (normalizedKey) {
+        formattedPayloadCache[normalizedKey] = text;
+      }
+      return text;
+    }
+
+    /** Queue one grouped-log repaint into the next browser frame. */
+    function scheduleLogRender() {
+      if (isPaused || logRenderScheduled) {
+        return;
+      }
+      logRenderScheduled = true;
+      /** Render the latest grouped logs after the current event burst. */
+      function renderScheduledLogs() {
+        logRenderScheduled = false;
+        if (!isPaused) {
+          renderLogs();
+        }
+      }
+      window.setTimeout(renderScheduledLogs, 80);
     }
 
     /** Convert a request duration from milliseconds into a seconds label. */
@@ -388,9 +416,7 @@
     function isLongLivedEventEntry(entry) {
       var label = String(entry && entry.label || "");
       return label.indexOf("GET /api/v1/events") >= 0
-        || label.indexOf("GET /api/v1/workflow/events") >= 0
-        || label.indexOf("GET /v1/api/events") >= 0
-        || label.indexOf("GET /v1/api/workflow/events") >= 0;
+        || label.indexOf("GET /api/v1/workflow/events") >= 0;
     }
 
     /** Add one raw event to the matching request group. */
@@ -437,7 +463,7 @@
         }
         var eventBlock = document.createElement("div");
         var eventLabel = document.createElement("div");
-        var payloadText = formatPayload(entry.payload);
+        var payloadText = formatPayload(entry.payload, entry.event_id);
         eventBlock.className = "event-block";
         eventLabel.className = "event-label";
         eventLabel.textContent = String(entry.flow_label || "") + " · " + String(entry.direction || "") + " · " + String(entry.label || "");
@@ -546,7 +572,7 @@
         backend_response: 0,
         backend_broadcast: 0
       };
-      logList.textContent = "";
+      var fragment = document.createDocumentFragment();
       for (var entryIndex = 0; entryIndex < logEntries.length; entryIndex += 1) {
         var entryFlow = getEntryFlow(logEntries[entryIndex]);
         if (Object.prototype.hasOwnProperty.call(flowCounts, entryFlow)) {
@@ -565,7 +591,7 @@
         if (selectedFlow && !group.flows[selectedFlow]) {
           continue;
         }
-        logList.appendChild(createNetworkCard(group));
+        fragment.appendChild(createNetworkCard(group));
         visibleCount += 1;
       }
       logCount.textContent = visibleCount + " 个请求";
@@ -573,21 +599,30 @@
         var empty = document.createElement("div");
         empty.className = "empty";
         empty.textContent = "等待 Server 收发请求…";
-        logList.appendChild(empty);
+        fragment.appendChild(empty);
       }
+      logList.textContent = "";
+      logList.appendChild(fragment);
     }
 
     /** Add one live entry while retaining a bounded browser-side history. */
     function appendLogEntry(entry) {
+      var eventId = Number(entry && entry.event_id);
+      if (Number.isFinite(eventId) && eventId > 0) {
+        if (eventId <= lastLogEventId) {
+          return;
+        }
+        lastLogEventId = eventId;
+      }
       logEntries.push(entry);
-      if (logEntries.length > 500) {
-        logEntries.splice(0, logEntries.length - 500);
+      if (logEntries.length > 300) {
+        logEntries.splice(0, logEntries.length - 300);
         rebuildRequestGroups();
       } else {
         groupLogEntry(entry, logEntries.length - 1);
       }
       if (!isPaused) {
-        renderLogs();
+        scheduleLogRender();
       }
     }
 
@@ -596,7 +631,17 @@
       try {
         var response = await fetch("/api/v1/logs", { cache: "no-store" });
         var payload = await response.json();
-        logEntries = payload && Array.isArray(payload.logs) ? payload.logs : [];
+        var logData = payload && payload.data && typeof payload.data === "object" ? payload.data : payload;
+        logEntries = logData && Array.isArray(logData.logs) ? logData.logs : [];
+        lastLogEventId = Number(logData && logData.last_event_id) || 0;
+        if (!lastLogEventId) {
+          for (var index = 0; index < logEntries.length; index += 1) {
+            var eventId = Number(logEntries[index] && logEntries[index].event_id);
+            if (Number.isFinite(eventId) && eventId > lastLogEventId) {
+              lastLogEventId = eventId;
+            }
+          }
+        }
         rebuildRequestGroups();
         renderLogs();
       } catch (error) {
@@ -612,7 +657,8 @@
         if (!response.ok || !payload || payload.ok === false) {
           throw new Error("队列状态读取失败");
         }
-        applyQueuePayload(payload.queue);
+        var queueData = payload && payload.data && typeof payload.data === "object" ? payload.data : payload;
+        applyQueuePayload(queueData && queueData.queue ? queueData.queue : queueData);
       } catch (error) {
         queueLiveStatus.className = "status";
         queueLiveStatus.textContent = "队列读取失败";
@@ -622,7 +668,11 @@
     /** Handle one log message received from the server stream. */
     function handleServerLogMessage(event) {
       try {
-        appendLogEntry(JSON.parse(event.data));
+        var entry = JSON.parse(event.data);
+        if ((!entry.event_id || Number(entry.event_id) <= 0) && event.lastEventId) {
+          entry.event_id = Number(event.lastEventId);
+        }
+        appendLogEntry(entry);
       } catch (error) {
         setConnectionStatus(false, "日志格式错误");
       }
@@ -663,10 +713,13 @@
 
     /** Connect the page to the server-side live log event stream. */
     function connectServerLogs() {
-      var eventSource = new EventSource("/api/v1/logs/events");
-      eventSource.onmessage = handleServerLogMessage;
-      eventSource.onopen = handleServerLogOpen;
-      eventSource.onerror = handleServerLogError;
+      if (serverLogEventSource) {
+        serverLogEventSource.close();
+      }
+      serverLogEventSource = new EventSource("/api/v1/logs/events?after=" + encodeURIComponent(String(lastLogEventId)));
+      serverLogEventSource.onmessage = handleServerLogMessage;
+      serverLogEventSource.onopen = handleServerLogOpen;
+      serverLogEventSource.onerror = handleServerLogError;
     }
 
     /** Connect the page to the shared image queue event stream. */
@@ -703,6 +756,7 @@
     function handleClearClick() {
       logEntries = [];
       requestGroups = [];
+      formattedPayloadCache = {};
       renderLogs();
     }
 

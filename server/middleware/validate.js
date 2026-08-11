@@ -2,7 +2,9 @@
 function validate(schema, sourceName) {
   /** Validate one request and forward structured validation errors. */
   function validateRequest(request, response, next) {
-    const source = sourceName === "params" ? request.params : request.body;
+    const source = sourceName === "params"
+      ? request.params
+      : sourceName === "query" ? request.query : request.body;
     const result = schema.safeParse(source);
     if (!result.success) {
       const error = new Error("请求参数格式错误。");
@@ -13,6 +15,8 @@ function validate(schema, sourceName) {
     }
     if (sourceName === "params") {
       request.validatedParams = result.data;
+    } else if (sourceName === "query") {
+      request.validatedQuery = result.data;
     } else {
       request.validatedBody = result.data;
     }

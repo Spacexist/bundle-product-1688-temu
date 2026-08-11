@@ -10,6 +10,7 @@ class CacheRepository {
     this.historyDirectory = path.resolve(__dirname, "..", settings.historyDirectory || "../../cache/history");
     this.cacheFilePath = path.join(this.cacheDirectory, "cache.json");
     this.historyLimit = Number(settings.historyLimit || 200);
+    this.writeQueue = Promise.resolve();
     fs.mkdirSync(this.cacheDirectory, { recursive: true });
     fs.mkdirSync(this.historyDirectory, { recursive: true });
   }
@@ -38,13 +39,40 @@ class CacheRepository {
     }
   }
 
-  /** Persist the complete cache payload atomically enough for a local process. */
+  /** Persist the complete cache payload through a temporary file replacement. */
   write(payload) {
     const target = payload && typeof payload === "object" ? payload : this.createEmptyPayload();
     target.version = Number(target.version || 0) + 1;
     target.updated_at = new Date().toISOString();
-    fs.writeFileSync(this.cacheFilePath, JSON.stringify(target, null, 2), "utf8");
+    const temporaryPath = this.cacheFilePath + "." + process.pid + "." + Date.now() + ".tmp";
+    fs.writeFileSync(temporaryPath, JSON.stringify(target, null, 2), "utf8");
+    try {
+      fs.renameSync(temporaryPath, this.cacheFilePath);
+    } catch (error) {
+      if (error.code !== "EPERM" && error.code !== "EEXIST") {
+        throw error;
+      }
+      fs.copyFileSync(temporaryPath, this.cacheFilePath);
+      fs.unlinkSync(temporaryPath);
+    }
     return target;
+  }
+
+  /** Serialize one complete cache mutation and persist only after the mutation succeeds. */
+  mutate(mutator) {
+    const repository = this;
+    const queuedMutation = this.writeQueue.then(async function runQueuedCacheMutation() {
+      const payload = repository.read();
+      const result = await mutator(payload);
+      const savedPayload = repository.write(payload);
+      return { result: result, payload: savedPayload };
+    });
+    this.writeQueue = queuedMutation.then(function releaseSuccessfulCacheMutation() {
+      return null;
+    }, function releaseFailedCacheMutation() {
+      return null;
+    });
+    return queuedMutation;
   }
 
   /** Save a pre-mutation product snapshot and return its undo token. */
