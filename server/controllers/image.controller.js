@@ -5,6 +5,7 @@ class ImageController {
     const settings = options || {};
     this.images = settings.images;
     this.imageSearch = settings.imageSearch;
+    this.workflow = settings.workflow || null;
   }
 
   /** Cache one uploaded data URL or remote image and return its local API URL. */
@@ -31,7 +32,11 @@ class ImageController {
   /** Search 1688 with one selected product image and return its search page. */
   async search1688(request, response, next) {
     try {
-      const result = await this.imageSearch.search1688(request.validatedBody);
+      const input = request.validatedBody;
+      const result = await this.imageSearch.search1688(input);
+      if (this.workflow && input.temu_main_id) {
+        this.workflow.setActiveTemuMainId(input.temu_main_id, request.requestId);
+      }
       response.json({
         ok: true,
         data: result,

@@ -35,8 +35,8 @@ const imageCacheSchema = z.object({
 });
 
 const imageSearchSchema = z.union([
-  z.object({ image_url: z.string().min(1) }),
-  z.object({ source: z.string().min(1) })
+  z.object({ image_url: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional() }),
+  z.object({ source: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional() })
 ]);
 
 const replaceSkuSchema = z.object({

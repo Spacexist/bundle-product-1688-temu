@@ -319,13 +319,13 @@ const app = createApp({
                   <div v-for="(group, groupIndex) in skuSpecGroups(selectedTemuRecord)" :key="groupIndex" class="sku-spec-group">
                     <div class="sku-spec-group-head" :class="{ 'is-drop-target': isAliDropTarget('group', group.name) }" @dragenter.prevent.stop="setAliDropTarget('group', group.name)" @dragover.prevent.stop="setAliDropTarget('group', group.name)" @drop.prevent.stop="dropAliSkuToTemuGroup($event, selectedTemuRecord, group.name)"><span>规格{{ groupIndex + 1 }}:</span><input class="sku-spec-name-input" type="text" :value="group.name" @input="updateSkuSpecName(selectedTemuRecord, group.name, $event.target.value)" aria-label="规格名称"><span class="sku-spec-count">{{ group.values.length }} 个选项</span><span class="sku-drop-badge">拖到此规格</span><button class="sku-spec-delete-button" type="button" @click.stop="removeTemuSpecGroup(selectedTemuRecord, group.name)">删除规格</button></div>
                     <div class="sku-spec-options"><div v-for="(value, optionIndex) in group.values" :key="optionIndex" class="sku-spec-option-wrap" :class="{ 'is-drop-target': isAliDropTarget('option', group.name, value) }" @dragenter.prevent.stop="setAliDropTarget('option', group.name, value)" @dragover.prevent.stop="setAliDropTarget('option', group.name, value)" @drop.prevent.stop="dropAliSkuToTemuOption($event, selectedTemuRecord, group.name, value)"><input class="sku-spec-option-input" type="text" :value="value" @input="updateSkuSpecOption(selectedTemuRecord, group.name, value, $event.target.value)" :aria-label="group.name + '选项'"><button class="sku-spec-option-delete" type="button" @click.stop="removeTemuSpecOption(selectedTemuRecord, group.name, value)" aria-label="删除规格选项">×</button></div></div>
-                    <div class="sku-spec-group-actions"><input class="sku-spec-add-input" type="text" :value="specOptionDraft(selectedTemuRecord, group.name)" @input="setSpecOptionDraft(selectedTemuRecord, group.name, $event.target.value)" @keyup.enter="addTemuSpecOption(selectedTemuRecord, group.name)" placeholder="新增选项"><button class="sku-spec-add-button" type="button" @click="addTemuSpecOption(selectedTemuRecord, group.name)">+ 添加选项</button></div>
+                    <div class="sku-spec-group-actions sku-spec-add-control"><input class="sku-spec-add-input" type="text" :value="specOptionDraft(selectedTemuRecord, group.name)" @input="setSpecOptionDraft(selectedTemuRecord, group.name, $event.target.value)" @keyup.enter="addTemuSpecOption(selectedTemuRecord, group.name)" placeholder="输入新选项"><button class="sku-spec-add-button" type="button" @click="addTemuSpecOption(selectedTemuRecord, group.name)">+ 添加</button></div>
                   </div>
-                  <div v-if="skuSpecGroups(selectedTemuRecord).length < 2" class="sku-spec-add-bar"><input class="sku-spec-add-input" type="text" v-model="newSpecGroupName" @keyup.enter="addTemuSpecGroup(selectedTemuRecord)" placeholder="新增规格名称"><button class="sku-spec-add-button" type="button" @click="addTemuSpecGroup(selectedTemuRecord)">+ 添加规格</button></div>
+                  <div v-if="skuSpecGroups(selectedTemuRecord).length < 2" class="sku-spec-add-bar sku-spec-add-control"><input class="sku-spec-add-input" type="text" v-model="newSpecGroupName" @keyup.enter="addTemuSpecGroup(selectedTemuRecord)" placeholder="输入新规格名称"><button class="sku-spec-add-button" type="button" @click="addTemuSpecGroup(selectedTemuRecord)">+ 添加规格</button></div>
                   <div v-if="!skuSpecGroups(selectedTemuRecord).length" class="detail-empty">未识别到规格属性，可直接添加规格。</div>
                 </div>
                <div class="sku-price-conversion"><strong>{{ selectedTemuRecord.price_conversion_label }}</strong><span>SKU 价格统一按人民币显示</span></div>
-               <div class="sku-list-title">SKU列表（{{ selectedTemuRecord.sku.length }}个）</div>
+               <div class="sku-list-title sku-list-title-with-tools"><span>SKU列表（{{ selectedTemuRecord.sku.length }}个）</span><label class="sku-fusion-prompt-field"><span>溶图提示词</span><input type="text" v-model="imageEditorFusionPrompt" placeholder="请输入溶图提示词" aria-label="溶图提示词"></label></div>
                  <table class="sku-table sku-spec-table"><thead><tr><th>#</th><th>预览图</th><th v-for="group in skuSpecGroups(selectedTemuRecord)" :key="group.name" :class="{ 'is-drop-target': isAliDropTarget('group', group.name) }" @dragenter.prevent.stop="setAliDropTarget('group', group.name)" @dragover.prevent.stop="setAliDropTarget('group', group.name)" @drop.prevent.stop="dropAliSkuToTemuGroup($event, selectedTemuRecord, group.name)">{{ group.name }}</th><th>价格</th><th>库存</th><th class="sku-dimensions-column">长宽高</th></tr></thead><tbody>
                  <tr v-for="(sku, skuIndex) in selectedTemuRecord.sku" :key="getSkuKey(selectedTemuRecord, sku, skuIndex)">
                    <td>{{ skuIndex + 1 }}</td>
@@ -351,8 +351,8 @@ const app = createApp({
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
                   <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url" :src="imageSource(item.image_url)" alt="AI 组货候选图"><span v-else>{{ item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="workflowSelectedResultIndex === index">已选择</i></button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张生成图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张生成图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
                   <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span>{{ item.product_intro }}</span></div>
-                  <textarea v-model="item.prompt" rows="5" @input="markWorkflowPromptDraft(index, $event.target.value)" :aria-label="item.relation + '生图提示词'"></textarea>
-                  <div class="smart-result-actions"><button class="smart-secondary-action" type="button" :disabled="!selectedTemuRecord" @click="generateWorkflowImages(index)">单独重生</button></div>
+                  <label class="smart-result-prompt"><span>生图提示词</span><textarea v-model="item.prompt" rows="4" @input="markWorkflowPromptDraft(index, $event.target.value)" :aria-label="item.relation + '生图提示词'"></textarea></label>
+                  <div class="smart-result-actions"><button class="smart-secondary-action" type="button" :disabled="!selectedTemuRecord" @click="generateWorkflowImages(index)"><span aria-hidden="true">↻</span> 重新生成</button></div>
                 </article>
               </div>
               <div v-if="selectedWorkflowTask && selectedWorkflowTask.search_url" class="smart-search-ready"><span>搜款页已生成，进入满意商品详情后选择 Temu，并点击扩展确认绑定。</span><a :href="selectedWorkflowTask.search_url" target="_blank">重新打开搜款页</a></div>
@@ -365,9 +365,10 @@ const app = createApp({
              <div class="render-gallery"><div class="gallery-thumbs"><div v-for="(image, imageIndex) in galleryImages(selected1688Record)" :key="image" class="thumb-item"><button class="thumb" :class="{ active: selected1688GalleryIndex === imageIndex }" type="button" draggable="true" @dragstart.stop="startAliImageDrag($event, selected1688Record, image, 'gallery', imageIndex)" @dragend="endAliImageDrag" @click="selectGallery(imageIndex, '1688')"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="1688 商品图片" draggable="false"></button></div></div><div class="gallery-main"><img v-if="currentImage(selected1688Record, '1688')" :key="currentImage(selected1688Record, '1688')" :src="imageSource(currentImage(selected1688Record, '1688'))" referrerpolicy="no-referrer" alt="1688 主图" draggable="true" @dragstart.stop="startAliImageDrag($event, selected1688Record, currentImage(selected1688Record, '1688'), 'gallery', selected1688GalleryIndex)" @dragend="endAliImageDrag"><span v-else class="muted">暂无图片</span></div></div>
             <div class="facts compact-facts"><div class="fact wide"><label>分类 ID（逗号分隔）</label><input class="fact-edit-input" type="text" :value="stringifyField(selected1688Record.category_ids)" @input="updateCategoryIds(selected1688Record, $event.target.value)" aria-label="1688 分类 ID"></div></div>
              <div class="sku-panel sku-spec-panel" @change="saveProductModule(selected1688Record, 'skus')" @dragover.prevent @drop.prevent="ignoreNativeDrop">
-               <div class="sku-price-conversion"><strong>{{ selected1688Record.price_conversion_label }}</strong><span>SKU 价格统一按人民币显示</span></div>
-               <div class="sku-list-title">SKU列表（{{ selected1688Record.sku.length }}个）</div>
-                <div class="sku-source-hint"><span class="sku-drag-handle hint-handle">⠿</span><span>可拖整行或单个 SubSku：拖到左侧规格组作用于全部 Temu SKU；拖到具体选项只作用于匹配行；拖到 Temu SKU 单元格会追加规格值，不覆盖原值，价格自动相加。</span></div>
+               <div class="ali-sku-toolbar">
+                 <div class="ali-sku-toolbar-heading"><div class="sku-list-title">SKU列表 <span class="ali-sku-count">{{ selected1688Record.sku.length }}</span></div><div class="sku-price-conversion"><strong>{{ selected1688Record.price_conversion_label }}</strong><span>价格统一按人民币显示</span></div></div>
+                 <div class="sku-source-hint"><span class="sku-drag-handle hint-handle">⠿</span><span><strong>拖拽组货</strong> 可拖整行或单个 SubSku 到左侧规格组、选项或具体 SKU；规格值会追加，价格自动相加。</span></div>
+               </div>
                <table class="sku-table sku-spec-table"><thead><tr><th>#</th><th>预览图</th><th>{{ aliSubSkuHeader(selected1688Record, 0) }}</th><th>{{ aliSubSkuHeader(selected1688Record, 1) }}</th><th>价格</th><th>库存</th></tr></thead><tbody>
                  <tr v-for="(sku, skuIndex) in selected1688Record.sku" :key="getSkuKey(selected1688Record, sku, skuIndex)" class="sku-source-row" :class="{ 'is-dragging-source': dragSkuReference && String(dragSkuReference.main_id) === String(selected1688Record.main_id) && String(dragSkuReference.sku_index) === String(skuIndex) }">
                    <td class="sku-index-cell"><button class="sku-drag-handle" type="button" draggable="true" title="拖动整行到左侧" aria-label="拖动 1688 SKU" @dragstart.stop="startAliDrag($event, sku, skuIndex)" @dragend="endAliDrag">⠿</button><span>{{ skuIndex + 1 }}</span></td>
@@ -384,10 +385,14 @@ const app = createApp({
         <div v-if="imageEditorOpen" class="image-editor-modal" @click.self="closeGalleryImageEditor">
           <section class="image-editor-dialog" role="dialog" aria-modal="true" aria-label="AI 图片编辑">
             <header class="image-editor-header"><div><strong>{{ galleryEditSelection.length === 2 ? '双图溶图' : '单图编辑' }}</strong><span>{{ galleryEditSelection.length === 2 ? 'Fusion API' : 'Edits API' }}</span></div><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
-            <div class="image-editor-source-list"><img v-for="(image, sourceIndex) in galleryImageEditorSources(selectedTemuRecord)" :key="sourceIndex" :src="imageSource(image)" alt="待编辑图片"></div>
-            <label class="image-editor-prompt"><span>提示词</span><textarea v-model="imageEditorPrompt" rows="5" aria-label="图片编辑提示词"></textarea></label>
+            <div class="image-editor-stage" :class="{ 'has-two-sources': galleryImageEditorSources(selectedTemuRecord).length === 2, 'has-result': imageEditorGeneratedUrl }">
+              <span class="image-editor-stage-label">{{ imageEditorBusy ? '生成中' : imageEditorGeneratedUrl ? '生成结果' : galleryImageEditorSources(selectedTemuRecord).length === 2 ? '待溶图片' : '待编辑图片' }}</span>
+              <div v-if="imageEditorBusy" class="image-editor-loading"><span></span><strong>图片生成中…</strong><small>完成后会直接替换当前画布。</small></div>
+              <img v-else-if="imageEditorGeneratedUrl" class="image-editor-generated-image" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果">
+              <div v-else class="image-editor-source-canvas"><img v-for="(image, sourceIndex) in galleryImageEditorSources(selectedTemuRecord)" :key="sourceIndex" :src="imageSource(image)" alt="待编辑图片"></div>
+            </div>
+            <label class="image-editor-prompt"><span>提示词</span><textarea v-model="imageEditorPrompt" rows="4" aria-label="图片编辑提示词"></textarea></label>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <div class="image-editor-result"><div v-if="imageEditorBusy" class="image-editor-loading"><span></span><strong>图片生成中…</strong><small>请稍候，完成后会在这里显示。</small></div><img v-else-if="imageEditorGeneratedUrl" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果"><span v-else>填写提示词后开始生成。</span></div>
             <footer class="image-editor-actions"><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">取消</button><button class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="submitGalleryImageEdit">{{ imageEditorBusy ? '生成中…' : imageEditorGeneratedUrl ? '重新生成' : '开始生成' }}</button><button class="image-editor-confirm" type="button" :disabled="imageEditorBusy || !imageEditorGeneratedUrl" @click="confirmGalleryImageEdit">确认替换</button></footer>
           </section>
         </div>
@@ -493,6 +498,7 @@ const app = createApp({
     window.addEventListener("drop", this.clearImageDragState);
     window.addEventListener("blur", this.clearImageDragState);
     this.loadImageEditConfig();
+    this.loadWorkflowPayload();
     if (this.renderMode === "realtime") {
       this.startRealtimeCache();
     }
@@ -1336,6 +1342,33 @@ const app = createApp({
       }
     },
 
+    /** Load all persisted intelligent-packing tasks from the backend. */
+    loadWorkflowPayload: function loadWorkflowPayload() {
+      const view = this;
+      return requestWorkflowJson(workflowApiUrl("/workflow"), { cache: "no-store" }).then(function handleWorkflowLoadSuccess(payload) {
+        view.applyWorkflowPayload(payload);
+        view.syncWorkflowSelection();
+      }).catch(function handleWorkflowLoadError(error) {
+        if (view.workspaceMode === "smart") {
+          view.setWorkflowStatus("组货记录读取失败：" + error.message, "error");
+        }
+      });
+    },
+
+    /** Store one returned workflow task under its Temu product identifier. */
+    storeWorkflowTask: function storeWorkflowTask(temuMainId, task) {
+      if (!task || typeof task !== "object") {
+        return;
+      }
+      if (!this.workflow || typeof this.workflow !== "object") {
+        this.workflow = { active_temu_main_id: "", tasks: {} };
+      }
+      if (!this.workflow.tasks || typeof this.workflow.tasks !== "object") {
+        this.workflow.tasks = {};
+      }
+      this.workflow.tasks[String(temuMainId || "")] = task;
+    },
+
     /** Restore the inline workflow controls for the selected Temu record. */
     syncWorkflowSelection: function syncWorkflowSelection() {
       const record = this.selectedTemuRecord;
@@ -1429,6 +1462,7 @@ const app = createApp({
           }
         })
       }).then(function handleWorkflowPromptSuccess(payload) {
+        view.storeWorkflowTask(requestedTemuMainId, payload.task);
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
           return;
         }
@@ -1467,6 +1501,7 @@ const app = createApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       }).then(function handleWorkflowGenerationSuccess(payload) {
+        view.storeWorkflowTask(requestedTemuMainId, payload.task);
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
           return;
         }
@@ -1508,13 +1543,8 @@ const app = createApp({
       result.search_status = "searching";
       result.search_error = "";
       this.setWorkflowStatus("正在提交第 " + (resultIndex + 1) + " 张图片到 search-1688…", "normal");
-      const searchWindow = window.open("about:blank", "_blank");
       const view = this;
-      requestWorkflowJson(apiUrl("/images/search-1688"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_url: result.image_url })
-      }).then(function handleWorkflowSearchSuccess(payload) {
+      this.request1688ImageSearch(result.image_url, requestedTemuMainId).then(function handleWorkflowSearchSuccess(payload) {
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
           return;
         }
@@ -1537,11 +1567,11 @@ const app = createApp({
           currentTask.search_url = searchUrl;
           currentTask.search_offers = Array.isArray(searchData.offers) ? searchData.offers : [];
         }
-        if (!searchWindow || searchWindow.closed) {
-          view.setWorkflowStatus("第 " + (resultIndex + 1) + " 张图片搜图完成。浏览器阻止了自动打开，请点击下方“重新打开搜款页”。", "normal");
+        const searchWindow = window.open(searchUrl, "_blank");
+        if (!searchWindow) {
+          view.setWorkflowStatus("搜图完成，但浏览器阻止了新窗口，请点击下方“重新打开搜款页”。", "normal");
           return;
         }
-        searchWindow.location.href = searchUrl;
         view.setWorkflowStatus("第 " + (resultIndex + 1) + " 张图片已打开 1688 搜款页。", "success");
       }).catch(function handleWorkflowSearchError(error) {
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
@@ -1551,9 +1581,6 @@ const app = createApp({
         if (currentResult) {
           currentResult.search_status = "error";
           currentResult.search_error = error.message || "搜图失败。";
-        }
-        if (searchWindow && !searchWindow.closed) {
-          searchWindow.close();
         }
         view.setWorkflowStatus("1688 搜图失败：" + error.message, "error");
       }).finally(function finishWorkflowSearchRequest() {
@@ -1700,6 +1727,18 @@ const app = createApp({
       return source;
     },
 
+    /** Upload one image to 1688 and return the search identifier and result URL. */
+    request1688ImageSearch: function request1688ImageSearch(imageUrl, temuMainId) {
+      return requestWorkflowJson(apiUrl("/images/search-1688"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          image_url: String(imageUrl || ""),
+          temu_main_id: String(temuMainId || "")
+        })
+      });
+    },
+
     /** Send the selected Temu image to the server-side 1688 image-search API. */
     searchTemuImageOn1688: function searchTemuImageOn1688(record, image) {
       const source = String(image || "").trim();
@@ -1709,18 +1748,7 @@ const app = createApp({
       this.imageSearchBusy = true;
       this.setStatus("正在用当前图片搜索 1688…", "normal");
       const view = this;
-      fetch(apiUrl("/images/search-1688"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_url: source })
-      }).then(function handleImageSearchResponse(response) {
-        return response.json().then(function handleImageSearchPayload(payload) {
-          if (!response.ok || !payload || !payload.ok) {
-            throw new Error(getApiErrorMessage(payload, "1688 搜图失败。"));
-          }
-          return payload.data || {};
-        });
-      }).then(function openImageSearchPage(result) {
+      this.request1688ImageSearch(source, record.main_id).then(function openImageSearchPage(result) {
         const searchUrl = String(result.search_url || "").trim();
         if (!searchUrl) {
           throw new Error("1688 搜图没有返回搜索页面。");
@@ -1751,6 +1779,25 @@ const app = createApp({
     /** Build the local busy-state key for one Temu SKU blend request. */
     getSkuBlendKey: function getSkuBlendKey(record, sku, index) {
       return buildSkuKey(record, sku, index);
+    },
+
+    /** Find the latest rendered SKU after a long-running image request has completed. */
+    findCurrentSkuTarget: function findCurrentSkuTarget(cacheKey, skuId, rowIndex) {
+      const record = this.findProductByCacheKey(cacheKey);
+      const rows = record && Array.isArray(record.sku) ? record.sku : [];
+      const targetSkuId = String(skuId || "");
+      if (targetSkuId) {
+        for (let index = 0; index < rows.length; index += 1) {
+          if (String(rows[index] && rows[index].sku_id || "") === targetSkuId) {
+            return { record: record, sku: rows[index], rowIndex: index };
+          }
+        }
+      }
+      const fallbackIndex = Number(rowIndex);
+      if (Number.isInteger(fallbackIndex) && fallbackIndex >= 0 && fallbackIndex < rows.length) {
+        return { record: record, sku: rows[fallbackIndex], rowIndex: fallbackIndex };
+      }
+      return null;
     },
 
     /** Check whether one SKU is currently waiting for an image-edit response. */
@@ -1789,10 +1836,17 @@ const app = createApp({
         this.setStatus("溶图需要当前 SKU 正好有两张图片。", "normal");
         return;
       }
+      const fusionPrompt = String(this.imageEditorFusionPrompt || "").trim();
+      if (!fusionPrompt) {
+        this.setStatus("请先填写溶图提示词。", "normal");
+        return;
+      }
       const busyKey = this.getSkuBlendKey(record, sku, rowIndex);
       if (this.imageEditBusyKeys[busyKey]) {
         return;
       }
+      const cacheKey = this.productCacheEventKey(record);
+      const skuId = String(sku.sku_id || "");
       this.imageEditBusyKeys[busyKey] = true;
       const view = this;
       const editSize = this.imageEditSize;
@@ -1802,6 +1856,7 @@ const app = createApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image_urls: images,
+          prompt: fusionPrompt,
           size: editSize
         })
       }).then(function handleImageEditResponse(response) {
@@ -1816,11 +1871,15 @@ const app = createApp({
         if (!imageUrl) {
           throw new Error("溶图服务没有返回图片。");
         }
-        view.replaceSkuImagesWithGenerated(sku, imageUrl);
+        const currentTarget = view.findCurrentSkuTarget(cacheKey, skuId, rowIndex);
+        if (!currentTarget) {
+          throw new Error("当前 SKU 已发生变化，无法应用溶图结果。");
+        }
+        view.replaceSkuImagesWithGenerated(currentTarget.sku, imageUrl);
         view.imageFusionUndoTokens[busyKey] = String(payload.undo_token || "");
-        view.saveProductModule(record, "skus");
+        view.saveProductModule(currentTarget.record, "skus");
         const size = String(payload.size || editSize || "1k").toUpperCase();
-        view.setStatus("SKU #" + (Number(rowIndex) + 1) + " 溶图完成（" + size + "），可点恢复原图。", "success");
+        view.setStatus("SKU #" + (currentTarget.rowIndex + 1) + " 溶图完成（" + size + "），可点恢复原图。", "success");
       }).catch(function handleImageEditError(error) {
         view.setStatus("溶图失败：" + (error.message || "请求失败。"), "error");
       }).finally(function handleImageEditFinished() {
@@ -1838,6 +1897,8 @@ const app = createApp({
       if (!undoToken || this.imageFusionUndoBusyKeys[busyKey]) {
         return;
       }
+      const cacheKey = this.productCacheEventKey(record);
+      const skuId = String(sku.sku_id || "");
       this.imageFusionUndoBusyKeys[busyKey] = true;
       this.setStatus("正在通过 Server API 恢复溶图前图片…", "normal");
       const view = this;
@@ -1854,10 +1915,14 @@ const app = createApp({
         });
       }).then(function handleFusionUndoSuccess(payload) {
         const imageUrls = Array.isArray(payload.image_urls) ? payload.image_urls.slice() : [];
-        sku.sku_image_urls = imageUrls;
-        sku.sku_image_url = imageUrls[0] || "";
+        const currentTarget = view.findCurrentSkuTarget(cacheKey, skuId, rowIndex);
+        if (!currentTarget) {
+          throw new Error("当前 SKU 已发生变化，无法恢复原图。");
+        }
+        currentTarget.sku.sku_image_urls = imageUrls;
+        currentTarget.sku.sku_image_url = imageUrls[0] || "";
         delete view.imageFusionUndoTokens[busyKey];
-        view.saveProductModule(record, "skus");
+        view.saveProductModule(currentTarget.record, "skus");
         view.setStatus("已通过 Server API 恢复 SKU 溶图前的两张图片。", "success");
       }).catch(function handleFusionUndoError(error) {
         view.setStatus("溶图返回失败：" + (error.message || "请求失败。"), "error");

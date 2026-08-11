@@ -203,6 +203,17 @@ class WorkflowService {
     };
   }
 
+  /** Persist the Temu product that the 1688 extension should keep selected. */
+  setActiveTemuMainId(temuMainId, requestId) {
+    const key = String(temuMainId || "").trim();
+    if (!key) {
+      return;
+    }
+    const workflow = this.readPayload();
+    workflow.active_temu_main_id = key;
+    this.writePayload(workflow, requestId);
+  }
+
   /** Ask Kimi for four white-background products related to one Temu item. */
   async generatePrompts(input, requestId) {
     const temuMainId = String(input.temu_main_id || "").trim();

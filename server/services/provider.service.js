@@ -557,17 +557,28 @@ class ProviderService {
       size: size,
       images: preparedImages
     }, requestId);
+    const controller = new AbortController();
+    /** Abort one BeeAPI image edit request after five minutes. */
+    const timeoutHandle = setTimeout(function abortImageEditRequest() {
+      controller.abort();
+    }, 300000);
     let providerResponse;
     let providerText;
     try {
       providerResponse = await fetch(endpoint, {
         method: "POST",
         headers: { "Authorization": "Bearer " + String(config.apikey) },
-        body: form
+        body: form,
+        signal: controller.signal
       });
       providerText = await providerResponse.text();
     } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw createProviderError("BeeAPI 图片请求超过五分钟。", 504, "BEEAPI_TIMEOUT");
+      }
       throw createProviderError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502, "BEEAPI_NETWORK_ERROR");
+    } finally {
+      clearTimeout(timeoutHandle);
     }
     let providerPayload = {};
     try {

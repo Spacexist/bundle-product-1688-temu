@@ -109,7 +109,7 @@ function createApp() {
     currency: currency
   });
   const productController = new productControllerModule.ProductController({ products: products, collection: collection, miaoshouExport: miaoshouExport });
-  const imageController = new imageControllerModule.ImageController({ images: images, imageSearch: imageSearch });
+  const imageController = new imageControllerModule.ImageController({ images: images, imageSearch: imageSearch, workflow: workflow });
   const configController = new configControllerModule.ConfigController();
   const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
   const providerController = new providerControllerModule.ProviderController({ providers: providers });
