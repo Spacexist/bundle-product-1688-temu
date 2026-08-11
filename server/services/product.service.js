@@ -14,18 +14,14 @@ class ProductService {
     return this.viewModels.createWorkbench(this.repository.read());
   }
 
-  /** Clear every cached product through the serialized backend mutation queue. */
+  /** Clear every product, image, workflow and JSON entry from the cache directory. */
   async clearAll(requestId) {
-    const service = this;
-    const transaction = await this.repository.mutate(async function mutateAllProducts(payload) {
-      if (payload.records.length) {
-        service.repository.createHistorySnapshot({ platform: "system", platform_id: "all", records: payload.records }, "clear_all");
-      }
-      payload.records = [];
-      return null;
-    });
-    this.events.publish({ resource: "product", action: "cleared", ids: [], version: Number(transaction.payload.version || 1) }, requestId);
-    return this.viewModels.createWorkbench(transaction.payload);
+    const emptyPayload = await this.repository.clearDirectory();
+    if (this.images && typeof this.images.ensureDirectories === "function") {
+      this.images.ensureDirectories();
+    }
+    this.events.publish({ resource: "product", action: "cache_directory_cleared", ids: [], version: 1 }, requestId);
+    return this.viewModels.createWorkbench(emptyPayload);
   }
 
   /** Delete one cached product using its stable platform identifier. */

@@ -17,7 +17,7 @@ class ProductController {
     }
   }
 
-  /** Clear the complete product cache via the backend repository. */
+  /** Clear every persisted entry from the complete backend cache directory. */
   async clearAll(request, response, next) {
     try {
       const result = await this.products.clearAll(request.requestId);

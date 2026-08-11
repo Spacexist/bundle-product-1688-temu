@@ -283,7 +283,7 @@ const app = createApp({
         <div v-if="!records.length" class="panel empty">{{ renderMode === 'realtime' ? '等待扩展采集商品并写入本地 cache。' : '请先导入统一 JSON 文件。' }}</div>
         <div v-else class="render-layout">
           <aside class="panel listing-rail">
-            <div class="listing-rail-heading"><div class="listing-cache-actions"><button type="button" :disabled="!temuRecords.length" @click="clearTemuCache">清空</button></div></div>
+            <div class="listing-rail-heading"><div class="listing-cache-actions"><button type="button" @click="clearEntireCache">清空</button></div></div>
             <button
               v-for="record in temuRecords"
               :key="record.main_id"
@@ -1665,21 +1665,21 @@ const app = createApp({
       }
     },
 
-    /** Clear every Temu product while preserving all cached 1688 products. */
-    clearTemuCache: async function clearTemuCache() {
-      if (!this.temuRecords.length || !window.confirm("确认清空全部 Temu 缓存？1688 缓存不会删除。")) {
+    /** Clear all Temu, 1688, image, workflow and JSON data from the backend cache directory. */
+    clearEntireCache: async function clearEntireCache() {
+      if (!window.confirm("确认清空整个 cache 目录？Temu、1688、图片、工作流和 JSON 数据都会永久删除。")) {
         return;
       }
       try {
-        const response = await fetch(apiUrl("/products/platform/temu"), { method: "DELETE" });
+        const response = await fetch(apiUrl("/products"), { method: "DELETE" });
         const payload = await response.json();
         if (!response.ok || !payload || !payload.ok) {
           throw new Error(getApiErrorMessage(payload, "清空失败。"));
         }
         this.applyCachePayload(payload.data || {});
-        this.setStatus("Temu 缓存已清空，1688 缓存已保留。", "success");
+        this.setStatus("cache 目录中的 Temu、1688、图片、工作流和 JSON 数据已清空。", "success");
       } catch (error) {
-        this.setStatus("清空 Temu 缓存失败：" + error.message, "error");
+        this.setStatus("清空 cache 目录失败：" + error.message, "error");
       }
     },
 

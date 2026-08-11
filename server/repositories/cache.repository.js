@@ -11,6 +11,11 @@ class CacheRepository {
     this.cacheFilePath = path.join(this.cacheDirectory, "cache.json");
     this.historyLimit = Number(settings.historyLimit || 200);
     this.writeQueue = Promise.resolve();
+    this.ensureDirectories();
+  }
+
+  /** Create the cache and history directories required by later writes. */
+  ensureDirectories() {
     fs.mkdirSync(this.cacheDirectory, { recursive: true });
     fs.mkdirSync(this.historyDirectory, { recursive: true });
   }
@@ -73,6 +78,30 @@ class CacheRepository {
       return null;
     });
     return queuedMutation;
+  }
+
+  /** Delete every cache data entry while retaining the repository placeholder file. */
+  clearDirectory() {
+    const repository = this;
+    const queuedClear = this.writeQueue.then(function runQueuedCacheDirectoryClear() {
+      const names = fs.existsSync(repository.cacheDirectory)
+        ? fs.readdirSync(repository.cacheDirectory)
+        : [];
+      for (let nameIndex = 0; nameIndex < names.length; nameIndex += 1) {
+        if (names[nameIndex] === ".gitkeep") {
+          continue;
+        }
+        fs.rmSync(path.join(repository.cacheDirectory, names[nameIndex]), { recursive: true, force: true });
+      }
+      repository.ensureDirectories();
+      return repository.createEmptyPayload();
+    });
+    this.writeQueue = queuedClear.then(function releaseSuccessfulCacheDirectoryClear() {
+      return null;
+    }, function releaseFailedCacheDirectoryClear() {
+      return null;
+    });
+    return queuedClear;
   }
 
   /** Save a pre-mutation product snapshot and return its undo token. */
