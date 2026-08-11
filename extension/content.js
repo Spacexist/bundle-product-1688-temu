@@ -1,9 +1,17 @@
 var unifiedCollectorButtonId = "unified-platform-collector-button";
+var unifiedSkuReplacerButtonId = "unified-platform-sku-replacer-button";
 var unifiedBindingPanelId = "unified-temu-binding-panel";
 var unifiedBindingModalId = "unified-temu-binding-modal";
 var unifiedTemuProductPattern = /(?:^|-)g-\d+\.html(?:$|[?#])/i;
 var unified1688ProductPattern = /\/offer\/\d+\.html/i;
 var unifiedSelectedTemuRecord = null;
+var unifiedCollectionStatusLabels = {
+  idle: "准备采集",
+  collecting: "采集中",
+  broadcasting: "广播中",
+  completed: "完成",
+  failed: "失败"
+};
 
 /** Resolve the current page platform and whether it is a product detail page. */
 function getCurrentUnifiedPlatform() {
@@ -20,33 +28,111 @@ function getCurrentUnifiedPlatform() {
 }
 
 /** Return the button label for the current platform. */
-function getUnifiedButtonText(platform) {
-  return platform === "1688" ? "确认并绑定" : "采集Temu";
+function getUnifiedButtonText(platform, action) {
+  if (platform === "1688" && action === "replaceSku") {
+    return "1688\n替换 SKU";
+  }
+  return platform === "1688" ? "1688\n绑定" : "Temu\n采集";
+}
+
+/** Render the floating collector button with one lifecycle status. */
+function renderUnifiedCollectorButton(button, status, message) {
+  if (!button) {
+    return;
+  }
+  var normalizedStatus = unifiedCollectionStatusLabels[status] ? status : "idle";
+  button.dataset.status = normalizedStatus;
+  button.classList.remove("is-temu", "is-1688");
+  button.classList.add(button.dataset.platform === "1688" ? "is-1688" : "is-temu");
+  button.classList.remove("is-collecting", "is-broadcasting", "is-completed", "is-failed");
+  if (normalizedStatus !== "idle") {
+    button.classList.add("is-" + normalizedStatus);
+  }
+  while (button.firstChild) {
+    button.removeChild(button.firstChild);
+  }
+  var dot = document.createElement("span");
+  dot.className = "unified-collector-dot";
+  var copy = document.createElement("span");
+  copy.className = "unified-collector-copy";
+  var label = document.createElement("strong");
+  label.className = "unified-collector-label";
+  label.textContent = normalizedStatus === "idle"
+    ? getUnifiedButtonText(button.dataset.platform || getCurrentUnifiedPlatform(), button.dataset.action || "collect")
+    : unifiedCollectionStatusLabels[normalizedStatus];
+  var detail = document.createElement("small");
+  detail.className = "unified-collector-detail";
+  detail.textContent = String(message || (normalizedStatus === "idle" ? "点击开始" : "请稍候"));
+  copy.appendChild(label);
+  copy.appendChild(detail);
+  button.appendChild(dot);
+  button.appendChild(copy);
+  button.title = String(message || (button.dataset.action === "replaceSku"
+    ? "将当前 1688 商品的全部 SKU 替换到左侧 Temu 商品"
+    : "采集当前商品并写入统一 cache"));
+}
+
+/** Create one floating extension action button for the current product page. */
+function createUnifiedActionButton(buttonId, platform, action) {
+  var button = document.createElement("button");
+  button.id = buttonId;
+  button.type = "button";
+  button.dataset.platform = platform;
+  button.dataset.action = action;
+  button.addEventListener("click", handleUnifiedCollectorClick);
+  renderUnifiedCollectorButton(button, "idle", "点击开始");
+  document.documentElement.appendChild(button);
+  return button;
+}
+
+/** Refresh both floating action buttons after the Temu target selection changes. */
+function refreshUnifiedActionButtons() {
+  var collectorButton = document.getElementById(unifiedCollectorButtonId);
+  var replacerButton = document.getElementById(unifiedSkuReplacerButtonId);
+  if (collectorButton) {
+    renderUnifiedCollectorButton(collectorButton, "idle", "点击开始");
+  }
+  if (replacerButton) {
+    replacerButton.disabled = !unifiedSelectedTemuRecord;
+    renderUnifiedCollectorButton(replacerButton, "idle", unifiedSelectedTemuRecord ? "点击替换" : "先选择 Temu 商品");
+  }
 }
 
 /** Add the unified collection button to the current product page. */
 function initializeUnifiedCollectorButton() {
   var platform = getCurrentUnifiedPlatform();
   var oldButton = document.getElementById(unifiedCollectorButtonId);
+  var oldReplacerButton = document.getElementById(unifiedSkuReplacerButtonId);
   if (!platform) {
     if (oldButton) {
       oldButton.remove();
     }
+    if (oldReplacerButton) {
+      oldReplacerButton.remove();
+    }
     return;
   }
-  if (oldButton) {
-    oldButton.textContent = getUnifiedButtonText(platform);
+  if (!oldButton) {
+    oldButton = createUnifiedActionButton(unifiedCollectorButtonId, platform, "collect");
+  } else {
     oldButton.dataset.platform = platform;
+    oldButton.dataset.action = "collect";
+    renderUnifiedCollectorButton(oldButton, "idle", "点击开始");
+  }
+  if (platform === "1688") {
+    if (!oldReplacerButton) {
+      oldReplacerButton = createUnifiedActionButton(unifiedSkuReplacerButtonId, platform, "replaceSku");
+    } else {
+      oldReplacerButton.dataset.platform = platform;
+      oldReplacerButton.dataset.action = "replaceSku";
+      renderUnifiedCollectorButton(oldReplacerButton, "idle", "点击替换");
+    }
+    oldReplacerButton.disabled = !unifiedSelectedTemuRecord;
     return;
   }
-  var button = document.createElement("button");
-  button.id = unifiedCollectorButtonId;
-  button.type = "button";
-  button.dataset.platform = platform;
-  button.textContent = getUnifiedButtonText(platform);
-  button.title = "采集当前商品并写入统一批次";
-  button.addEventListener("click", handleUnifiedCollectorClick);
-  document.documentElement.appendChild(button);
+  if (oldReplacerButton) {
+    oldReplacerButton.remove();
+  }
 }
 
 /** Send the current platform collection request to the background worker. */
@@ -60,36 +146,50 @@ function handleUnifiedCollectorClick(event) {
     ? String(unifiedSelectedTemuRecord.platform_id || "")
     : "";
   button.disabled = true;
-  button.classList.remove("is-success", "is-error");
-  button.classList.add("is-loading");
-  button.textContent = "采集中";
+  renderUnifiedCollectorButton(button, "collecting", "正在读取商品页面");
+  var actionType = button.dataset.action === "replaceSku"
+    ? "replaceUnifiedSku"
+    : "collectUnifiedProduct";
   chrome.runtime.sendMessage({
-    type: "collectUnifiedProduct",
+    type: actionType,
     platform: platform,
     targetTemuMainId: targetTemuMainId,
     targetTemuPlatformId: targetTemuPlatformId
   }, function handleUnifiedResponse(response) {
     var lastError = chrome.runtime.lastError;
-    button.classList.remove("is-loading");
     if (lastError || !response || !response.ok) {
-      button.classList.add("is-error");
-      button.textContent = "重试";
-      button.title = lastError ? lastError.message : response && response.error ? response.error : "采集失败";
+    renderUnifiedCollectorButton(button, "failed", lastError ? lastError.message : response && response.error ? response.error : actionType === "replaceUnifiedSku" ? "替换失败" : "采集失败");
       window.setTimeout(resetUnifiedCollectorButton, 2600, button);
       return;
     }
-    button.classList.add("is-success");
-    button.textContent = response.workflow_completed ? "已绑定Temu" : response.replaced ? "已更新" : "已加入";
+    var completedMessage = actionType === "replaceUnifiedSku"
+      ? "已替换 " + String(response.data && response.data.replaced_sku_count || 0) + " 条 Temu SKU"
+      : response.workflow_completed ? "已绑定 Temu" : response.replaced ? "重复商品已更新" : "已写入 cache";
+    renderUnifiedCollectorButton(button, "completed", completedMessage);
     window.setTimeout(resetUnifiedCollectorButton, 2400, button);
   });
 }
 
+/** Apply a background collection status to the current page button. */
+function handleUnifiedCollectionStatusMessage(message) {
+  if (!message || message.type !== "unifiedCollectionStatus") {
+    return false;
+  }
+  var button = message.action === "replaceSku"
+    ? document.getElementById(unifiedSkuReplacerButtonId)
+    : document.getElementById(unifiedCollectorButtonId);
+  if (!button) {
+    return false;
+  }
+  button.disabled = message.status === "collecting" || message.status === "broadcasting";
+  renderUnifiedCollectorButton(button, String(message.status || ""), message.message || "");
+  return false;
+}
+
 /** Reset the unified page button after a collection result. */
 function resetUnifiedCollectorButton(button) {
-  button.disabled = false;
-  button.classList.remove("is-success", "is-error");
-  button.textContent = getUnifiedButtonText(button.dataset.platform || getCurrentUnifiedPlatform());
-  button.title = "采集当前商品并写入统一批次";
+  button.disabled = button.dataset.action === "replaceSku" && !unifiedSelectedTemuRecord;
+  renderUnifiedCollectorButton(button, "idle", button.dataset.action === "replaceSku" ? "点击替换" : "点击开始");
 }
 
 /** Read one Temu title from a unified cache record. */
@@ -298,6 +398,7 @@ function handleUnifiedBindingCardClick(event) {
       currentCard.unifiedBindingMeta.textContent = selected ? "当前已选择" : "main_id " + currentMainId;
     }
   }
+  refreshUnifiedActionButtons();
 }
 
 /** Open the selected Temu Listing and SKU preview on a card double-click. */
@@ -369,6 +470,7 @@ function renderUnifiedBindingPanel(payload) {
     panel.appendChild(empty);
   }
   document.documentElement.appendChild(panel);
+  refreshUnifiedActionButtons();
 }
 
 /** Load and display the Temu binding list only on 1688 detail pages. */
@@ -408,5 +510,6 @@ if (document.readyState === "loading") {
 } else {
   initializeUnifiedCollectorButton();
 }
+chrome.runtime.onMessage.addListener(handleUnifiedCollectionStatusMessage);
 initializeUnifiedBindingPanel();
 observeUnifiedProductNavigation();

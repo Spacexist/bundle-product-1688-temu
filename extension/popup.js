@@ -116,6 +116,46 @@ function getBatchProductKey(data) {
   return "page:" + (page.url || "unknown");
 }
 
+/** Return the stable cache key for one popup record. */
+function getPopupCacheRecordKey(record) {
+  var item = record || {};
+  var platform = String(item.platform || "temu").toLowerCase();
+  var source = item.source_data || item;
+  if (platform === "1688" && (item.linked_temu_main_id || item.linked_temu_platform_id)) {
+    return "binding:1688:" + String(item.linked_temu_main_id || item.linked_temu_platform_id);
+  }
+  if (platform === "temu") {
+    return "product:temu:" + getBatchProductKey(source);
+  }
+  var offerId = source.offerId || source.offer_id || source.pageUrl || source.page_url || "";
+  if (offerId) {
+    return "product:1688:" + String(offerId);
+  }
+  var platformId = Number(item.platform_id);
+  if (Number.isFinite(platformId) && platformId > 0) {
+    return "platform:1688:" + platformId;
+  }
+  return "record:" + platform + ":" + String(item.main_id || item.mainid || "unknown");
+}
+
+/** Remove duplicate extension cache rows while preserving the newest row. */
+function dedupePopupCacheRecords(batch) {
+  var source = Array.isArray(batch) ? batch : [];
+  var result = [];
+  var keyIndexes = {};
+  for (var index = 0; index < source.length; index += 1) {
+    var item = source[index] || {};
+    var key = getPopupCacheRecordKey(item);
+    if (Object.prototype.hasOwnProperty.call(keyIndexes, key)) {
+      result[keyIndexes[key]] = item;
+      continue;
+    }
+    keyIndexes[key] = result.length;
+    result.push(item);
+  }
+  return result;
+}
+
 /** 把商品加入批次；同一商品再次采集时覆盖旧数据。 */
 async function addDataToBatch(data) {
   var batch = await getBatchData();
@@ -228,7 +268,15 @@ function getBatchData() {
         return;
       }
       var cache = payload && payload[extensionCacheStorageKey];
-      resolve(cache && Array.isArray(cache.records) ? cache.records : []);
+      var records = cache && Array.isArray(cache.records) ? cache.records : [];
+      var dedupedRecords = dedupePopupCacheRecords(records);
+      if (dedupedRecords.length !== records.length) {
+        saveBatchData(dedupedRecords).then(function resolveDedupedCache() {
+          resolve(dedupedRecords);
+        }).catch(reject);
+        return;
+      }
+      resolve(dedupedRecords);
     });
   });
 }

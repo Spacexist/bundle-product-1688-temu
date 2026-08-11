@@ -33,6 +33,30 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
     });
     return true;
   }
+  if (message && message.type === "replaceUnifiedSku") {
+    var replaceTabId = message.tabId || (sender.tab && sender.tab.id ? sender.tab.id : 0);
+    if (!replaceTabId) {
+      sendResponse({ ok: false, error: "没有找到当前 1688 商品页标签。" });
+      return false;
+    }
+    if (!message.targetTemuMainId && !message.targetTemuPlatformId) {
+      sendResponse({ ok: false, error: "请先在左侧选择 Temu 商品。" });
+      return false;
+    }
+    notifyUnifiedCollectionStatus(replaceTabId, "collecting", "正在读取当前 1688 SKU", "replaceSku");
+    collectUnifiedFromTab(replaceTabId, "1688").then(function handleUnifiedSkuCollection(data) {
+      notifyUnifiedCollectionStatus(replaceTabId, "broadcasting", "正在替换 Temu SKU 并更新 cache", "replaceSku");
+      return submitUnifiedSkuReplacement(data, String(message.targetTemuMainId || ""), String(message.targetTemuPlatformId || ""));
+    }).then(function handleUnifiedSkuReplacementResult(result) {
+      var count = Number(result && result.data && result.data.replaced_sku_count || 0);
+      notifyUnifiedCollectionStatus(replaceTabId, "completed", "已替换 Temu SKU " + count + " 条", "replaceSku");
+      sendResponse(result);
+    }).catch(function handleUnifiedSkuReplacementError(error) {
+      notifyUnifiedCollectionStatus(replaceTabId, "failed", error.message || "SKU 替换失败", "replaceSku");
+      sendResponse({ ok: false, error: error.message || "SKU 替换失败。" });
+    });
+    return true;
+  }
   if (!message || message.type !== "collectUnifiedProduct") {
     return false;
   }
@@ -48,7 +72,9 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
     sendResponse({ ok: false, error: "无法识别当前平台。" });
     return false;
   }
+  notifyUnifiedCollectionStatus(tabId, "collecting", "正在读取商品页面");
   collectUnifiedFromTab(tabId, platform).then(function handleUnifiedCollection(data) {
+    notifyUnifiedCollectionStatus(tabId, "broadcasting", "正在写入服务器和扩展 cache");
     if (platform !== "1688") {
       return submitAndCacheUnifiedCollection(data, platform, "", "");
     }
@@ -65,12 +91,29 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
       return submitAndCacheUnifiedCollection(data, platform, "", "");
     });
   }).then(function handleUnifiedCollectionResult(result) {
+    notifyUnifiedCollectionStatus(tabId, "completed", result && result.replaced ? "已完成，重复商品已更新" : "采集完成");
     sendResponse(result);
   }).catch(function handleUnifiedCollectionError(error) {
+    notifyUnifiedCollectionStatus(tabId, "failed", error.message || "采集失败");
     sendResponse({ ok: false, error: error.message || "采集失败。" });
   });
   return true;
 });
+
+/** Notify the current product tab about one collection lifecycle state. */
+function notifyUnifiedCollectionStatus(tabId, status, message, action) {
+  if (!tabId) {
+    return;
+  }
+  chrome.tabs.sendMessage(tabId, {
+    type: "unifiedCollectionStatus",
+    status: String(status || ""),
+    message: String(message || ""),
+    action: String(action || "")
+  }, function handleUnifiedStatusMessage() {
+    void chrome.runtime.lastError;
+  });
+}
 
 /** Resolve the supported platform from a page URL. */
 function getUnifiedPlatform(url) {
@@ -114,6 +157,43 @@ function getUnifiedProductKey(data, platform) {
   var goods = source.goods || {};
   var page = source.page || {};
   return "temu:" + String(goods.itemId || goods.goodsId || page.goodsId || page.url || "unknown");
+}
+
+/** Return the stable cache key for one stored extension record. */
+function getUnifiedCacheRecordKey(record) {
+  var item = record || {};
+  var platform = String(item.platform || "").toLowerCase();
+  var source = item.source_data || {};
+  if (platform === "1688" && (item.linked_temu_main_id || item.linked_temu_platform_id)) {
+    return "binding:1688:" + String(item.linked_temu_main_id || item.linked_temu_platform_id);
+  }
+  var productKey = getUnifiedProductKey(source, platform);
+  if (productKey && productKey.indexOf(":unknown") < 0) {
+    return "product:" + productKey;
+  }
+  var platformId = getUnifiedRecordPlatformId(item);
+  if (platformId) {
+    return "platform:" + platform + ":" + platformId;
+  }
+  return "record:" + platform + ":" + String(item.main_id || item.mainid || "unknown");
+}
+
+/** Remove historical duplicate records while retaining the newest copy. */
+function dedupeUnifiedBatch(batch) {
+  var source = Array.isArray(batch) ? batch : [];
+  var result = [];
+  var keyIndexes = {};
+  for (var index = 0; index < source.length; index += 1) {
+    var item = source[index] || {};
+    var key = getUnifiedCacheRecordKey(item);
+    if (Object.prototype.hasOwnProperty.call(keyIndexes, key)) {
+      result[keyIndexes[key]] = item;
+      continue;
+    }
+    keyIndexes[key] = result.length;
+    result.push(item);
+  }
+  return result;
 }
 
 /** Build the visible Temu breadcrumb category path without the home item. */
@@ -392,8 +472,39 @@ function submitUnifiedCollection(data, platform, temuMainId, temuPlatformId) {
 /** Submit one collection to Server and preserve the raw record in extension cache. */
 function submitAndCacheUnifiedCollection(data, platform, temuMainId, temuPlatformId) {
   return submitUnifiedCollection(data, platform, temuMainId, temuPlatformId).then(function cacheUnifiedCollectionResult(result) {
-    return addUnifiedDataToBatch(data, platform, temuMainId).then(function finishExtensionCacheWrite() {
+    var normalizedData = result && result.data && result.data.source_data && typeof result.data.source_data === "object"
+      ? result.data.source_data
+      : data;
+    return addUnifiedDataToBatch(normalizedData, platform, temuMainId).then(function finishExtensionCacheWrite() {
       return result;
+    });
+  });
+}
+
+/** Replace every SKU in one selected Temu record with the current 1688 capture. */
+function submitUnifiedSkuReplacement(data, temuMainId, temuPlatformId) {
+  return getUnifiedApiUrl("/replaceSku").then(function postUnifiedSkuReplacement(endpoint) {
+    return fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_temu_main_id: String(temuMainId || ""),
+        target_temu_platform_id: String(temuPlatformId || ""),
+        source_data: data && typeof data === "object" ? data : {},
+        replace_all_skus: true
+      })
+    });
+  }).then(function handleUnifiedSkuReplacementResponse(response) {
+    return response.json().catch(function handleUnifiedSkuReplacementBodyError() {
+      return {};
+    }).then(function validateUnifiedSkuReplacementPayload(payload) {
+      if (!response.ok || !payload || !payload.ok) {
+        var errorMessage = payload && payload.error
+          ? payload.error.message || payload.error
+          : "服务器替换 Temu SKU 失败。";
+        throw new Error(errorMessage);
+      }
+      return payload;
     });
   });
 }
@@ -435,7 +546,7 @@ function saveExtensionCacheBatch(batch) {
 
 /** Add or replace one platform product while preserving both identifiers. */
 async function addUnifiedDataToBatch(data, platform, linkedTemuMainId) {
-  var batch = await getExtensionCacheBatch();
+  var batch = dedupeUnifiedBatch(await getExtensionCacheBatch());
   var productKey = getUnifiedProductKey(data, platform);
   var mainId = getNextUnifiedMainid(batch);
   var platformId = getNextUnifiedPlatformId(batch, platform);
@@ -459,6 +570,7 @@ async function addUnifiedDataToBatch(data, platform, linkedTemuMainId) {
   if (!replaced) {
     batch.push(createUnifiedRecord(data, platform, mainId, platformId, linkedTemuMainId));
   }
+  batch = dedupeUnifiedBatch(batch);
   await saveExtensionCacheBatch(batch);
   return {
     ok: true,

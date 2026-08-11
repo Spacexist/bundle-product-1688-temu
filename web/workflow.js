@@ -78,7 +78,7 @@ const workflowApp = createApp({
                 <textarea v-model="item.prompt" rows="8" :aria-label="item.relation + '提示词'"></textarea>
               </article>
             </div>
-            <button class="primary-action" type="button" :disabled="generateBusy" @click="generateImages()">{{ generateBusy ? '正在生成 4 张图片…' : hasGeneratedImages ? '全部重新生成' : '一次生成 4 张白底图' }}</button>
+            <button class="primary-action" type="button" :disabled="!selectedTemu" @click="generateImages()">{{ generateBusy ? '提交中…' : hasGeneratedImages ? '全部重新生成' : '一次生成 4 张白底图' }}</button>
           </section>
 
           <section v-if="localPrompts.length" class="workflow-step">
@@ -91,7 +91,7 @@ const workflowApp = createApp({
                   <i v-if="selectedResultIndex === index">已选择</i>
                 </button>
                 <div><strong>{{ item.relation }}</strong><span>{{ item.product_name }}</span></div>
-                <button class="regenerate-button" type="button" :disabled="generateBusy" @click="generateImages(index)">单独重生</button>
+                <button class="regenerate-button" type="button" :disabled="!selectedTemu" @click="generateImages(index)">单独重生</button>
               </article>
             </div>
             <button class="search-action" type="button" :disabled="searchBusy || selectedResultIndex < 0" @click="search1688">{{ searchBusy ? '正在发送到 1688…' : '确认图片并打开 1688 搜款' }}</button>
@@ -223,10 +223,10 @@ const workflowApp = createApp({
       const state = payload && payload.workflow ? payload.workflow : payload;
       this.workflow = state && typeof state === "object" ? state : { active_temu_main_id: "", tasks: {} };
       const task = this.selectedTask;
-      if (task && Array.isArray(task.prompts) && !this.promptBusy && !this.generateBusy) {
+      if (task && Array.isArray(task.prompts) && !this.promptBusy) {
         this.syncLocalPrompts(task);
       }
-      if (task && !this.promptBusy && !this.generateBusy && !this.searchBusy) {
+      if (task && !this.promptBusy && !this.searchBusy) {
         this.setWorkflowStatus(this.taskStatusText(this.selectedTemuMainId), task.status === "completed" ? "success" : "normal");
       }
     },
@@ -294,7 +294,7 @@ const workflowApp = createApp({
     },
     /** Generate all four images or regenerate one selected candidate. */
     generateImages: function generateWorkflowImages(index) {
-      if (this.generateBusy || !this.selectedTemu || this.localPrompts.length !== 4) {
+      if (!this.selectedTemu || this.localPrompts.length !== 4) {
         return;
       }
       this.generateBusy = true;
@@ -335,12 +335,24 @@ const workflowApp = createApp({
       this.searchBusy = true;
       this.setWorkflowStatus("正在上传图片到 1688 搜款…", "normal");
       const view = this;
-      requestWorkflowJson(workflowApiUrl("/workflow/search"), {
+      const selectedImage = this.localPrompts[this.selectedResultIndex] && this.localPrompts[this.selectedResultIndex].image_url;
+      requestWorkflowJson(workflowApiUrl("/images/search-1688"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ temu_main_id: this.selectedTemu.main_id, index: this.selectedResultIndex })
+        body: JSON.stringify({ image_url: selectedImage })
       }).then(function handleWorkflowSearchSuccess(payload) {
-        const searchWindow = window.open(payload.search_url, "_blank");
+        const searchData = payload && payload.data && typeof payload.data === "object" ? payload.data : {};
+        const searchUrl = String(searchData.search_url || "");
+        if (!searchUrl) {
+          throw new Error("search-1688 未返回搜款地址。");
+        }
+        const selectedTask = view.selectedTask;
+        if (selectedTask) {
+          selectedTask.status = "waiting_1688_confirmation";
+          selectedTask.selected_result_index = view.selectedResultIndex;
+          selectedTask.search_url = searchUrl;
+        }
+        const searchWindow = window.open(searchUrl, "_blank");
         if (!searchWindow) {
           view.setWorkflowStatus("1688 搜图完成。浏览器阻止了自动打开，请点击下方“重新打开搜款页”。", "normal");
           return;

@@ -1,42 +1,93 @@
-#unified-platform-collector-button {
+#unified-platform-collector-button,
+#unified-platform-sku-replacer-button {
   position: fixed;
-  top: 50%;
   right: 24px;
+  bottom: 10px;
   z-index: 2147483647;
-  width: 58px;
-  min-height: 132px;
-  padding: 14px 8px;
-  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 86px;
+  height: 86px;
+  min-height: 86px;
+  padding: 10px;
   border: 1px solid rgba(255, 255, 255, .72);
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(126, 144, 187, .97), rgba(80, 100, 145, .97));
+  border-radius: 50%;
+  background: linear-gradient(145deg, #ff8d68, #ee594e);
   box-shadow: 0 16px 36px rgba(58, 76, 119, .28), inset 0 1px 0 rgba(255, 255, 255, .42);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   color: #fff;
   cursor: pointer;
-  font: 700 15px/1.25 "Microsoft YaHei", "PingFang SC", sans-serif;
-  letter-spacing: 1px;
-  writing-mode: vertical-rl;
-  transform: translateY(-50%);
+  font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+  text-align: center;
+  transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
 }
 
-#unified-platform-collector-button:hover {
-  background: linear-gradient(180deg, #8798c1, #586d9d);
+#unified-platform-collector-button.is-temu,
+#unified-platform-sku-replacer-button.is-temu { background: linear-gradient(145deg, #ff8d68, #ee594e); }
+#unified-platform-collector-button.is-1688,
+#unified-platform-sku-replacer-button.is-1688 { background: linear-gradient(145deg, #ffc45e, #e8792f); }
+
+#unified-platform-collector-button:hover,
+#unified-platform-sku-replacer-button:hover {
   box-shadow: 0 20px 42px rgba(58, 76, 119, .34), inset 0 1px 0 rgba(255, 255, 255, .48);
+  transform: translateY(-3px);
 }
 
-#unified-platform-collector-button:disabled {
+#unified-platform-collector-button:disabled,
+#unified-platform-sku-replacer-button:disabled {
   cursor: wait;
   opacity: 0.78;
 }
 
-#unified-platform-collector-button.is-success {
-  background: #159447;
+#unified-platform-collector-button.is-collecting,
+#unified-platform-collector-button.is-broadcasting,
+#unified-platform-sku-replacer-button.is-collecting,
+#unified-platform-sku-replacer-button.is-broadcasting {
+  background: linear-gradient(145deg, #758fc8, #4d659b);
 }
 
-#unified-platform-collector-button.is-error {
-  background: #c7372f;
+#unified-platform-collector-button.is-completed,
+#unified-platform-sku-replacer-button.is-completed {
+  background: linear-gradient(180deg, #1fa56b, #12804f);
+}
+
+#unified-platform-collector-button.is-failed,
+#unified-platform-sku-replacer-button.is-failed {
+  background: linear-gradient(180deg, #d95e58, #b73535);
+}
+
+#unified-platform-sku-replacer-button { right: 122px; background: linear-gradient(145deg, #778fc6, #536caa); }
+#unified-platform-sku-replacer-button.is-1688 { background: linear-gradient(145deg, #778fc6, #536caa); }
+
+.unified-collector-dot {
+  position: absolute;
+  top: 15px;
+  right: 19px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #dbe7ff;
+  box-shadow: 0 0 0 5px rgba(219, 231, 255, .16);
+}
+
+.is-collecting .unified-collector-dot,
+.is-broadcasting .unified-collector-dot {
+  background: #ffd166;
+  box-shadow: 0 0 0 5px rgba(255, 209, 102, .16);
+  animation: unified-collector-pulse 1.15s ease-in-out infinite;
+}
+
+.is-completed .unified-collector-dot { background: #b8f2d2; box-shadow: 0 0 0 5px rgba(184, 242, 210, .16); }
+.is-failed .unified-collector-dot { background: #ffd0cc; box-shadow: 0 0 0 5px rgba(255, 208, 204, .16); }
+.unified-collector-copy { min-width: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 2px; }
+.unified-collector-label { max-width: 68px; overflow: hidden; font-size: 14px; line-height: 1.2; text-align: center; text-overflow: ellipsis; white-space: pre-line; }
+.unified-collector-detail { display: none; }
+
+@keyframes unified-collector-pulse {
+  0%, 100% { transform: scale(.86); opacity: .7; }
+  50% { transform: scale(1.12); opacity: 1; }
 }
 #unified-temu-binding-panel {
   position: fixed;

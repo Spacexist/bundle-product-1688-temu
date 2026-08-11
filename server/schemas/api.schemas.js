@@ -34,11 +34,40 @@ const imageCacheSchema = z.object({
   generated: z.boolean().optional()
 });
 
+const imageSearchSchema = z.union([
+  z.object({ image_url: z.string().min(1) }),
+  z.object({ source: z.string().min(1) })
+]);
+
+const replaceSkuSchema = z.object({
+  target_temu_platform_id: z.union([z.string(), z.number()]).optional(),
+  target_temu_main_id: z.union([z.string(), z.number()]).optional(),
+  target_sku_index: z.number().int().nonnegative().optional(),
+  target_sku_id: z.union([z.string(), z.number()]).optional(),
+  source_1688_platform_id: z.union([z.string(), z.number()]).optional(),
+  source_1688_main_id: z.union([z.string(), z.number()]).optional(),
+  source_sku_index: z.number().int().nonnegative().optional(),
+  source_sku_id: z.union([z.string(), z.number()]).optional(),
+  source_data: z.record(z.string(), z.unknown()).optional(),
+  replace_all_skus: z.boolean().optional()
+});
+
+const dollarTransferSchema = z.object({
+  amount: z.union([z.string(), z.number()]),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  from_currency: z.string().optional(),
+  to_currency: z.string().optional()
+});
+
 module.exports = {
   moduleSaveSchema: moduleSaveSchema,
   collectionSchema: collectionSchema,
   undoSchema: undoSchema,
   configUpdateSchema: configUpdateSchema,
   jsonImportSchema: jsonImportSchema,
-  imageCacheSchema: imageCacheSchema
+  imageCacheSchema: imageCacheSchema,
+  imageSearchSchema: imageSearchSchema,
+  dollarTransferSchema: dollarTransferSchema,
+  replaceSkuSchema: replaceSkuSchema
 };

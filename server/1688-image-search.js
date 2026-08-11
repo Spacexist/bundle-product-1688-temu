@@ -25,8 +25,31 @@ function parse1688Offers(html) {
   return offers;
 }
 
-/** Upload one base64 image to the exact 1688 ERP image-search endpoint. */
-async function search1688ByImage(image) {
+/** Extract the image-search identifier returned by 1688 or embedded in its URL. */
+function read1688ImageSearchId(payload, imageSearchUrl) {
+  const data = payload && payload.data && typeof payload.data === "object" ? payload.data : {};
+  const directCandidates = [data.imageId, data.image_id, data.searchId, data.search_id];
+  for (let index = 0; index < directCandidates.length; index += 1) {
+    if (directCandidates[index] !== undefined && directCandidates[index] !== null && String(directCandidates[index]).trim()) {
+      return String(directCandidates[index]).trim();
+    }
+  }
+  try {
+    const parsedUrl = new URL(String(imageSearchUrl || ""));
+    const queryCandidates = [parsedUrl.searchParams.get("imageId"), parsedUrl.searchParams.get("image_id")];
+    for (let index = 0; index < queryCandidates.length; index += 1) {
+      if (queryCandidates[index]) {
+        return String(queryCandidates[index]).trim();
+      }
+    }
+  } catch (error) {
+    return "";
+  }
+  return "";
+}
+
+/** Upload one base64 image and return the 1688 image-search identifier. */
+async function upload1688ImageForSearch(image) {
   const source = String(image || "");
   if (!source) {
     throw new Error("请提供图片");
@@ -53,9 +76,30 @@ async function search1688ByImage(image) {
   if (!imageSearchUrl) {
     throw new Error("未返回搜款链接");
   }
+  const imageId = read1688ImageSearchId(payload, imageSearchUrl);
+  if (!imageId) {
+    throw new Error("1688 未返回图片 ID");
+  }
+  return {
+    image_id: imageId,
+    search_url: imageSearchUrl,
+    raw: payload
+  };
+}
+
+/** Search the 1688 result page with the image ID returned by the upload step. */
+async function search1688ByImageId(imageId, imageSearchUrl) {
+  const id = String(imageId || "").trim();
+  if (!id) {
+    throw new Error("请提供 1688 图片 ID");
+  }
+  let searchUrl = String(imageSearchUrl || "").trim();
+  if (!searchUrl) {
+    searchUrl = "https://search.1688.com/youyuan/index.htm?tab=imageSearch&showP4P=false&odTab=consign&showBid=false&imageId=" + encodeURIComponent(id);
+  }
   let offers = [];
   try {
-    const pageResponse = await fetch(imageSearchUrl, {
+    const pageResponse = await fetch(searchUrl, {
       headers: {
         "user-agent": "Mozilla/5.0",
         "referer": "https://www.1688.com/"
@@ -67,12 +111,26 @@ async function search1688ByImage(image) {
     offers = [];
   }
   return {
-    url: imageSearchUrl,
-    offers: offers,
-    raw: payload
+    image_id: id,
+    url: searchUrl,
+    offers: offers
+  };
+}
+
+/** Complete the two-step 1688 image search flow for one image. */
+async function search1688ByImage(image) {
+  const uploadResult = await upload1688ImageForSearch(image);
+  const searchResult = await search1688ByImageId(uploadResult.image_id, uploadResult.search_url);
+  return {
+    image_id: uploadResult.image_id,
+    url: searchResult.url,
+    offers: searchResult.offers,
+    raw: uploadResult.raw
   };
 }
 
 module.exports = {
+  upload1688ImageForSearch: upload1688ImageForSearch,
+  search1688ByImageId: search1688ByImageId,
   search1688ByImage: search1688ByImage
 };

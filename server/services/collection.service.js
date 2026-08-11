@@ -8,6 +8,62 @@ class CollectionService {
     this.events = settings.events;
     this.workflow = settings.workflow || null;
     this.images = settings.images;
+    this.currency = settings.currency || null;
+  }
+
+  /** Start image caching after the collection payload has been committed. */
+  scheduleImageCache(record, requestId) {
+    const service = this;
+    const platform = String(record && record.platform || "");
+    const platformId = String(record && record.platform_id || "");
+    const productId = String(record && record.product_id || "");
+    /** Run the image cache job on the next event-loop turn. */
+    setImmediate(function startDeferredImageCache() {
+      service.cacheRecordImagesInBackground(platform, platformId, productId, requestId).catch(function handleBackgroundImageCacheError(error) {
+        const ids = [platform, platformId];
+        service.events.publish({
+          resource: "product",
+          action: "image_cache_failed",
+          ids: ids,
+          version: 0,
+          error: error.message || "后台图片缓存失败。"
+        }, requestId);
+      });
+    });
+  }
+
+  /** Cache one collected record without blocking the collection response. */
+  async cacheRecordImagesInBackground(platform, platformId, productId, requestId) {
+    const initialPayload = this.repository.read();
+    const record = this.findExisting(initialPayload.records, platform, productId);
+    if (!record || String(record.platform_id || "") !== String(platformId || "")) {
+      return;
+    }
+    const expectedVersion = Number(record.version || 1);
+    await this.images.cacheRecordImages(record);
+    const latestPayload = this.repository.read();
+    const latestRecord = this.findExisting(latestPayload.records, platform, productId);
+    if (!latestRecord || String(latestRecord.platform_id || "") !== String(platformId || "")
+      || Number(latestRecord.version || 1) !== expectedVersion) {
+      return;
+    }
+    this.copyCachedImageFields(latestRecord, record);
+    this.repository.write(latestPayload);
+    this.events.publish({
+      resource: "product",
+      action: "images_cached",
+      ids: [platform, platformId],
+      version: Number(latestPayload.version || 1)
+    }, requestId);
+  }
+
+  /** Copy only image-related fields from the completed background cache job. */
+  copyCachedImageFields(target, source) {
+    target.main_image_url = source.main_image_url;
+    target.gallery_image_urls = source.gallery_image_urls;
+    target.detail_image_urls = source.detail_image_urls;
+    target.sku = source.sku;
+    target.source_data = source.source_data;
   }
 
   /** Read the next positive identifier from one cache field. */
@@ -57,6 +113,39 @@ class CollectionService {
     return null;
   }
 
+  /** Return the stable server cache key for one canonical product record. */
+  getRecordCacheKey(record, index) {
+    const item = record || {};
+    const platform = String(item.platform || "").toLowerCase();
+    const productId = String(item.product_id || "");
+    if (productId) {
+      return "product:" + platform + ":" + productId;
+    }
+    const platformId = String(item.platform_id || "");
+    if (platformId) {
+      return "platform:" + platform + ":" + platformId;
+    }
+    return "record:" + platform + ":" + String(item.main_id || item.mainid || index);
+  }
+
+  /** Remove historical duplicate server cache rows while retaining the newest row. */
+  dedupeRecords(records) {
+    const source = Array.isArray(records) ? records : [];
+    const result = [];
+    const keyIndexes = {};
+    for (let index = 0; index < source.length; index += 1) {
+      const item = source[index] || {};
+      const key = this.getRecordCacheKey(item, index);
+      if (Object.prototype.hasOwnProperty.call(keyIndexes, key)) {
+        result[keyIndexes[key]] = item;
+        continue;
+      }
+      keyIndexes[key] = result.length;
+      result.push(item);
+    }
+    return result;
+  }
+
   /** Find one record by its platform-local identifier. */
   findByPlatformId(records, platform, platformId) {
     for (let index = 0; index < records.length; index += 1) {
@@ -85,7 +174,9 @@ class CollectionService {
   async collect(input, requestId) {
     const platform = String(input.platform || "").toLowerCase();
     const source = input.source_data && typeof input.source_data === "object" ? input.source_data : {};
+    const priceInfo = this.currency ? await this.currency.normalizeSourcePrices(source, platform) : null;
     const payload = this.repository.read();
+    payload.records = this.dedupeRecords(payload.records);
     const records = payload.records;
     const productId = this.getProductId(platform, source);
     let record = this.findExisting(records, platform, productId);
@@ -107,6 +198,15 @@ class CollectionService {
       record.product_name = this.getProductName(platform, source) || record.product_name;
       record.version = Number(record.version || 1) + 1;
     }
+    if (this.currency && priceInfo) {
+      const sourceRows = platform === "1688" ? source.skuRows : source.sku;
+      if (Array.isArray(record.sku) && Array.isArray(sourceRows)) {
+        this.currency.syncStoredSkuPrices(record.sku, sourceRows);
+      }
+      record.original_currency = priceInfo.original_currency;
+      record.price_currency = priceInfo.price_currency;
+      record.price_update_time = priceInfo.update_time;
+    }
     let temuRecord = null;
     if (platform === "1688" && (input.target_temu_platform_id || input.target_temu_main_id)) {
       const targetTemu = input.target_temu_platform_id
@@ -119,8 +219,8 @@ class CollectionService {
       }
       temuRecord = this.bindOneToOne(records, record, targetTemu.platform_id);
     }
-    await this.images.cacheRecordImages(record);
     this.repository.write(payload);
+    this.scheduleImageCache(record, requestId);
     const ids = [platform, String(record.platform_id)];
     if (temuRecord) {
       ids.push("temu", String(temuRecord.platform_id));
@@ -135,7 +235,8 @@ class CollectionService {
     this.events.publish({ resource: "product", action: temuRecord ? "bound" : "collected", ids: ids, version: Number(payload.version || 1) }, requestId);
     return {
       product: this.viewModels.normalizeRecord(record),
-      bound_temu: temuRecord ? this.viewModels.normalizeRecord(temuRecord) : null
+      bound_temu: temuRecord ? this.viewModels.normalizeRecord(temuRecord) : null,
+      source_data: record.source_data
     };
   }
 

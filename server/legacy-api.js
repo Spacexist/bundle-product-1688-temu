@@ -1616,10 +1616,6 @@ function handleApiRequest(request, response) {
     handleWorkflowOperation(request, response, "generateImages", "Workflow generation input");
     return true;
   }
-  if (requestUrl.pathname === "/api/workflow/search" && request.method === "POST") {
-    handleWorkflowOperation(request, response, "searchImage", "Workflow 1688 search input");
-    return true;
-  }
   if (requestUrl.pathname === "/api/workflow/complete" && request.method === "POST") {
     handleWorkflowBindingOperation(request, response);
     return true;

@@ -15,7 +15,6 @@ function createProviderRouter() {
   router.all("/workflow/active", adapterModule.createLegacyApiAdapter("/api/workflow/active"));
   router.all("/workflow/prompts", adapterModule.createLegacyApiAdapter("/api/workflow/prompts"));
   router.all("/workflow/generate", adapterModule.createLegacyApiAdapter("/api/workflow/generate"));
-  router.all("/workflow/search", adapterModule.createLegacyApiAdapter("/api/workflow/search"));
   router.all("/workflow/complete", adapterModule.createLegacyApiAdapter("/api/workflow/complete"));
   return router;
 }

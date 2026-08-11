@@ -1,6 +1,5 @@
 const fs = require("fs");
 const path = require("path");
-const search1688ByImage = require("./1688-image-search").search1688ByImage;
 
 /** Create one workflow error carrying its intended HTTP status code. */
 function createWorkflowError(message, statusCode) {
@@ -83,7 +82,10 @@ function parseWorkflowPromptContent(content) {
       prompt: prompt,
       image_url: "",
       status: "prompt_ready",
-      error: ""
+      error: "",
+      search_url: "",
+      search_status: "",
+      search_error: ""
     });
   }
   return prompts;
@@ -104,6 +106,9 @@ class WorkflowService {
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
     this.eventClients = [];
+    this.generationQueue = [];
+    this.generationQueueActive = false;
+    this.recoverInterruptedTasks();
   }
 
   /** Return the default persistent workflow payload. */
@@ -373,6 +378,179 @@ class WorkflowService {
     return this.executeGeneratedImageRequest(config, prompt, requestId);
   }
 
+  /** Reset generation markers left behind when the server stopped mid-task. */
+  recoverInterruptedTasks() {
+    const workflow = this.readPayload();
+    let changed = false;
+    const tasks = workflow && workflow.tasks && typeof workflow.tasks === "object" ? workflow.tasks : {};
+    const taskKeys = Object.keys(tasks);
+    for (let taskIndex = 0; taskIndex < taskKeys.length; taskIndex += 1) {
+      const task = tasks[taskKeys[taskIndex]];
+      if (!task || task.status !== "generating") {
+        continue;
+      }
+      let hasGeneratedImage = false;
+      const prompts = Array.isArray(task.prompts) ? task.prompts : [];
+      for (let promptIndex = 0; promptIndex < prompts.length; promptIndex += 1) {
+        const prompt = prompts[promptIndex];
+        if (!prompt || typeof prompt !== "object") {
+          continue;
+        }
+        if (prompt.image_url) {
+          hasGeneratedImage = true;
+        }
+        if (prompt.status === "queued" || prompt.status === "generating") {
+          prompt.status = "prompt_ready";
+          prompt.error = "";
+        }
+      }
+      task.status = hasGeneratedImage ? "images_ready" : "prompts_ready";
+      task.error = "上次后台生图在服务器重启时中断，请重新提交。";
+      changed = true;
+    }
+    if (changed) {
+      this.writePayload(workflow, "");
+    }
+  }
+
+  /** Start one non-blocking background generation job for the current workflow task. */
+  scheduleImageGeneration(temuMainId, requestedIndex, requestId, promptSnapshot) {
+    this.generationQueue.push({
+      temu_main_id: String(temuMainId || ""),
+      requested_index: requestedIndex,
+      request_id: String(requestId || ""),
+      prompts: Array.isArray(promptSnapshot) ? promptSnapshot : []
+    });
+    this.pumpGenerationQueue();
+  }
+
+  /** Return whether one Temu item still has a generation job waiting in the queue. */
+  hasPendingGeneration(temuMainId) {
+    const key = String(temuMainId || "");
+    for (let index = 0; index < this.generationQueue.length; index += 1) {
+      if (String(this.generationQueue[index].temu_main_id || "") === key) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Start the next workflow generation job without holding an HTTP request open. */
+  pumpGenerationQueue() {
+    if (this.generationQueueActive || !this.generationQueue.length) {
+      return;
+    }
+    this.generationQueueActive = true;
+    const service = this;
+    const job = this.generationQueue.shift();
+    /** Run one queued workflow job on the next event-loop turn. */
+    function runQueuedGenerationJob() {
+      service.generateImagesInBackground(
+        job.temu_main_id,
+        job.requested_index,
+        job.request_id,
+        job.prompts
+      ).then(function finishQueuedGenerationJob() {
+        service.generationQueueActive = false;
+        service.pumpGenerationQueue();
+      }, function handleQueuedGenerationJobError() {
+        service.generationQueueActive = false;
+        service.pumpGenerationQueue();
+      });
+    }
+    setImmediate(runQueuedGenerationJob);
+  }
+
+  /** Generate candidate images in the background and publish every intermediate result. */
+  async generateImagesInBackground(temuMainId, requestedIndex, requestId, promptSnapshot) {
+    try {
+      const config = this.readConfig();
+      const requestedPrompts = Array.isArray(promptSnapshot) ? promptSnapshot : [];
+      const workflow = this.readPayload();
+      const task = workflow.tasks && workflow.tasks[temuMainId];
+      if (!task || !Array.isArray(task.prompts)) {
+        return;
+      }
+      let generatedCount = 0;
+      let failedCount = 0;
+      let lastError = "";
+      for (let index = 0; index < task.prompts.length; index += 1) {
+        if (requestedIndex >= 0 && index !== requestedIndex) {
+          continue;
+        }
+        const currentWorkflow = this.readPayload();
+        const currentTask = currentWorkflow.tasks && currentWorkflow.tasks[temuMainId];
+        const item = currentTask && currentTask.prompts ? currentTask.prompts[index] : null;
+        if (!item) {
+          continue;
+        }
+        if (requestedPrompts[index] !== undefined) {
+          item.prompt = String(requestedPrompts[index] || "").trim();
+        }
+        item.status = "generating";
+        item.error = "";
+        item.search_url = "";
+        item.search_status = "";
+        item.search_error = "";
+        this.writePayload(currentWorkflow, requestId);
+        try {
+          item.image_url = await this.generateOneImage(config, item.prompt, requestId);
+          item.status = "generated";
+          generatedCount += 1;
+        } catch (error) {
+          item.status = "error";
+          item.error = error.message || "生图失败。";
+          failedCount += 1;
+          lastError = item.error;
+          if (requestedIndex >= 0) {
+            const failedWorkflow = this.readPayload();
+            const failedTask = failedWorkflow.tasks && failedWorkflow.tasks[temuMainId];
+            if (failedTask && !this.hasPendingGeneration(temuMainId)) {
+              failedTask.status = "generation_error";
+              failedTask.error = item.error;
+              this.writePayload(failedWorkflow, requestId);
+            }
+            return;
+          }
+        }
+        const latestWorkflow = this.readPayload();
+        const latestTask = latestWorkflow.tasks && latestWorkflow.tasks[temuMainId];
+        if (latestTask && latestTask.prompts && latestTask.prompts[index]) {
+          latestTask.prompts[index] = item;
+          this.writePayload(latestWorkflow, requestId);
+        }
+      }
+      const finalWorkflow = this.readPayload();
+      const finalTask = finalWorkflow.tasks && finalWorkflow.tasks[temuMainId];
+      if (!finalTask) {
+        return;
+      }
+      let hasGeneratedImage = false;
+      for (let index = 0; index < finalTask.prompts.length; index += 1) {
+        if (finalTask.prompts[index] && finalTask.prompts[index].image_url) {
+          hasGeneratedImage = true;
+          break;
+        }
+      }
+      if (this.hasPendingGeneration(temuMainId)) {
+        finalTask.status = "generating";
+        finalTask.error = "";
+      } else {
+        finalTask.status = hasGeneratedImage ? "images_ready" : "generation_error";
+        finalTask.error = hasGeneratedImage ? "" : lastError || (failedCount ? "图片生成失败。" : "四张图片均生成失败。");
+      }
+      this.writePayload(finalWorkflow, requestId);
+    } catch (error) {
+      const failedWorkflow = this.readPayload();
+      const failedTask = failedWorkflow.tasks && failedWorkflow.tasks[temuMainId];
+      if (failedTask && !this.hasPendingGeneration(temuMainId)) {
+        failedTask.status = "generation_error";
+        failedTask.error = error.message || "后台生图失败。";
+        this.writePayload(failedWorkflow, requestId);
+      }
+    }
+  }
+
   /** Generate all four images or regenerate one selected candidate. */
   async generateImages(input, requestId) {
     const temuMainId = String(input.temu_main_id || "").trim();
@@ -387,92 +565,39 @@ class WorkflowService {
       }
     }
     const requestedIndex = input.index === undefined || input.index === null ? -1 : Number(input.index);
+    if (!Number.isInteger(requestedIndex) || requestedIndex < -1 || requestedIndex >= task.prompts.length) {
+      throw createWorkflowError("生图索引无效。", 400);
+    }
     const config = this.readConfig();
     if (!config || !config.apikey || !config.generation_endpoint) {
       throw createWorkflowError("server/config.json 未配置完整的 BeeAPI 生图接口。", 500);
     }
-    task.status = "generating";
-    task.error = "";
-    this.writePayload(workflow, requestId);
-    let generatedCount = 0;
     for (let index = 0; index < task.prompts.length; index += 1) {
       if (requestedIndex >= 0 && index !== requestedIndex) {
         continue;
       }
-      const item = task.prompts[index];
-      if (!String(item.prompt || "").trim()) {
+      if (!String(task.prompts[index].prompt || "").trim()) {
         throw createWorkflowError("第 " + (index + 1) + " 组提示词不能为空。", 400);
       }
-      item.status = "generating";
-      item.error = "";
-      this.writePayload(workflow, requestId);
-      try {
-        item.image_url = await this.generateOneImage(config, item.prompt, requestId);
-        item.status = "generated";
-        generatedCount += 1;
-      } catch (error) {
-        item.status = "error";
-        item.error = error.message || "生图失败。";
-        if (requestedIndex >= 0) {
-          task.status = "generation_error";
-          task.error = item.error;
-          this.writePayload(workflow, requestId);
-          throw error;
-        }
-      }
-      this.writePayload(workflow, requestId);
     }
-    task.status = generatedCount > 0 ? "images_ready" : "generation_error";
-    task.error = generatedCount > 0 ? "" : "四张图片均生成失败。";
+    const promptSnapshot = [];
+    task.status = "generating";
+    task.error = "";
+    for (let index = 0; index < task.prompts.length; index += 1) {
+      if (requestedIndex >= 0 && index !== requestedIndex) {
+        continue;
+      }
+      task.prompts[index].status = "queued";
+      task.prompts[index].image_url = "";
+      task.prompts[index].error = "";
+      task.prompts[index].search_url = "";
+      task.prompts[index].search_status = "";
+      task.prompts[index].search_error = "";
+      promptSnapshot[index] = task.prompts[index].prompt;
+    }
     this.writePayload(workflow, requestId);
-    if (!generatedCount) {
-      throw createWorkflowError(task.error, 502);
-    }
+    this.scheduleImageGeneration(temuMainId, requestedIndex, requestId, promptSnapshot);
     return { ok: true, task: task };
-  }
-
-  /** Search 1688 using the exact source module copied from project1. */
-  async searchImage(input, requestId) {
-    const temuMainId = String(input.temu_main_id || "").trim();
-    const selectedIndex = Number(input.index);
-    const workflow = this.readPayload();
-    const task = workflow.tasks && workflow.tasks[temuMainId];
-    if (!task || !Array.isArray(task.prompts) || !task.prompts[selectedIndex] || !task.prompts[selectedIndex].image_url) {
-      throw createWorkflowError("请选择一张已生成的组货图片。", 400);
-    }
-    try {
-      const source = await this.readImageSource(task.prompts[selectedIndex].image_url, requestId);
-      const imageBase64 = source.buffer.toString("base64");
-      this.writeLog("OUTBOUND", "1688 image search module POST https://search.1688.com/service/uploadErpImgSearch", {
-        imgBase64: imageBase64,
-        searchType: "imageSearch",
-        appName: "pcErpImage",
-        urlType: "main"
-      }, requestId);
-      const result = await search1688ByImage(imageBase64);
-      const searchUrl = String(result.url || "");
-      this.writeLog("UPSTREAM", "1688 image search module response", {
-        url: searchUrl,
-        offer_count: Array.isArray(result.offers) ? result.offers.length : 0,
-        raw: result.raw
-      }, requestId);
-      workflow.active_temu_main_id = temuMainId;
-      task.status = "waiting_1688_confirmation";
-      task.selected_result_index = selectedIndex;
-      task.search_url = searchUrl;
-      task.search_offers = Array.isArray(result.offers) ? result.offers : [];
-      task.error = "";
-      this.writePayload(workflow, requestId);
-      return { ok: true, search_url: searchUrl, offers: task.search_offers, task: task };
-    } catch (error) {
-      task.status = "search_error";
-      task.error = error.message || "1688 图搜失败。";
-      this.writePayload(workflow, requestId);
-      if (!error.statusCode) {
-        error.statusCode = 502;
-      }
-      throw error;
-    }
   }
 
   /** Mark one Temu workflow as bound to an extension-collected 1688 record. */

@@ -4,6 +4,7 @@ class ImageController {
   constructor(options) {
     const settings = options || {};
     this.images = settings.images;
+    this.imageSearch = settings.imageSearch;
   }
 
   /** Cache one uploaded data URL or remote image and return its local API URL. */
@@ -19,6 +20,21 @@ class ImageController {
       response.json({
         ok: true,
         data: { image_url: imageUrl },
+        error: null,
+        meta: { request_id: request.requestId }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Search 1688 with one selected product image and return its search page. */
+  async search1688(request, response, next) {
+    try {
+      const result = await this.imageSearch.search1688(request.validatedBody);
+      response.json({
+        ok: true,
+        data: result,
         error: null,
         meta: { request_id: request.requestId }
       });

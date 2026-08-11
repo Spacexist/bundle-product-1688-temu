@@ -5,6 +5,7 @@ class ProductController {
     const settings = options || {};
     this.products = settings.products;
     this.collection = settings.collection;
+    this.miaoshouExport = settings.miaoshouExport;
   }
 
   /** Return the current ready-to-render workbench ViewModel. */
@@ -59,6 +60,16 @@ class ProductController {
     }
   }
 
+  /** Replace one Temu SKU with the selected 1688 SKU and return the fresh row. */
+  async replaceSku(request, response, next) {
+    try {
+      const result = await this.products.replaceSku(request.validatedBody, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Restore one previous module snapshot. */
   undo(request, response, next) {
     try {
@@ -105,6 +116,21 @@ class ProductController {
       const payload = this.products.getWorkbench();
       response.setHeader("Content-Disposition", "attachment; filename=temu-1688-export-" + Date.now() + ".json");
       response.type("application/json").send(JSON.stringify(payload, null, 2));
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Generate and download the current Temu-only 妙手 ZIP on the server. */
+  async exportMiaoshouZip(request, response, next) {
+    try {
+      const result = await this.miaoshouExport.createTemuZip();
+      response.setHeader("Content-Type", "application/zip");
+      response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(result.fileName));
+      response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, X-Miaoshou-Image-Failures, X-Miaoshou-Product-Count");
+      response.setHeader("X-Miaoshou-Image-Failures", String(result.failureCount));
+      response.setHeader("X-Miaoshou-Product-Count", String(result.productCount));
+      response.send(result.buffer);
     } catch (error) {
       next(error);
     }

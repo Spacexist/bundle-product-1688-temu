@@ -20,6 +20,28 @@
   "image_queue": {
     "concurrency": 3
   },
+  "exchange_rates": {
+    "base_currency": "CNY",
+    "updated_at": "2026-08-10",
+    "update_time": "2026-08-10",
+    "source": "ECB daily rates with local fallback",
+    "request_url": "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml",
+    "request_timeout_ms": 5000,
+    "refresh_interval_ms": 86400000,
+    "live_update": true,
+    "rates": {
+      "CNY": 1,
+      "USD": 6.744,
+      "JPY": 0.0425,
+      "CAD": 4.838,
+      "EUR": 7.7931,
+      "GBP": 9.108,
+      "HKD": 0.8596,
+      "KRW": 0.00476,
+      "AUD": 4.764,
+      "SGD": 5.27
+    }
+  },
   "price": { "1k": 0.02, "2k": 0.04, "4K": 0.08 },
   "apikey": "",
   "kimi": {

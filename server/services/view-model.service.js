@@ -51,7 +51,8 @@ class ViewModelService {
         SubSku2: source.SubSku2 || source.subSku2 || this.readSpecValue(source.specs || source.specAttrs, 1),
         sku_price: source.sku_price || source.discountPrice || source.promotionPrice || source.salePrice || source.normalPrice || source.price || "",
         sku_original_price: source.sku_original_price || source.price || source.normalPrice || "",
-        sku_stock: source.sku_stock || source.stock || source.stockQuantity || source.canBookCount || "",
+        sku_stock: source.sku_stock !== undefined && source.sku_stock !== "" ? source.sku_stock : source.stock !== undefined && source.stock !== "" ? source.stock : source.stockQuantity !== undefined && source.stockQuantity !== "" ? source.stockQuantity : source.canBookCount !== undefined && source.canBookCount !== "" ? source.canBookCount : 0,
+        sku_weight: source.sku_weight !== undefined && source.sku_weight !== "" ? source.sku_weight : source.weight !== undefined && source.weight !== "" ? source.weight : 0,
         sku_image_url: primary || images[0] || "",
         sku_image_urls: images,
         merged_ali_sku_keys: this.asArray(source.merged_ali_sku_keys)
@@ -68,6 +69,31 @@ class ViewModelService {
       keywords: String(source.keywords || ""),
       attributes: this.asArray(source.attributes)
     };
+  }
+
+  /** Resolve the compact currency symbol used by the SKU conversion badge. */
+  getCurrencySymbol(value) {
+    const currency = String(value || "CNY").trim().toUpperCase();
+    const symbols = {
+      CNY: "¥",
+      USD: "$",
+      JPY: "￥",
+      CAD: "C$",
+      EUR: "€",
+      GBP: "£",
+      HKD: "HK$",
+      KRW: "₩",
+      AUD: "A$",
+      SGD: "S$"
+    };
+    return symbols[currency] || currency;
+  }
+
+  /** Build the visible source-to-RMB label shown above each SKU table. */
+  getPriceConversionLabel(originalCurrency, priceCurrency) {
+    const source = this.getCurrencySymbol(originalCurrency || "CNY");
+    const target = this.getCurrencySymbol(priceCurrency || "CNY");
+    return "由 (" + source + " → " + target + ")";
   }
 
   /** Convert one raw cache record into a ready-to-render product ViewModel. */
@@ -87,6 +113,10 @@ class ViewModelService {
     }
     const skuSource = stored.sku || (is1688 ? source.skuRows : source.sku);
     const listing = this.normalizeListing(stored.listing_json || source.listing);
+    const sourcePage = source.page && typeof source.page === "object" ? source.page : {};
+    const sourceLocale = sourcePage.locale && typeof sourcePage.locale === "object" ? sourcePage.locale : {};
+    const originalCurrency = stored.original_currency || source.original_currency || sourceLocale.currency || (is1688 ? "CNY" : "CNY");
+    const priceCurrency = stored.price_currency || source.price_currency || "CNY";
     return {
       main_id: stored.main_id === undefined ? stored.mainid || "" : stored.main_id,
       platform_id: stored.platform_id === undefined ? "" : stored.platform_id,
@@ -99,6 +129,10 @@ class ViewModelService {
       product_category: stored.product_category || source.productCategory || "",
       category_ids: this.asArray(stored.category_ids || goods.backendCategoryIds),
       sku: this.normalizeSkus(skuSource),
+      original_currency: originalCurrency,
+      price_currency: priceCurrency,
+      price_conversion_label: this.getPriceConversionLabel(originalCurrency, priceCurrency),
+      price_update_time: stored.price_update_time || source.price_update_time || "",
       main_image_url: stored.main_image_url || source.mainImageUrl || gallery[0] || "",
       gallery_image_urls: gallery,
       detail_image_urls: details,

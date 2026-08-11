@@ -10,7 +10,11 @@ const collectionModule = require("./services/collection.service");
 const productControllerModule = require("./controllers/product.controller");
 const imageControllerModule = require("./controllers/image.controller");
 const imageCacheModule = require("./services/image-cache.service");
+const miaoshouExportModule = require("./services/miaoshou-export.service");
+const imageSearchModule = require("./services/image-search.service");
+const currencyModule = require("./services/currency.service");
 const configControllerModule = require("./controllers/config.controller");
+const currencyControllerModule = require("./controllers/currency.controller");
 const routeModule = require("./routes/api.routes");
 const providerRouteModule = require("./routes/provider.routes");
 const requestContextModule = require("./middleware/request-context");
@@ -42,17 +46,25 @@ function createApp() {
   const events = new eventModule.EventHub({ writeLog: legacyApi.writeServerLog });
   const viewModels = new viewModelModule.ViewModelService();
   const images = new imageCacheModule.ImageCacheService(config.storage);
+  const imageSearch = new imageSearchModule.ImageSearchService({ images: images });
   const products = new productModule.ProductService({ repository: repository, viewModels: viewModels, events: events, images: images });
+  const miaoshouExport = new miaoshouExportModule.MiaoshouExportService({ repository: repository, viewModels: viewModels, images: images });
+  const currency = new currencyModule.CurrencyService({
+    readConfig: configModule.readServerConfig,
+    writeConfig: configModule.writeServerConfig
+  });
   const collection = new collectionModule.CollectionService({
     repository: repository,
     viewModels: viewModels,
     events: events,
     workflow: legacyApi.getWorkflowService(),
-    images: images
+    images: images,
+    currency: currency
   });
-  const productController = new productControllerModule.ProductController({ products: products, collection: collection });
-  const imageController = new imageControllerModule.ImageController({ images: images });
+  const productController = new productControllerModule.ProductController({ products: products, collection: collection, miaoshouExport: miaoshouExport });
+  const imageController = new imageControllerModule.ImageController({ images: images, imageSearch: imageSearch });
   const configController = new configControllerModule.ConfigController();
+  const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
   const app = express();
 
   /** Resolve each browser origin through the configured local allow list. */
@@ -88,6 +100,7 @@ function createApp() {
     productController: productController,
     configController: configController,
     imageController: imageController,
+    currencyController: currencyController,
     events: events
   };
   app.use("/api/v1", routeModule.createApiRouter(businessRouteOptions));

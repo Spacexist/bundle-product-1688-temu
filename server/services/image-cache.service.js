@@ -32,6 +32,36 @@ class ImageCacheService {
     return String(source || "").indexOf(this.publicPrefix + "/") === 0;
   }
 
+  /** Read one local image API URL from the server cache for ZIP export. */
+  readLocalImage(localUrl) {
+    if (!this.isLocalImageUrl(localUrl)) {
+      return null;
+    }
+    const relativePath = String(localUrl || "").slice(this.publicPrefix.length).replace(/^[/\\]+/, "");
+    if (!relativePath || relativePath.indexOf("..") >= 0) {
+      return null;
+    }
+    const filePath = path.join(this.imageDirectory, relativePath);
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    const extension = path.extname(filePath).toLowerCase();
+    const mimeTypes = {
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+      ".gif": "image/gif",
+      ".avif": "image/avif",
+      ".bmp": "image/bmp"
+    };
+    return {
+      buffer: fs.readFileSync(filePath),
+      extension: extension || ".jpg",
+      mimeType: mimeTypes[extension] || "application/octet-stream"
+    };
+  }
+
   /** Read the source-URL hash index used to bypass repeat CDN requests. */
   readSourceIndex() {
     if (!fs.existsSync(this.sourceIndexPath)) {
