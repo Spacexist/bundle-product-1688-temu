@@ -56,9 +56,9 @@ function createApp() {
     const queue = currentConfig.image_queue && typeof currentConfig.image_queue === "object"
       ? currentConfig.image_queue
       : {};
-    const configured = Number(queue.concurrency || currentConfig.image_queue_concurrency || 3);
+    const configured = Number(queue.concurrency || currentConfig.image_queue_concurrency || 4);
     if (!Number.isFinite(configured) || configured < 1) {
-      return 3;
+      return 4;
     }
     return Math.max(1, Math.min(32, Math.floor(configured)));
   }

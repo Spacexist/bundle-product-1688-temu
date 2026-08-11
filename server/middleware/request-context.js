@@ -9,10 +9,7 @@ function attachRequestContext(request, response, next) {
     next();
     return;
   }
-  const longLivedEventPaths = [
-    "/api/v1/events",
-    "/api/v1/workflow/events"
-  ];
+  const longLivedEventPaths = ["/api/v1/events"];
   if (longLivedEventPaths.indexOf(pathname) >= 0) {
     next();
     return;

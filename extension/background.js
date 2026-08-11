@@ -426,6 +426,7 @@ function createUnifiedBindingPanelRecord(record, apiBaseUrl) {
   return {
     main_id: item.main_id === undefined ? item.mainid || "" : item.main_id,
     platform_id: item.platform_id || "",
+    version: Number(item.version || 1),
     product_name: item.product_name || goods.goodsName || "未命名 Temu 商品",
     main_image_url: resolveUnifiedBindingPanelImageUrl(cachedImageUrl || cdnImageUrl, apiBaseUrl),
     cdn_image_url: cdnImageUrl,
@@ -495,15 +496,17 @@ function submitAndCacheUnifiedCollection(data, platform, temuMainId, temuPlatfor
 /** Replace every SKU in one selected Temu record with the current 1688 capture. */
 function submitUnifiedSkuReplacement(data, temuMainId, temuPlatformId, temuVersion) {
   return getUnifiedApiUrl("/replaceSku").then(function postUnifiedSkuReplacement(endpoint) {
+    var version = Number(temuVersion);
+    if (!Number.isInteger(version) || version <= 0) {
+      throw new Error("Temu 商品版本缺失，请刷新 1688 页面后重试。");
+    }
     var requestBody = {
       target_temu_main_id: String(temuMainId || ""),
       target_temu_platform_id: String(temuPlatformId || ""),
+      target_temu_version: version,
       source_data: data && typeof data === "object" ? data : {},
       replace_all_skus: true
     };
-    if (Number(temuVersion) > 0) {
-      requestBody.target_temu_version = Number(temuVersion);
-    }
     return fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

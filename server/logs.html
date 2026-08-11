@@ -415,8 +415,7 @@
     /** Return whether one entry belongs to an intentionally long-lived SSE request. */
     function isLongLivedEventEntry(entry) {
       var label = String(entry && entry.label || "");
-      return label.indexOf("GET /api/v1/events") >= 0
-        || label.indexOf("GET /api/v1/workflow/events") >= 0;
+      return label.indexOf("GET /api/v1/events") >= 0;
     }
 
     /** Add one raw event to the matching request group. */

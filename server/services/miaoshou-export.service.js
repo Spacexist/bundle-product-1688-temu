@@ -62,6 +62,29 @@ function parseMiaoshouNumber(value, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+/** Format SKU length, width and height as the 妙手 CM dimension value. */
+function formatMiaoshouDimensions(sku) {
+  const source = sku && typeof sku === "object" ? sku : {};
+  const length = source.sku_length !== undefined && source.sku_length !== ""
+    ? source.sku_length
+    : source.skuLength !== undefined && source.skuLength !== "" ? source.skuLength : source.length;
+  const width = source.sku_width !== undefined && source.sku_width !== ""
+    ? source.sku_width
+    : source.skuWidth !== undefined && source.skuWidth !== "" ? source.skuWidth : source.width;
+  const height = source.sku_height !== undefined && source.sku_height !== ""
+    ? source.sku_height
+    : source.skuHeight !== undefined && source.skuHeight !== "" ? source.skuHeight : source.height;
+  if ((length === undefined || length === "")
+    && (width === undefined || width === "")
+    && (height === undefined || height === "")) {
+    return "";
+  }
+  const lengthText = length === undefined || length === null ? "" : String(length);
+  const widthText = width === undefined || width === null ? "" : String(width);
+  const heightText = height === undefined || height === null ? "" : String(height);
+  return [lengthText, widthText, heightText].join("*");
+}
+
 /** Join Temu attributes into the description column expected by 妙手. */
 function buildMiaoshouDescription(value) {
   const rows = asArray(value);
@@ -163,7 +186,7 @@ class MiaoshouExportService {
         parseMiaoshouPrice(sku.sku_price),
         parseMiaoshouNumber(sku.sku_stock, 0),
         parseMiaoshouNumber(sku.sku_weight, 0),
-        ""
+        formatMiaoshouDimensions(sku)
       ]));
     }
     const sheet = XLSX.utils.aoa_to_sheet(rows);
@@ -194,27 +217,24 @@ class MiaoshouExportService {
     return image;
   }
 
-  /** Create a standard ZIP stream and collect its output in one server buffer. */
-  createArchive() {
+  /** Create a standard ZIP stream and pipe output directly to the download response. */
+  createArchive(output) {
     const archive = archiver("zip", { store: true });
-    const chunks = [];
     const completion = new Promise(function createArchivePromise(resolve, reject) {
-      /** Collect each compressed output chunk. */
-      function handleArchiveData(chunk) {
-        chunks.push(chunk);
-      }
       /** Resolve after the standard ZIP stream writes its end record. */
       function handleArchiveEnd() {
-        resolve(Buffer.concat(chunks));
+        resolve();
       }
       /** Reject when the ZIP stream reports a generation error. */
       function handleArchiveError(error) {
         reject(error);
       }
-      archive.on("data", handleArchiveData);
       archive.on("end", handleArchiveEnd);
       archive.on("error", handleArchiveError);
     });
+    if (output && typeof archive.pipe === "function") {
+      archive.pipe(output);
+    }
     return { archive: archive, completion: completion };
   }
 
@@ -240,7 +260,7 @@ class MiaoshouExportService {
   }
 
   /** Generate one complete Temu-only 妙手 ZIP from the server cache. */
-  async createTemuZip() {
+  async createTemuZip(output, onStart) {
     const payload = this.repository.read();
     const view = this.viewModels.createWorkbench(payload);
     const records = [];
@@ -257,7 +277,11 @@ class MiaoshouExportService {
 
     const failures = [];
     const packageName = safeMiaoshouName("Temu-妙手导入包-" + Date.now(), "Temu-妙手导入包");
-    const archiveState = this.createArchive();
+    const fileName = packageName + ".zip";
+    if (typeof onStart === "function") {
+      onStart({ fileName: fileName, productCount: records.length });
+    }
+    const archiveState = this.createArchive(output);
     const archive = archiveState.archive;
     this.addFolder(archive, packageName);
     for (let productIndex = 0; productIndex < records.length; productIndex += 1) {
@@ -311,8 +335,11 @@ class MiaoshouExportService {
     }
 
     archive.finalize();
-    const buffer = await archiveState.completion;
-    return { buffer: buffer, fileName: packageName + ".zip", productCount: records.length, failureCount: failures.length };
+    if (output && typeof output.addTrailers === "function") {
+      output.addTrailers({ "X-Miaoshou-Image-Failures": String(failures.length) });
+    }
+    await archiveState.completion;
+    return { fileName: fileName, productCount: records.length, failureCount: failures.length };
   }
 }
 

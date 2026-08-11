@@ -1,6 +1,12 @@
 const appModule = require("./app");
 const configModule = require("./config/config-loader");
 
+/** Keep synchronous provider requests bounded to five minutes. */
+const HTTP_REQUEST_TIMEOUT_MS = 300000;
+
+/** Allow request headers to arrive slightly beyond the provider timeout boundary. */
+const HTTP_HEADERS_TIMEOUT_MS = 305000;
+
 /** Start the standalone Express API process on its configured local port. */
 function startServer() {
   const config = configModule.readServerConfig();
@@ -10,7 +16,10 @@ function startServer() {
     console.log("Express API：http://" + config.server.host + ":" + config.server.port);
     console.log("Server logs：http://" + config.server.host + ":" + config.server.port + "/server/logs");
   }
-  app.listen(config.server.port, config.server.host, reportServerAddress);
+  const server = app.listen(config.server.port, config.server.host, reportServerAddress);
+  server.requestTimeout = HTTP_REQUEST_TIMEOUT_MS;
+  server.timeout = HTTP_REQUEST_TIMEOUT_MS;
+  server.headersTimeout = HTTP_HEADERS_TIMEOUT_MS;
 }
 
 startServer();

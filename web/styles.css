@@ -80,7 +80,7 @@ button { cursor: pointer; }
 .sku-image-item img { width: 58px; height: 58px; border-radius: 8px; cursor: zoom-in; transition: transform .16s ease, box-shadow .16s ease; }
 .sku-image-item img:hover { transform: scale(1.04); box-shadow: 0 5px 12px rgba(15, 23, 42, .16); }
 .sku-image-item .image-delete-button { top: -7px; right: -7px; }
-.sku-image-actions { position: absolute; top: 50%; left: 50%; z-index: 4; display: flex; width: auto; justify-content: center; gap: 5px; padding: 4px; border: 1px solid rgba(255, 255, 255, .92); border-radius: 999px; background: rgba(255, 255, 255, .86); box-shadow: 0 5px 12px rgba(15, 23, 42, .16); transform: translate(-50%, -50%); }
+.sku-image-actions { display: flex; flex-basis: 100%; width: auto; justify-content: flex-start; gap: 5px; padding: 0; }
 .sku-blend-button { border: 1px solid #fed7aa; border-radius: 999px; padding: 3px 9px; background: #fff7ed; color: #c2410c; font-size: 11px; line-height: 1.2; cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
 .sku-blend-button:hover:not(:disabled) { border-color: #fb923c; background: #ffedd5; transform: translateY(-1px); }
 .sku-blend-button:disabled { cursor: wait; opacity: .6; }
@@ -153,7 +153,8 @@ button { cursor: pointer; }
 .cache-state { display: inline-flex; align-items: center; margin-left: 8px; padding: 8px 12px; border-radius: 999px; background: #fff7ed; color: #c2410c; font-size: 12px; }
 .cache-state.connected { background: #ecfdf5; color: #047857; }
 .render-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.listing-rail { position: sticky; top: 16px; max-height: calc(100vh - 150px); overflow: auto; padding: 12px; }
+.listing-rail { position: sticky; top: 16px; max-height: calc(100vh - 150px); overflow-x: hidden; overflow-y: auto; padding: 12px; scrollbar-width: none; }
+.listing-rail::-webkit-scrollbar { width: 0; height: 0; }
 .listing-card { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 8px; width: 100%; margin: 8px 0; padding: 7px 25px 7px 7px; border: 1px solid #e5e7eb; border-radius: 14px; background: #f8fafc; text-align: left; }
 .listing-card.active { border-color: #ff6b35; background: #fff7f3; box-shadow: 0 4px 12px rgba(255, 107, 53, .12); }
 .listing-card img, .listing-image-empty { width: 48px; height: 48px; border-radius: 10px; object-fit: cover; background: #e2e8f0; }
@@ -252,9 +253,17 @@ button { cursor: pointer; }
 .image-edit-tools { display: flex; align-items: center; gap: 6px; color: #64748b; font-size: 11px; font-weight: 400; }
 .image-edit-size { min-width: 52px; border: 1px solid #fed7aa; border-radius: 6px; padding: 3px 5px; background: #fffaf5; color: #9a3412; font-size: 11px; }
 .image-edit-price { color: #c2410c; white-space: nowrap; }
+.sku-spec-table th, .sku-spec-table td { text-align: center; }
 .sku-spec-table td { vertical-align: middle; }
+.sku-spec-table .sku-edit-input { text-align: center; }
+.sku-spec-table .sku-images-editor { justify-content: center; margin: 0 auto; }
 .sku-edit-input { width: 100%; min-width: 72px; box-sizing: border-box; padding: 6px 7px; border: 1px solid #dbe3ed; border-radius: 6px; background: #fff; color: #334155; font-size: 12px; }
 .sku-edit-input:focus { outline: 2px solid rgba(255, 107, 53, .2); border-color: #ff6b35; }
+.sku-dimensions-column, .sku-dimensions-cell { width: 106px; min-width: 106px; }
+.sku-dimension-bubbles { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); gap: 3px; align-items: center; width: 106px; }
+.sku-dimension-input { width: 100%; min-width: 0; height: 28px; box-sizing: border-box; padding: 6px 2px; font-size: 10px; text-align: center; }
+.sku-dimension-separator { color: #64748b; font-size: 11px; line-height: 1; text-align: center; }
+.sku-dimension-input:focus { color: #c2410c; }
 .detail-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid #e5e7eb; }
 .detail-section h3 { margin: 0 0 12px; color: #111827; font-size: 16px; }
 .detail-image-toolbar { display: flex; justify-content: flex-end; margin-bottom: 10px; }
@@ -477,6 +486,7 @@ body::before {
 .compact-facts .fact { background: rgba(255, 255, 255, .18); }
 
 .temu-render .sku-spec-panel { overflow: visible; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.ali-render .sku-spec-panel { border-radius: 14px; }
 .sku-spec-groups { display: grid; gap: 12px; }
 .sku-spec-group { margin: 0; border: 1px solid rgba(255, 255, 255, .72); border-radius: 14px; background: rgba(255, 255, 255, .2); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .72), 0 8px 22px rgba(63, 73, 92, .06); }
 .sku-spec-group:hover { border-color: rgba(255, 255, 255, .88); background: rgba(255, 255, 255, .32); }

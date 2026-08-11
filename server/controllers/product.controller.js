@@ -125,14 +125,20 @@ class ProductController {
   /** Generate and download the current Temu-only 妙手 ZIP on the server. */
   async exportMiaoshouZip(request, response, next) {
     try {
-      const result = await this.miaoshouExport.createTemuZip();
-      response.setHeader("Content-Type", "application/zip");
-      response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(result.fileName));
-      response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, X-Miaoshou-Image-Failures, X-Miaoshou-Product-Count");
-      response.setHeader("X-Miaoshou-Image-Failures", String(result.failureCount));
-      response.setHeader("X-Miaoshou-Product-Count", String(result.productCount));
-      response.send(result.buffer);
+      /** Set streaming ZIP headers before the first archive chunk is written. */
+      function startMiaoshouZipDownload(info) {
+        response.setHeader("Content-Type", "application/zip");
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(info.fileName));
+        response.setHeader("Trailer", "X-Miaoshou-Image-Failures");
+        response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, X-Miaoshou-Image-Failures, X-Miaoshou-Product-Count");
+        response.setHeader("X-Miaoshou-Product-Count", String(info.productCount));
+      }
+      await this.miaoshouExport.createTemuZip(response, startMiaoshouZipDownload);
     } catch (error) {
+      if (response.headersSent) {
+        response.destroy();
+        return;
+      }
       next(error);
     }
   }

@@ -304,6 +304,13 @@ class ProductService {
     const sourceOriginalPrice = this.readSkuField(source, ["sku_original_price", "price", "normalPrice"]);
     const sourceStock = this.readSkuField(source, ["sku_stock", "stock", "stockQuantity", "canBookCount"]);
     const sourceWeight = this.readSkuField(source, ["sku_weight", "weight"]);
+    const sourceLength = this.readSkuField(source, ["sku_length", "skuLength", "length"]);
+    const sourceWidth = this.readSkuField(source, ["sku_width", "skuWidth", "width"]);
+    const sourceHeight = this.readSkuField(source, ["sku_height", "skuHeight", "height"]);
+    const targetWeight = this.readSkuField(target, ["sku_weight", "skuWeight", "weight"]);
+    const targetLength = this.readSkuField(target, ["sku_length", "skuLength", "length"]);
+    const targetWidth = this.readSkuField(target, ["sku_width", "skuWidth", "width"]);
+    const targetHeight = this.readSkuField(target, ["sku_height", "skuHeight", "height"]);
     const sourceImages = this.readSkuImageUrls(source);
     target.sku_id = this.readSkuField(target, ["sku_id", "skuId"]) || sourceSkuId || "";
     target.SubSku1 = this.readSkuSpecValue(source, 0) || this.readSkuSpecValue(target, 0);
@@ -311,7 +318,10 @@ class ProductService {
     target.sku_price = sourcePrice !== "" ? sourcePrice : this.readSkuField(target, ["sku_price", "price"]);
     target.sku_original_price = sourceOriginalPrice !== "" ? sourceOriginalPrice : target.sku_original_price || "";
     target.sku_stock = sourceStock !== "" ? sourceStock : target.sku_stock || 0;
-    target.sku_weight = sourceWeight !== "" ? sourceWeight : target.sku_weight || 0;
+    target.sku_weight = sourceWeight !== "" ? sourceWeight : targetWeight || 0;
+    target.sku_length = sourceLength !== "" ? sourceLength : targetLength;
+    target.sku_width = sourceWidth !== "" ? sourceWidth : targetWidth;
+    target.sku_height = sourceHeight !== "" ? sourceHeight : targetHeight;
     if (sourceImages.length) {
       target.sku_image_urls = sourceImages;
       target.sku_image_url = sourceImages[0];
@@ -350,7 +360,9 @@ class ProductService {
             main_id: String(input.source_1688_main_id || ""),
             product_name: String(sourceData.productName || ""),
             source_data: sourceData,
-            sku: Array.isArray(sourceData.skuRows) ? sourceData.skuRows : []
+            sku: Array.isArray(sourceData.skuRows)
+              ? sourceData.skuRows
+              : Array.isArray(sourceData.sku) ? sourceData.sku : []
           },
           index: -1
         };
@@ -361,7 +373,7 @@ class ProductService {
         throw sourceError;
       }
       const currentVersion = Number(target.record.version || 1);
-      if (input.target_temu_version !== undefined && Number(input.target_temu_version) !== currentVersion) {
+      if (Number(input.target_temu_version) !== currentVersion) {
         const conflictError = new Error("商品已被其他操作更新，请刷新后重试。");
         conflictError.statusCode = 409;
         conflictError.code = "PRODUCT_VERSION_CONFLICT";
@@ -374,6 +386,8 @@ class ProductService {
       }
       const targetRows = service.getStoredSkuRows(target.record, "temu");
       const sourceRows = service.getStoredSkuRows(source.record, "1688");
+      service.normalizeSavedSkuRows(targetRows);
+      service.normalizeSavedSkuRows(sourceRows);
       const replaceAll = Boolean(input.replace_all_skus || sourceData);
       let targetSelection = null;
       let sourceSelection = null;
@@ -444,6 +458,30 @@ class ProductService {
       if (Object.prototype.hasOwnProperty.call(source, key)) {
         record[key] = source[key];
       }
+    }
+    if (moduleName === "skus") {
+      this.normalizeSavedSkuRows(record.sku);
+    }
+  }
+
+  /** Persist canonical stock, weight and dimension keys for every saved SKU row. */
+  normalizeSavedSkuRows(rows) {
+    const target = Array.isArray(rows) ? rows : [];
+    for (let index = 0; index < target.length; index += 1) {
+      const row = target[index];
+      if (!row || typeof row !== "object") {
+        continue;
+      }
+      const stock = this.readSkuField(row, ["sku_stock", "stock", "stockQuantity", "canBookCount"]);
+      const weight = this.readSkuField(row, ["sku_weight", "skuWeight", "weight"]);
+      const length = this.readSkuField(row, ["sku_length", "skuLength", "length_cm", "lengthCm", "length"]);
+      const width = this.readSkuField(row, ["sku_width", "skuWidth", "width_cm", "widthCm", "width"]);
+      const height = this.readSkuField(row, ["sku_height", "skuHeight", "height_cm", "heightCm", "height"]);
+      row.sku_stock = stock === "" ? 0 : stock;
+      row.sku_weight = weight === "" ? 0 : weight;
+      row.sku_length = length;
+      row.sku_width = width;
+      row.sku_height = height;
     }
   }
 

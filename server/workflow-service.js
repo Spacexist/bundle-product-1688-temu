@@ -1,10 +1,14 @@
 const fs = require("fs");
 const path = require("path");
 
-/** Create one workflow error carrying its intended HTTP status code. */
-function createWorkflowError(message, statusCode) {
+/** Keep one synchronous image generation request bounded to five minutes. */
+const WORKFLOW_GENERATION_TIMEOUT_MS = 300000;
+
+/** Create one workflow error carrying its HTTP status and stable error code. */
+function createWorkflowError(message, statusCode, code) {
   const error = new Error(String(message || "智能组货请求失败。"));
   error.statusCode = Number(statusCode || 500);
+  error.code = String(code || "WORKFLOW_ERROR");
   return error;
 }
 
@@ -40,6 +44,19 @@ function readWorkflowProviderError(payload, fallbackText) {
   }
   const text = String(fallbackText || "").trim();
   return text ? text.slice(0, 300) : "上游服务请求失败。";
+}
+
+/** Preserve one valid upstream HTTP error status for the workflow API. */
+function normalizeWorkflowStatusCode(statusCode) {
+  const value = Number(statusCode || 0);
+  return value >= 400 && value <= 599 ? value : 502;
+}
+
+/** Read one stable Kimi error code from an OpenAI-compatible payload. */
+function readWorkflowProviderCode(payload, fallback) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const providerError = source.error && typeof source.error === "object" ? source.error : {};
+  return String(providerError.code || source.code || providerError.type || fallback || "UPSTREAM_ERROR");
 }
 
 /** Parse exactly four structured product suggestions from a Kimi response. */
@@ -83,6 +100,8 @@ function parseWorkflowPromptContent(content) {
       image_url: "",
       status: "prompt_ready",
       error: "",
+      error_code: "",
+      error_status: 0,
       search_url: "",
       search_status: "",
       search_error: ""
@@ -105,11 +124,6 @@ class WorkflowService {
     this.imageTaskQueue = settings.imageTaskQueue;
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
-    this.eventClients = [];
-    this.eventHistory = [];
-    this.eventSequence = 0;
-    this.maxEventHistory = Number(settings.maxEventHistory || 100);
-    this.eventHeartbeatMs = Number(settings.eventHeartbeatMs || 15000);
     this.generationQueue = [];
     this.generationQueueActive = false;
     this.recoverInterruptedTasks();
@@ -145,116 +159,11 @@ class WorkflowService {
     }
   }
 
-  /** Create one workflow SSE frame with a browser-resumable event identifier. */
-  createEventMessage(payload, eventId) {
-    const idLine = eventId === undefined || eventId === null ? "" : "id: " + String(eventId) + "\n";
-    return idLine + "data: " + JSON.stringify(payload) + "\n\n";
-  }
-
-  /** Read the last workflow event cursor sent by a browser during reconnect. */
-  getEventCursor(request) {
-    const headers = request && request.headers ? request.headers : {};
-    const query = request && request.query ? request.query : {};
-    const headerValue = headers["last-event-id"] || headers["Last-Event-ID"];
-    const queryValue = query.after || query.lastEventId || query.last_event_id;
-    const cursor = Number(headerValue || queryValue || 0);
-    return Number.isFinite(cursor) && cursor > 0 ? cursor : 0;
-  }
-
-  /** Store one bounded workflow snapshot for reconnect replay. */
-  rememberEvent(payload) {
-    this.eventHistory.push(payload);
-    if (this.eventHistory.length > this.maxEventHistory) {
-      this.eventHistory.splice(0, this.eventHistory.length - this.maxEventHistory);
-    }
-  }
-
-  /** Create and remember one workflow stream snapshot. */
-  createEventPayload(payload) {
-    const eventPayload = Object.assign({}, payload || {});
-    eventPayload.event_id = ++this.eventSequence;
-    this.rememberEvent(eventPayload);
-    return eventPayload;
-  }
-
-  /** Remove one workflow SSE client and stop its heartbeat timer. */
-  removeEventClient(client) {
-    if (!client || client.closed) {
-      return;
-    }
-    client.closed = true;
-    if (client.heartbeat) {
-      clearInterval(client.heartbeat);
-      client.heartbeat = null;
-    }
-    const index = this.eventClients.indexOf(client);
-    if (index >= 0) {
-      this.eventClients.splice(index, 1);
-    }
-  }
-
-  /** Write one workflow SSE frame and evict a slow or disconnected client. */
-  writeEventClient(client, message) {
-    if (!client || client.closed) {
-      return false;
-    }
-    try {
-      const writable = client.response.write(message);
-      if (writable === false) {
-        this.removeEventClient(client);
-        if (client.response && typeof client.response.destroy === "function") {
-          client.response.destroy();
-        }
-        return false;
-      }
-      return true;
-    } catch (error) {
-      this.removeEventClient(client);
-      return false;
-    }
-  }
-
-  /** Start a bounded heartbeat that keeps one workflow stream observable. */
-  startEventHeartbeat(client) {
-    const service = this;
-    /** Write one heartbeat comment and remove an unresponsive client. */
-    function writeHeartbeat() {
-      service.writeEventClient(client, ": heartbeat\n\n");
-    }
-    client.heartbeat = setInterval(writeHeartbeat, this.eventHeartbeatMs);
-    if (client.heartbeat && typeof client.heartbeat.unref === "function") {
-      client.heartbeat.unref();
-    }
-  }
-
-  /** Broadcast one task snapshot to all workflow SSE clients. */
-  broadcast(payload, requestId) {
-    const eventPayload = this.createEventPayload(payload);
-    const message = this.createEventMessage(eventPayload, eventPayload.event_id);
-    const subscriberCount = this.eventClients.length;
-    let deliveredCount = 0;
-    for (let index = this.eventClients.length - 1; index >= 0; index -= 1) {
-      if (this.writeEventClient(this.eventClients[index], message)) {
-        deliveredCount += 1;
-      }
-    }
-    if (typeof this.writeLog === "function") {
-      this.writeLog("BROADCAST", "Workflow SSE broadcast", {
-        stream: "workflow",
-        subscriber_count: subscriberCount,
-        delivered_count: deliveredCount,
-        active_temu_main_id: payload && payload.active_temu_main_id,
-        updated_at: payload && payload.updated_at
-      }, requestId);
-    }
-  }
-
-  /** Persist all tasks and notify connected workflow pages. */
+  /** Persist all tasks for direct HTTP responses and later GET requests. */
   writePayload(payload, requestId) {
     const state = payload && typeof payload === "object" ? payload : this.createEmptyPayload();
     state.updated_at = this.formatTime(new Date());
     fs.writeFileSync(this.filePath, JSON.stringify(state, null, 2), "utf8");
-    this.broadcast(state, requestId);
     return state;
   }
 
@@ -292,64 +201,6 @@ class WorkflowService {
       active_temu_main_id: activeTemuMainId,
       task: activeTask
     };
-  }
-
-  /** Open an SSE stream for intelligent-packing state updates. */
-  handleEvents(request, response) {
-    response.writeHead(200, {
-      "Access-Control-Allow-Origin": "*",
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      "Connection": "keep-alive",
-      "X-Accel-Buffering": "no"
-    });
-    if (typeof response.flushHeaders === "function") {
-      response.flushHeaders();
-    }
-    const client = { response: response, heartbeat: null, closed: false };
-    const cursor = this.getEventCursor(request);
-    this.eventClients.push(client);
-    this.writeEventClient(client, "retry: 1000\n\n");
-    let replayedCount = 0;
-    if (cursor > 0) {
-      for (let index = 0; index < this.eventHistory.length; index += 1) {
-        const eventPayload = this.eventHistory[index];
-        if (Number(eventPayload.event_id) <= cursor) {
-          continue;
-        }
-        if (!this.writeEventClient(client, this.createEventMessage(eventPayload, eventPayload.event_id))) {
-          break;
-        }
-        replayedCount += 1;
-      }
-    }
-    if (cursor === 0 || replayedCount === 0) {
-      const initialPayload = this.createEventPayload(this.readPayload());
-      this.writeEventClient(client, this.createEventMessage(initialPayload, initialPayload.event_id));
-    }
-    if (!client.closed) {
-      this.startEventHeartbeat(client);
-    }
-    if (typeof this.writeLog === "function") {
-      this.writeLog("BROADCAST", "Workflow SSE initial snapshot", {
-        stream: "workflow",
-        subscriber_count: this.eventClients.length,
-        delivered_count: client.closed ? 0 : 1,
-        replayed_count: replayedCount,
-        cursor: cursor
-      }, request.requestId);
-    }
-    const service = this;
-    /** Remove one disconnected workflow page from the live stream. */
-    request.on("close", function handleWorkflowClientClose() {
-      service.removeEventClient(client);
-    });
-    if (typeof response.on === "function") {
-      /** Remove one workflow client when the response stream fails. */
-      response.on("error", function handleWorkflowResponseError() {
-        service.removeEventClient(client);
-      });
-    }
   }
 
   /** Ask Kimi for four white-background products related to one Temu item. */
@@ -406,6 +257,11 @@ class WorkflowService {
         signal: controller.signal
       });
       providerText = await providerResponse.text();
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw createWorkflowError("Kimi 请求超时，请稍后重试。", 504, "KIMI_TIMEOUT");
+      }
+      throw createWorkflowError("Kimi 网络请求失败：" + (error.message || "未知错误。"), 502, "KIMI_NETWORK_ERROR");
     } finally {
       clearTimeout(timeoutHandle);
     }
@@ -417,7 +273,9 @@ class WorkflowService {
     }
     this.writeLog("UPSTREAM", "Kimi workflow response " + providerResponse.status, Object.keys(providerPayload).length ? providerPayload : providerText, requestId);
     if (!providerResponse.ok) {
-      throw createWorkflowError(readWorkflowProviderError(providerPayload, providerText), 502);
+      const statusCode = normalizeWorkflowStatusCode(providerResponse.status);
+      const errorCode = readWorkflowProviderCode(providerPayload, "KIMI_HTTP_" + statusCode);
+      throw createWorkflowError(readWorkflowProviderError(providerPayload, providerText), statusCode, errorCode);
     }
     const choices = Array.isArray(providerPayload.choices) ? providerPayload.choices : [];
     const message = choices.length && choices[0].message ? choices[0].message : {};
@@ -450,15 +308,32 @@ class WorkflowService {
       n: 1
     };
     this.writeLog("OUTBOUND", "BeeAPI generation POST " + endpoint, providerRequestPayload, requestId);
-    const providerResponse = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + String(config.apikey),
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(providerRequestPayload)
-    });
-    const providerText = await providerResponse.text();
+    const controller = new AbortController();
+    /** Abort one BeeAPI generation request after five minutes. */
+    const timeoutHandle = setTimeout(function abortWorkflowGenerationRequest() {
+      controller.abort();
+    }, WORKFLOW_GENERATION_TIMEOUT_MS);
+    let providerResponse;
+    let providerText;
+    try {
+      providerResponse = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + String(config.apikey),
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(providerRequestPayload),
+        signal: controller.signal
+      });
+      providerText = await providerResponse.text();
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        throw createWorkflowError("BeeAPI 生图请求超过五分钟。", 504, "BEEAPI_TIMEOUT");
+      }
+      throw createWorkflowError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502, "BEEAPI_NETWORK_ERROR");
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
     let providerPayload = {};
     try {
       providerPayload = JSON.parse(providerText || "{}");
@@ -467,11 +342,16 @@ class WorkflowService {
     }
     this.writeLog("UPSTREAM", "BeeAPI generation response " + providerResponse.status, Object.keys(providerPayload).length ? providerPayload : providerText, requestId);
     if (!providerResponse.ok) {
-      throw createWorkflowError(readWorkflowProviderError(providerPayload, providerText), 502);
+      const upstreamMessage = providerPayload && providerPayload.error
+        ? readWorkflowProviderError(providerPayload, providerText)
+        : "BeeAPI 上游返回 HTTP " + providerResponse.status + "。";
+      const statusCode = normalizeWorkflowStatusCode(providerResponse.status);
+      const errorCode = readWorkflowProviderCode(providerPayload, "BEEAPI_HTTP_" + statusCode);
+      throw createWorkflowError(upstreamMessage, statusCode, errorCode);
     }
     const imageUrl = readWorkflowGeneratedImage(providerPayload);
     if (!imageUrl) {
-      throw createWorkflowError("BeeAPI 已响应，但没有找到生成图片。", 502);
+      throw createWorkflowError("BeeAPI 已响应，但没有找到生成图片。", 502, "BEEAPI_EMPTY_IMAGE");
     }
     if (typeof this.cacheGeneratedImage === "function") {
       return this.cacheGeneratedImage(imageUrl);
@@ -525,15 +405,21 @@ class WorkflowService {
     }
   }
 
-  /** Start one non-blocking background generation job for the current workflow task. */
+  /** Queue one generation job and resolve it only after the HTTP result is ready. */
   scheduleImageGeneration(temuMainId, requestedIndex, requestId, promptSnapshot) {
-    this.generationQueue.push({
-      temu_main_id: String(temuMainId || ""),
-      requested_index: requestedIndex,
-      request_id: String(requestId || ""),
-      prompts: Array.isArray(promptSnapshot) ? promptSnapshot : []
+    const service = this;
+    /** Store one queued generation job and connect it to the waiting HTTP response. */
+    return new Promise(function createGenerationJobPromise(resolve, reject) {
+      service.generationQueue.push({
+        temu_main_id: String(temuMainId || ""),
+        requested_index: requestedIndex,
+        request_id: String(requestId || ""),
+        prompts: Array.isArray(promptSnapshot) ? promptSnapshot : [],
+        resolve: resolve,
+        reject: reject
+      });
+      service.pumpGenerationQueue();
     });
-    this.pumpGenerationQueue();
   }
 
   /** Return whether one Temu item still has a generation job waiting in the queue. */
@@ -547,7 +433,7 @@ class WorkflowService {
     return false;
   }
 
-  /** Start the next workflow generation job without holding an HTTP request open. */
+  /** Start the next workflow generation job and settle its waiting HTTP request. */
   pumpGenerationQueue() {
     if (this.generationQueueActive || !this.generationQueue.length) {
       return;
@@ -557,15 +443,17 @@ class WorkflowService {
     const job = this.generationQueue.shift();
     /** Run one queued workflow job on the next event-loop turn. */
     function runQueuedGenerationJob() {
-      service.generateImagesInBackground(
+      service.generateImagesAndPersist(
         job.temu_main_id,
         job.requested_index,
         job.request_id,
         job.prompts
-      ).then(function finishQueuedGenerationJob() {
+      ).then(function finishQueuedGenerationJob(result) {
+        job.resolve(result);
         service.generationQueueActive = false;
         service.pumpGenerationQueue();
-      }, function handleQueuedGenerationJobError() {
+      }, function handleQueuedGenerationJobError(error) {
+        job.reject(error);
         service.generationQueueActive = false;
         service.pumpGenerationQueue();
       });
@@ -573,23 +461,74 @@ class WorkflowService {
     setImmediate(runQueuedGenerationJob);
   }
 
-  /** Generate candidate images in the background and publish every intermediate result. */
-  async generateImagesInBackground(temuMainId, requestedIndex, requestId, promptSnapshot) {
+  /** Persist one candidate image state without overwriting other candidates. */
+  persistGeneratedImageState(temuMainId, index, updates, requestId) {
+    const workflow = this.readPayload();
+    const task = workflow.tasks && workflow.tasks[temuMainId];
+    const prompts = task && Array.isArray(task.prompts) ? task.prompts : [];
+    const item = prompts[index];
+    if (!item) {
+      return null;
+    }
+    const patch = updates && typeof updates === "object" ? updates : {};
+    const keys = Object.keys(patch);
+    for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+      item[keys[keyIndex]] = patch[keys[keyIndex]];
+    }
+    this.writePayload(workflow, requestId);
+    return item;
+  }
+
+  /** Generate one candidate image and persist its success or failure state. */
+  generateOneWorkflowCandidate(config, temuMainId, index, prompt, requestId) {
+    const service = this;
+    return this.generateOneImage(config, prompt, requestId).then(
+      /** Persist one successful candidate response. */
+      function handleWorkflowCandidateSuccess(imageUrl) {
+        service.persistGeneratedImageState(temuMainId, index, {
+          image_url: String(imageUrl || ""),
+          status: "generated",
+          error: "",
+          error_code: "",
+          error_status: 0
+        }, requestId);
+        return { generated: true, error: "", error_code: "", error_status: 0 };
+      },
+      /** Persist one failed candidate response. */
+      function handleWorkflowCandidateFailure(error) {
+        const message = error && error.message ? error.message : "生图失败。";
+        const code = String(error && error.code || "WORKFLOW_GENERATION_ERROR");
+        const statusCode = Number(error && error.statusCode || 500);
+        service.persistGeneratedImageState(temuMainId, index, {
+          status: "error",
+          error: message,
+          error_code: code,
+          error_status: statusCode
+        }, requestId);
+        return { generated: false, error: message, error_code: code, error_status: statusCode };
+      }
+    );
+  }
+
+  /** Generate candidate images and return the final task for the waiting HTTP request. */
+  async generateImagesAndPersist(temuMainId, requestedIndex, requestId, promptSnapshot) {
     try {
       const config = this.readConfig();
       const requestedPrompts = Array.isArray(promptSnapshot) ? promptSnapshot : [];
       const workflow = this.readPayload();
       const task = workflow.tasks && workflow.tasks[temuMainId];
       if (!task || !Array.isArray(task.prompts)) {
-        return;
+        return { task: null, results: [] };
       }
-      let generatedCount = 0;
-      let failedCount = 0;
-      let lastError = "";
+      const requestedIndexes = [];
       for (let index = 0; index < task.prompts.length; index += 1) {
-        if (requestedIndex >= 0 && index !== requestedIndex) {
-          continue;
+        if (requestedIndex < 0 || index === requestedIndex) {
+          requestedIndexes.push(index);
         }
+      }
+      const generationJobs = [];
+      for (let requestIndex = 0; requestIndex < requestedIndexes.length; requestIndex += 1) {
+        const index = requestedIndexes[requestIndex];
         const currentWorkflow = this.readPayload();
         const currentTask = currentWorkflow.tasks && currentWorkflow.tasks[temuMainId];
         const item = currentTask && currentTask.prompts ? currentTask.prompts[index] : null;
@@ -601,35 +540,25 @@ class WorkflowService {
         }
         item.status = "generating";
         item.error = "";
+        item.error_code = "";
+        item.error_status = 0;
         item.search_url = "";
         item.search_status = "";
         item.search_error = "";
         this.writePayload(currentWorkflow, requestId);
-        try {
-          item.image_url = await this.generateOneImage(config, item.prompt, requestId);
-          item.status = "generated";
-          generatedCount += 1;
-        } catch (error) {
-          item.status = "error";
-          item.error = error.message || "生图失败。";
+        generationJobs.push(this.generateOneWorkflowCandidate(config, temuMainId, index, item.prompt, requestId));
+      }
+      const results = await Promise.all(generationJobs);
+      let failedCount = 0;
+      let lastError = "";
+      let lastErrorCode = "";
+      let lastErrorStatus = 0;
+      for (let resultIndex = 0; resultIndex < results.length; resultIndex += 1) {
+        if (!results[resultIndex].generated) {
           failedCount += 1;
-          lastError = item.error;
-          if (requestedIndex >= 0) {
-            const failedWorkflow = this.readPayload();
-            const failedTask = failedWorkflow.tasks && failedWorkflow.tasks[temuMainId];
-            if (failedTask && !this.hasPendingGeneration(temuMainId)) {
-              failedTask.status = "generation_error";
-              failedTask.error = item.error;
-              this.writePayload(failedWorkflow, requestId);
-            }
-            return;
-          }
-        }
-        const latestWorkflow = this.readPayload();
-        const latestTask = latestWorkflow.tasks && latestWorkflow.tasks[temuMainId];
-        if (latestTask && latestTask.prompts && latestTask.prompts[index]) {
-          latestTask.prompts[index] = item;
-          this.writePayload(latestWorkflow, requestId);
+          lastError = results[resultIndex].error || lastError;
+          lastErrorCode = results[resultIndex].error_code || lastErrorCode;
+          lastErrorStatus = results[resultIndex].error_status || lastErrorStatus;
         }
       }
       const finalWorkflow = this.readPayload();
@@ -647,19 +576,28 @@ class WorkflowService {
       if (this.hasPendingGeneration(temuMainId)) {
         finalTask.status = "generating";
         finalTask.error = "";
+        finalTask.error_code = "";
+        finalTask.error_status = 0;
       } else {
         finalTask.status = hasGeneratedImage ? "images_ready" : "generation_error";
         finalTask.error = hasGeneratedImage ? "" : lastError || (failedCount ? "图片生成失败。" : "四张图片均生成失败。");
+        finalTask.error_code = hasGeneratedImage ? "" : lastErrorCode || "WORKFLOW_GENERATION_ERROR";
+        finalTask.error_status = hasGeneratedImage ? 0 : lastErrorStatus || 500;
       }
       this.writePayload(finalWorkflow, requestId);
+      return { task: finalTask, results: results };
     } catch (error) {
       const failedWorkflow = this.readPayload();
       const failedTask = failedWorkflow.tasks && failedWorkflow.tasks[temuMainId];
       if (failedTask && !this.hasPendingGeneration(temuMainId)) {
         failedTask.status = "generation_error";
         failedTask.error = error.message || "后台生图失败。";
+        failedTask.error_code = String(error.code || "WORKFLOW_GENERATION_ERROR");
+        failedTask.error_status = Number(error.statusCode || 500);
         this.writePayload(failedWorkflow, requestId);
+        return { task: failedTask, results: [] };
       }
+      throw error;
     }
   }
 
@@ -695,6 +633,8 @@ class WorkflowService {
     const promptSnapshot = [];
     task.status = "generating";
     task.error = "";
+    task.error_code = "";
+    task.error_status = 0;
     for (let index = 0; index < task.prompts.length; index += 1) {
       if (requestedIndex >= 0 && index !== requestedIndex) {
         continue;
@@ -702,14 +642,15 @@ class WorkflowService {
       task.prompts[index].status = "queued";
       task.prompts[index].image_url = "";
       task.prompts[index].error = "";
+      task.prompts[index].error_code = "";
+      task.prompts[index].error_status = 0;
       task.prompts[index].search_url = "";
       task.prompts[index].search_status = "";
       task.prompts[index].search_error = "";
       promptSnapshot[index] = task.prompts[index].prompt;
     }
     this.writePayload(workflow, requestId);
-    this.scheduleImageGeneration(temuMainId, requestedIndex, requestId, promptSnapshot);
-    return { ok: true, task: task };
+    return this.scheduleImageGeneration(temuMainId, requestedIndex, requestId, promptSnapshot);
   }
 
   /** Mark one Temu workflow as bound to an extension-collected 1688 record. */

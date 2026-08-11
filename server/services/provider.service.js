@@ -1,8 +1,24 @@
 /** Create one provider error carrying its intended HTTP status code. */
-function createProviderError(message, statusCode) {
+function createProviderError(message, statusCode, code) {
   const error = new Error(String(message || "上游服务请求失败。"));
   error.statusCode = Number(statusCode || 500);
+  if (code) {
+    error.code = String(code);
+  }
   return error;
+}
+
+/** Preserve one valid upstream HTTP error status for the local API response. */
+function normalizeProviderStatusCode(statusCode) {
+  const value = Number(statusCode || 0);
+  return value >= 400 && value <= 599 ? value : 502;
+}
+
+/** Read one stable provider error code from an OpenAI-compatible payload. */
+function readProviderErrorCode(payload, fallback) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const providerError = source.error && typeof source.error === "object" ? source.error : {};
+  return String(providerError.code || source.code || providerError.type || fallback || "UPSTREAM_ERROR");
 }
 
 /** Build one configured Kimi chat-completions endpoint URL. */
@@ -224,9 +240,9 @@ class ProviderService {
       providerText = await providerResponse.text();
     } catch (error) {
       if (error && error.name === "AbortError") {
-        throw createProviderError("Kimi 请求超时，请稍后重试。", 504);
+        throw createProviderError("Kimi 请求超时，请稍后重试。", 504, "KIMI_TIMEOUT");
       }
-      throw createProviderError("Kimi 网络请求失败：" + (error.message || "未知错误。"), 502);
+      throw createProviderError("Kimi 网络请求失败：" + (error.message || "未知错误。"), 502, "KIMI_NETWORK_ERROR");
     } finally {
       clearTimeout(timeoutHandle);
     }
@@ -239,7 +255,9 @@ class ProviderService {
     this.writeLog("UPSTREAM", "Kimi Listing response " + providerResponse.status,
       Object.keys(providerPayload).length ? providerPayload : providerText, requestId);
     if (!providerResponse.ok) {
-      throw createProviderError(this.readProviderError(providerPayload, providerText, "Kimi 合并 Listing 失败。"), 502);
+      const statusCode = normalizeProviderStatusCode(providerResponse.status);
+      const errorCode = readProviderErrorCode(providerPayload, "KIMI_HTTP_" + statusCode);
+      throw createProviderError(this.readProviderError(providerPayload, providerText, "Kimi 合并 Listing 失败。"), statusCode, errorCode);
     }
     const choices = Array.isArray(providerPayload.choices) ? providerPayload.choices : [];
     const message = choices.length && choices[0].message ? choices[0].message : {};
@@ -549,7 +567,7 @@ class ProviderService {
       });
       providerText = await providerResponse.text();
     } catch (error) {
-      throw createProviderError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502);
+      throw createProviderError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502, "BEEAPI_NETWORK_ERROR");
     }
     let providerPayload = {};
     try {
@@ -560,7 +578,9 @@ class ProviderService {
     this.writeLog("UPSTREAM", "BeeAPI response " + providerResponse.status,
       Object.keys(providerPayload).length ? providerPayload : providerText, requestId);
     if (!providerResponse.ok) {
-      throw createProviderError(this.readProviderError(providerPayload, providerText, "BeeAPI 图片请求失败。"), 502);
+      const statusCode = normalizeProviderStatusCode(providerResponse.status);
+      const errorCode = readProviderErrorCode(providerPayload, "BEEAPI_HTTP_" + statusCode);
+      throw createProviderError(this.readProviderError(providerPayload, providerText, "BeeAPI 图片请求失败。"), statusCode, errorCode);
     }
     const generatedSource = this.readGeneratedImageFromPayload(providerPayload);
     if (!generatedSource) {

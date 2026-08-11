@@ -18,7 +18,6 @@ function createProviderRouter(options) {
   router.get("/images/details", validationModule.validate(schemaModule.detailImagesQuerySchema, "query"), providers.getDetailImages.bind(providers));
 
   router.get("/workflow", workflow.getWorkflow.bind(workflow));
-  router.get("/workflow/events", workflow.connectEvents.bind(workflow));
   router.get("/workflow/active", workflow.getActive.bind(workflow));
   router.post("/workflow/prompts", validationModule.validate(schemaModule.workflowPromptSchema, "body"), workflow.generatePrompts.bind(workflow));
   router.post("/workflow/generate", validationModule.validate(schemaModule.workflowGenerateSchema, "body"), workflow.generateImages.bind(workflow));

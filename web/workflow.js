@@ -36,6 +36,53 @@ function getWorkflowErrorMessage(payload, fallbackMessage) {
   return String(fallbackMessage || "请求失败。");
 }
 
+/** Return one stable error code from a failed workflow request. */
+function getWorkflowErrorCode(error) {
+  return String(error && (error.code || error.statusCode) || "REQUEST_FAILED");
+}
+
+/** Build one compact RMB price reference for intelligent-packing recommendations. */
+function getWorkflowPriceReference(record) {
+  const source = record || {};
+  const rows = Array.isArray(source.sku) ? source.sku : [];
+  const values = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] || {};
+    const text = String(row.sku_price !== undefined ? row.sku_price : row.price || "").trim();
+    const normalized = text.replace(/[^0-9.-]/g, "");
+    const value = normalized ? Number(normalized) : null;
+    if (value !== null && Number.isFinite(value) && value >= 0) {
+      values.push(value);
+    }
+  }
+  if (!values.length) {
+    return { available: false, currency: "CNY", min: null, max: null, typical: null, sample_count: 0 };
+  }
+  for (let start = 0; start < values.length - 1; start += 1) {
+    let smallest = start;
+    for (let index = start + 1; index < values.length; index += 1) {
+      if (values[index] < values[smallest]) {
+        smallest = index;
+      }
+    }
+    if (smallest !== start) {
+      const temporary = values[start];
+      values[start] = values[smallest];
+      values[smallest] = temporary;
+    }
+  }
+  const middle = Math.floor(values.length / 2);
+  const typical = values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+  return {
+    available: true,
+    currency: "CNY",
+    min: Number(values[0].toFixed(2)),
+    max: Number(values[values.length - 1].toFixed(2)),
+    typical: Number(typical.toFixed(2)),
+    sample_count: values.length
+  };
+}
+
 /** Unwrap one shared API response while retaining raw SSE payload compatibility. */
 function readWorkflowData(payload) {
   if (payload && Object.prototype.hasOwnProperty.call(payload, "data")) {
@@ -49,7 +96,11 @@ function requestWorkflowJson(url, options) {
   return fetch(url, options).then(function parseWorkflowResponse(response) {
     return response.json().then(function validateWorkflowPayload(payload) {
       if (!response.ok || !payload || payload.ok === false) {
-        throw new Error(getWorkflowErrorMessage(payload, "请求失败。"));
+        const apiError = payload && payload.error && typeof payload.error === "object" ? payload.error : {};
+        const error = new Error(getWorkflowErrorMessage(payload, "请求失败。"));
+        error.code = String(apiError.code || response.status || "REQUEST_FAILED");
+        error.statusCode = Number(response.status || 500);
+        throw error;
       }
       return readWorkflowData(payload);
     });
@@ -140,16 +191,14 @@ const workflowApp = createApp({
       cacheRefreshTimer: null,
       cacheRefreshQueued: false,
       cacheRefreshInFlight: false,
-      cacheLastEventId: 0,
-      workflowSource: null
+      cacheLastEventId: 0
     };
   },
-  /** Connect the page to cache and workflow SSE streams. */
+  /** Connect the page to the product cache stream. */
   mounted: function mountWorkflowPage() {
     this.startCacheStream();
-    this.startWorkflowStream();
   },
-  /** Close active SSE streams when leaving the workflow page. */
+  /** Close the product cache stream when leaving the workflow page. */
   beforeUnmount: function unmountWorkflowPage() {
     if (this.cacheSource) {
       this.cacheSource.close();
@@ -157,9 +206,6 @@ const workflowApp = createApp({
     if (this.cacheRefreshTimer) {
       clearTimeout(this.cacheRefreshTimer);
       this.cacheRefreshTimer = null;
-    }
-    if (this.workflowSource) {
-      this.workflowSource.close();
     }
   },
   computed: {
@@ -264,18 +310,6 @@ const workflowApp = createApp({
         }
       });
     },
-    /** Start receiving intelligent-packing task updates. */
-    startWorkflowStream: function startWorkflowTaskStream() {
-      const view = this;
-      this.workflowSource = new EventSource(workflowApiUrl("/workflow/events"));
-      this.workflowSource.onmessage = function applyWorkflowEvent(event) {
-        try {
-          view.applyWorkflowPayload(JSON.parse(event.data));
-        } catch (error) {
-          view.setWorkflowStatus("智能组货状态格式错误。", "error");
-        }
-      };
-    },
     /** Apply a product cache snapshot and preserve the current Temu selection. */
     applyWorkflowCache: function applyWorkflowCache(payload) {
       this.records = readWorkflowRecords(payload);
@@ -346,7 +380,8 @@ const workflowApp = createApp({
           product: {
             title: this.selectedTemu.product_name,
             category: this.selectedTemu.product_category,
-            attributes: this.selectedTemu.attributes
+            attributes: this.selectedTemu.attributes,
+            price_reference: getWorkflowPriceReference(this.selectedTemu)
           }
         })
       }).then(function handleWorkflowPromptSuccess(payload) {
@@ -354,7 +389,7 @@ const workflowApp = createApp({
         view.selectedResultIndex = -1;
         view.setWorkflowStatus("四个组货方向已生成，可以修改提示词后生图。", "success");
       }).catch(function handleWorkflowPromptError(error) {
-        view.setWorkflowStatus("Kimi 提词失败：" + error.message, "error");
+        view.setWorkflowStatus("Kimi 提词失败 [" + getWorkflowErrorCode(error) + "]：" + error.message, "error");
       }).finally(function finishWorkflowPromptRequest() {
         view.promptBusy = false;
       });
@@ -383,7 +418,7 @@ const workflowApp = createApp({
         view.syncLocalPrompts(payload.task);
         view.setWorkflowStatus(index === undefined ? "四张白底图已生成，请选择一张。" : "图片已重新生成。", "success");
       }).catch(function handleWorkflowGenerationError(error) {
-        view.setWorkflowStatus("BeeAPI 生图失败：" + error.message, "error");
+        view.setWorkflowStatus("BeeAPI 生图失败 [" + getWorkflowErrorCode(error) + "]：" + error.message, "error");
       }).finally(function finishWorkflowGenerationRequest() {
         view.generateBusy = false;
       });

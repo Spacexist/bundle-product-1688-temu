@@ -93,7 +93,7 @@ class DiagnosticsService {
     this.queueClients = [];
     this.serverLogSequence = 0;
     this.queueSequence = 0;
-    this.sseRetryMs = 1000;
+    this.sseRetryMs = 5000;
     this.sseHeartbeatMs = 15000;
     this.imageTaskQueue = null;
   }

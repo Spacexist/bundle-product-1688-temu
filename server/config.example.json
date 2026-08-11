@@ -18,7 +18,7 @@
   "edit_prompt": "",
   "fusion_prompt": "",
   "image_queue": {
-    "concurrency": 3
+    "concurrency": 4
   },
   "exchange_rates": {
     "base_currency": "CNY",

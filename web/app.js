@@ -34,6 +34,11 @@ function getApiErrorMessage(payload, fallbackMessage) {
   return String(fallbackMessage || "请求失败。");
 }
 
+/** Return one stable error code from a failed workflow request. */
+function getWorkflowErrorCode(error) {
+  return String(error && (error.code || error.statusCode) || "REQUEST_FAILED");
+}
+
 /** Unwrap one shared API response while retaining compatibility with raw data payloads. */
 function readApiData(payload) {
   if (payload && Object.prototype.hasOwnProperty.call(payload, "data")) {
@@ -140,6 +145,46 @@ function parseSkuPrice(value) {
   return Number.isFinite(amount) ? amount : null;
 }
 
+/** Build one compact RMB price reference for intelligent-packing recommendations. */
+function getWorkflowPriceReference(record) {
+  const source = record || {};
+  const rows = Array.isArray(source.sku) ? source.sku : [];
+  const values = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index] || {};
+    const value = parseSkuPrice(row.sku_price !== undefined ? row.sku_price : row.price);
+    if (value !== null && value >= 0) {
+      values.push(value);
+    }
+  }
+  if (!values.length) {
+    return { available: false, currency: "CNY", min: null, max: null, typical: null, sample_count: 0 };
+  }
+  for (let start = 0; start < values.length - 1; start += 1) {
+    let smallest = start;
+    for (let index = start + 1; index < values.length; index += 1) {
+      if (values[index] < values[smallest]) {
+        smallest = index;
+      }
+    }
+    if (smallest !== start) {
+      const temporary = values[start];
+      values[start] = values[smallest];
+      values[smallest] = temporary;
+    }
+  }
+  const middle = Math.floor(values.length / 2);
+  const typical = values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+  return {
+    available: true,
+    currency: "CNY",
+    min: Number(values[0].toFixed(2)),
+    max: Number(values[values.length - 1].toFixed(2)),
+    typical: Number(typical.toFixed(2)),
+    sample_count: values.length
+  };
+}
+
 /** Add one 1688 price to a Temu price without losing non-numeric text. */
 function addSkuPriceValues(currentValue, addedValue) {
   const currentText = String(currentValue === undefined || currentValue === null ? "" : currentValue).trim();
@@ -194,11 +239,29 @@ function requestWorkflowJson(url, options) {
   return fetch(url, options).then(function parseWorkflowResponse(response) {
     return response.json().then(function validateWorkflowPayload(payload) {
       if (!response.ok || !payload || payload.ok === false) {
-        throw new Error(getApiErrorMessage(payload, "智能组货请求失败。"));
+        const apiError = payload && payload.error && typeof payload.error === "object" ? payload.error : {};
+        const error = new Error(getApiErrorMessage(payload, "智能组货请求失败。"));
+        error.code = String(apiError.code || "REQUEST_FAILED");
+        error.statusCode = Number(response.status || 500);
+        error.requestId = payload && payload.meta ? String(payload.meta.request_id || "") : "";
+        throw error;
       }
       return readApiData(payload);
     });
   });
+}
+
+const VIEW_STATE_STORAGE_KEY = "pod-auto-build.view-state";
+
+/** Read the last workbench selection without breaking startup when browser storage is unavailable. */
+function readPersistedViewState() {
+  try {
+    const raw = window.localStorage.getItem(VIEW_STATE_STORAGE_KEY);
+    const state = raw ? JSON.parse(raw) : {};
+    return state && typeof state === "object" ? state : {};
+  } catch (error) {
+    return {};
+  }
 }
 
 const app = createApp({
@@ -240,7 +303,7 @@ const app = createApp({
           <section v-if="selectedTemuRecord" class="panel platform-render temu-render">
             <div class="render-heading"><div><span class="platform-label temu-label">Temu</span><div class="render-title-row"><input class="render-title-input" type="text" v-model="selectedTemuRecord.product_name" @change="saveProductModule(selectedTemuRecord, 'basic')" aria-label="Temu 商品名称"><button v-if="workspaceMode === 'realtime'" class="listing-merge-button" type="button" :disabled="listingMergeBusy || !selected1688Record" @click="mergeSelectedListings">{{ listingMergeBusy ? '生成中…' : 'AI Listing' }}</button><button v-if="workspaceMode === 'smart'" class="workflow-direction-button" type="button" :disabled="workflowPromptBusy || !workflowSelectedImageUrl" @click="generateWorkflowPrompts">{{ workflowPromptBusy ? 'Kimi 分析中…' : selectedWorkflowTask && selectedWorkflowTask.prompts && selectedWorkflowTask.prompts.length ? '重新生成 4 个组货方向' : '生成 4 个组货方向' }}</button><button v-if="hasListingUndo(selectedTemuRecord)" class="operation-undo-button" type="button" :disabled="listingUndoBusy" @click="undoSelectedListing">{{ listingUndoBusy ? '返回中…' : '返回' }}</button></div><input class="render-category-input" type="text" v-model="selectedTemuRecord.product_category" @change="saveProductModule(selectedTemuRecord, 'basic')" placeholder="未提供商品分类" aria-label="Temu 商品分类"></div></div>
             <div class="render-gallery">
-               <div class="gallery-thumbs" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord)">
+               <div class="gallery-thumbs" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord)">
                 <div v-for="(image, imageIndex) in galleryImages(selectedTemuRecord)" :key="image" class="thumb-item" draggable="true" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', imageIndex), 'is-ai-selected': isTemuGalleryEditSelected(selectedTemuRecord, imageIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, imageIndex)">
                   <button class="thumb" :class="{ active: selectedTemuGalleryIndex === imageIndex }" type="button" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @click="handleTemuGallerySelection($event, selectedTemuRecord, imageIndex)" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, imageIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品图片" draggable="false"><span v-if="isTemuGalleryEditSelected(selectedTemuRecord, imageIndex)" class="gallery-ai-check">✓</span></button>
                   <button class="image-delete-button" type="button" aria-label="删除图片" @click.stop="removeGalleryImage(selectedTemuRecord, imageIndex, 'temu')">×</button>
@@ -248,7 +311,7 @@ const app = createApp({
                 <button v-if="galleryEditSelection.length" class="gallery-ai-edit-button" type="button" @click.stop="openGalleryImageEditor(selectedTemuRecord)">AI 编辑 {{ galleryEditSelection.length }} 张</button>
                 <label class="image-upload-button">+ 上传<input type="file" accept="image/*" multiple @change="handleGalleryUpload($event, selectedTemuRecord, 'temu')"></label>
               </div>
-               <div class="gallery-main" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery', 0), 'is-image-reorder-target': isImageReorderTarget('temu-gallery', 0) }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, 0)"><img v-if="currentImage(selectedTemuRecord, 'temu')" :key="currentImage(selectedTemuRecord, 'temu')" :src="imageSource(currentImage(selectedTemuRecord, 'temu'))" referrerpolicy="no-referrer" alt="Temu 主图" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', selectedTemuGalleryIndex)" @dragend="endImageReorder" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, selectedTemuGalleryIndex)"><span v-else class="muted">拖入 1688 图片或暂无图片</span><button v-if="currentImage(selectedTemuRecord, 'temu')" class="gallery-image-search-button" type="button" :disabled="imageSearchBusy" title="用当前图片搜索 1688" aria-label="用当前图片搜索 1688" @click.stop="searchTemuImageOn1688(selectedTemuRecord, currentImage(selectedTemuRecord, 'temu'))"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+               <div class="gallery-main" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', 0) }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, 0)"><img v-if="currentImage(selectedTemuRecord, 'temu')" :key="currentImage(selectedTemuRecord, 'temu')" :src="imageSource(currentImage(selectedTemuRecord, 'temu'))" referrerpolicy="no-referrer" alt="Temu 主图" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', selectedTemuGalleryIndex)" @dragend="endImageReorder" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, selectedTemuGalleryIndex)"><span v-else class="muted">暂无图片</span><button v-if="currentImage(selectedTemuRecord, 'temu')" class="gallery-image-search-button" type="button" :disabled="imageSearchBusy" title="用当前图片搜索 1688" aria-label="用当前图片搜索 1688" @click.stop="searchTemuImageOn1688(selectedTemuRecord, currentImage(selectedTemuRecord, 'temu'))"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
             </div>
             <div class="facts compact-facts"><div class="fact wide"><label>分类 ID（逗号分隔）</label><input class="fact-edit-input" type="text" :value="stringifyField(selectedTemuRecord.category_ids)" @input="updateCategoryIds(selectedTemuRecord, $event.target.value)" @change="saveProductModule(selectedTemuRecord, 'basic')" aria-label="Temu 分类 ID"></div></div>
              <div class="sku-panel sku-spec-panel" :class="{ 'is-drop-mode': dragSkuReference }" @change="saveProductModule(selectedTemuRecord, 'skus')" @dragover.prevent @drop.prevent="ignoreNativeDrop">
@@ -263,17 +326,17 @@ const app = createApp({
                 </div>
                <div class="sku-price-conversion"><strong>{{ selectedTemuRecord.price_conversion_label }}</strong><span>SKU 价格统一按人民币显示</span></div>
                <div class="sku-list-title">SKU列表（{{ selectedTemuRecord.sku.length }}个）</div>
-                 <table class="sku-table sku-spec-table"><thead><tr><th>#</th><th>预览图</th><th v-for="group in skuSpecGroups(selectedTemuRecord)" :key="group.name" :class="{ 'is-drop-target': isAliDropTarget('group', group.name) }" @dragenter.prevent.stop="setAliDropTarget('group', group.name)" @dragover.prevent.stop="setAliDropTarget('group', group.name)" @drop.prevent.stop="dropAliSkuToTemuGroup($event, selectedTemuRecord, group.name)">{{ group.name }}</th><th>价格</th><th>库存</th><th>重量(KG)</th></tr></thead><tbody>
+                 <table class="sku-table sku-spec-table"><thead><tr><th>#</th><th>预览图</th><th v-for="group in skuSpecGroups(selectedTemuRecord)" :key="group.name" :class="{ 'is-drop-target': isAliDropTarget('group', group.name) }" @dragenter.prevent.stop="setAliDropTarget('group', group.name)" @dragover.prevent.stop="setAliDropTarget('group', group.name)" @drop.prevent.stop="dropAliSkuToTemuGroup($event, selectedTemuRecord, group.name)">{{ group.name }}</th><th>价格</th><th>库存</th><th class="sku-dimensions-column">长宽高</th></tr></thead><tbody>
                  <tr v-for="(sku, skuIndex) in selectedTemuRecord.sku" :key="getSkuKey(selectedTemuRecord, sku, skuIndex)">
                    <td>{{ skuIndex + 1 }}</td>
-                      <td class="sku-image-cell" :class="{ 'is-image-drop-target': isImageDropTarget('temu-sku', skuIndex) }" @dragenter.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @dragover.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @drop.prevent.stop="dropAliImageToTemuSku($event, selectedTemuRecord, sku, skuIndex)"><div class="sku-images-editor"><div v-for="(image, imageIndex) in skuImageUrls(sku)" :key="imageIndex" class="sku-image-item"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="SKU 图片" @click.stop="openImagePreview(image)"><button class="image-delete-button" type="button" aria-label="删除 SKU 图片" @click="removeSkuImageAt(selectedTemuRecord, sku, imageIndex)">×</button></div><label v-if="!skuImageUrls(sku).length" class="sku-image-empty-upload" title="上传 SKU 图片">+<input type="file" accept="image/*" @change.stop="handleSkuImageUpload($event, selectedTemuRecord, sku)"></label><div v-if="skuImageUrls(sku).length === 2 || hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-image-actions"><button v-if="skuImageUrls(sku).length === 2" class="sku-blend-button" type="button" :disabled="isSkuBlendBusy(selectedTemuRecord, sku, skuIndex)" title="将当前 SKU 的两张图片发送到 BeeAPI 并替换为返回图片" @click.stop="blendSkuImages(selectedTemuRecord, sku, skuIndex)">{{ isSkuBlendBusy(selectedTemuRecord, sku, skuIndex) ? '生成中…' : '溶图' }}</button><button v-if="hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-fusion-undo-button" type="button" :disabled="isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex)" @click.stop="undoSkuImageFusion(selectedTemuRecord, sku, skuIndex)">{{ isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex) ? '返回中…' : '返回' }}</button></div></div></td>
+                  <td class="sku-image-cell" :class="{ 'is-image-drop-target': isImageDropTarget('temu-sku', skuIndex) }" @dragenter.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @dragover.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @drop.prevent.stop="dropAliImageToTemuSku($event, selectedTemuRecord, sku, skuIndex)"><div class="sku-images-editor"><div v-for="(image, imageIndex) in skuImageUrls(sku)" :key="imageIndex" class="sku-image-item"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="SKU 图片" @click.stop="openImagePreview(image)"><button class="image-delete-button" type="button" aria-label="删除 SKU 图片" @click="removeSkuImageAt(selectedTemuRecord, sku, imageIndex)">×</button></div><label v-if="!skuImageUrls(sku).length" class="sku-image-empty-upload" title="上传 SKU 图片">+<input type="file" accept="image/*" @change.stop="handleSkuImageUpload($event, selectedTemuRecord, sku)"></label><div v-if="skuImageUrls(sku).length === 2 || hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-image-actions"><button v-if="skuImageUrls(sku).length === 2" class="sku-blend-button" type="button" :disabled="isSkuBlendBusy(selectedTemuRecord, sku, skuIndex)" title="将当前 SKU 的两张图片发送到 BeeAPI 并替换为返回图片" @click.stop="blendSkuImages(selectedTemuRecord, sku, skuIndex)">{{ isSkuBlendBusy(selectedTemuRecord, sku, skuIndex) ? '生成中…' : '溶图' }}</button><button v-if="hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-fusion-undo-button" type="button" :disabled="isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex)" @click.stop="undoSkuImageFusion(selectedTemuRecord, sku, skuIndex)">{{ isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex) ? '恢复中…' : '恢复原图' }}</button></div></div></td>
                     <td v-for="(group, groupIndex) in skuSpecGroups(selectedTemuRecord)" :key="group.name" class="sku-spec-cell" :class="{ 'is-drop-target': isTemuSkuCellDropTarget(skuIndex, group.name) }" @dragenter.prevent.stop="setTemuSkuCellDropTarget(skuIndex, group.name)" @dragover.prevent.stop="setTemuSkuCellDropTarget(skuIndex, group.name)" @drop.prevent.stop="dropAliSkuToTemuSkuCell($event, selectedTemuRecord, sku, skuIndex, group.name)"><input class="sku-edit-input" type="text" :value="skuSpecValue(sku, groupIndex)" @input="updateSkuSpecValue(sku, groupIndex, $event.target.value)" :aria-label="group.name"></td>
-                    <td><input class="sku-edit-input" type="text" inputmode="decimal" v-model="sku.sku_price" aria-label="SKU 价格"></td><td><input class="sku-edit-input" type="text" inputmode="numeric" v-model="sku.sku_stock" aria-label="SKU 库存"></td><td><input class="sku-edit-input" type="text" inputmode="decimal" v-model="sku.sku_weight" aria-label="SKU 重量(KG)"></td>
+                    <td><input class="sku-edit-input" type="text" inputmode="decimal" v-model="sku.sku_price" aria-label="SKU 价格"></td><td><input class="sku-edit-input" type="text" inputmode="numeric" v-model="sku.sku_stock" aria-label="SKU 库存"></td><td class="sku-dimensions-cell"><div class="sku-dimension-bubbles" aria-label="SKU 尺寸"><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_length" aria-label="SKU 长度"><span class="sku-dimension-separator">:</span><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_width" aria-label="SKU 宽度"><span class="sku-dimension-separator">:</span><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_height" aria-label="SKU 高度"></div></td>
                  </tr>
                   <tr v-if="!selectedTemuRecord.sku.length"><td :colspan="skuSpecGroups(selectedTemuRecord).length + 5" class="empty">暂无 SKU 数据</td></tr>
                </tbody></table>
              </div>
-               <div class="detail-section" :class="{ 'is-image-drop-target': isImageDropTarget('temu-detail') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail')" @dragover.prevent.stop="setImageInteractionTarget('temu-detail')" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord)"><h3>商品详情</h3><div v-if="selectedTemuRecord.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selectedTemuRecord.detail_image_urls" :key="image" class="detail-image-editor" draggable="true" title="双击打开 Edits" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-detail', detailIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'detail', detailIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord, detailIndex)" @dblclick.stop="openDetailImageEditor(selectedTemuRecord, image, detailIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品详情图" draggable="false"><button class="image-delete-button" type="button" aria-label="删除详情图" @click="removeDetailImage(selectedTemuRecord, detailIndex)">×</button></div></div><div v-else class="detail-empty-upload"><label class="detail-empty-upload-button" title="上传详情图">+<input type="file" accept="image/*" multiple @change="handleDetailUpload($event, selectedTemuRecord)"></label><span>将右侧 1688 主图/详情图拖到这里。</span></div></div>
+               <div class="detail-section" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail')" @dragover.prevent.stop="setImageInteractionTarget('temu-detail')" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord)"><h3>商品详情</h3><div v-if="selectedTemuRecord.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selectedTemuRecord.detail_image_urls" :key="image" class="detail-image-editor" draggable="true" title="双击打开 Edits" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-detail', detailIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'detail', detailIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord, detailIndex)" @dblclick.stop="openDetailImageEditor(selectedTemuRecord, image, detailIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品详情图" draggable="false"><button class="image-delete-button" type="button" aria-label="删除详情图" @click="removeDetailImage(selectedTemuRecord, detailIndex)">×</button></div></div><div v-else class="detail-empty-upload"><label class="detail-empty-upload-button" title="上传详情图">+<input type="file" accept="image/*" multiple @change="handleDetailUpload($event, selectedTemuRecord)"></label><span>暂无详情图，请上传图片。</span></div></div>
           </section>
           <section v-else class="panel platform-render empty">请选择 Temu 商品。</section>
 
@@ -286,7 +349,7 @@ const app = createApp({
               <div class="smart-workflow-actions"><button class="smart-primary-action" type="button" :disabled="!selectedTemuRecord" @click="generateWorkflowImages()">{{ workflowGenerateBusy ? '提交中…' : workflowHasGeneratedImages ? '全部重新生成' : '一次生成 4 张白底图' }}</button></div>
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
-                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url" :src="imageSource(item.image_url)" alt="AI 组货候选图"><span v-else>{{ item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.error || '等待生成' }}</span><i v-if="workflowSelectedResultIndex === index">已选择</i></button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张生成图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张生成图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url" :src="imageSource(item.image_url)" alt="AI 组货候选图"><span v-else>{{ item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="workflowSelectedResultIndex === index">已选择</i></button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张生成图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张生成图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
                   <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span>{{ item.product_intro }}</span></div>
                   <textarea v-model="item.prompt" rows="5" @input="markWorkflowPromptDraft(index, $event.target.value)" :aria-label="item.relation + '生图提示词'"></textarea>
                   <div class="smart-result-actions"><button class="smart-secondary-action" type="button" :disabled="!selectedTemuRecord" @click="generateWorkflowImages(index)">单独重生</button></div>
@@ -314,7 +377,7 @@ const app = createApp({
                  <tr v-if="!selected1688Record.sku.length"><td colspan="6" class="empty">暂无 SKU 数据</td></tr>
                </tbody></table>
              </div>
-               <div class="detail-section"><h3>商品详情</h3><div v-if="selected1688Record.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selected1688Record.detail_image_urls" :key="image" class="detail-image-editor"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="1688 商品详情图" draggable="true" @dragstart.stop="startAliImageDrag($event, selected1688Record, image, 'detail', detailIndex)" @dragend="endAliImageDrag"></div></div><div v-else class="detail-empty-upload"><span>暂无详情图。</span></div></div>
+               <div class="detail-section"><h3>商品详情</h3><div v-if="selected1688Record.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selected1688Record.detail_image_urls" :key="image" class="detail-image-editor" draggable="true" @dragstart.stop="startAliImageDrag($event, selected1688Record, image, 'detail', detailIndex)" @dragend="endAliImageDrag"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="1688 商品详情图"></div></div><div v-else class="detail-empty-upload"><span>暂无详情图。</span></div></div>
           </section>
           <section v-else-if="workspaceMode === 'realtime'" class="panel platform-render empty">请选择 1688 商品。</section>
         </div>
@@ -346,10 +409,11 @@ const app = createApp({
   `,
   data: function createAppState() {
     const queryMode = new URLSearchParams(window.location.search).get("mode");
+    const persistedViewState = readPersistedViewState();
     return {
       records: [],
       renderMode: queryMode === "export" ? "export" : "realtime",
-      workspaceMode: "realtime",
+      workspaceMode: persistedViewState.workspaceMode === "smart" ? "smart" : "realtime",
       realtimeConnected: false,
       realtimeSource: null,
       realtimeRefreshTimer: null,
@@ -361,8 +425,8 @@ const app = createApp({
       selectedGalleryIndex: 0,
       selectedTemuGalleryIndex: 0,
       selected1688GalleryIndex: 0,
-      selectedTemuMainId: "",
-      selected1688MainId: "",
+      selectedTemuMainId: String(persistedViewState.selectedTemuMainId || ""),
+      selected1688MainId: String(persistedViewState.selected1688MainId || ""),
       mappingRows: [],
       cartesianBaseRows: {},
       sourceFileName: "",
@@ -415,27 +479,30 @@ const app = createApp({
       workflowPromptDrafts: {},
       workflowPromptBusy: false,
       workflowGenerateBusy: false,
-       workflowSearchBusyKeys: {},
-       workflowStatusText: "等待选择 Temu 商品。",
-       workflowStatusType: "normal",
-       workflowSource: null,
-       pendingCacheEvents: {},
-       productSaveStates: {},
-       miaoshouExportBusy: false
+      workflowSearchBusyKeys: {},
+      workflowStatusText: "等待选择 Temu 商品。",
+      workflowStatusType: "normal",
+      pendingCacheEvents: {},
+      productSaveStates: {},
+      miaoshouExportBusy: false
     };
   },
   /** Start cache subscription after the Vue view is mounted. */
   mounted: function mountedApp() {
+    window.addEventListener("dragend", this.clearImageDragState, true);
+    window.addEventListener("drop", this.clearImageDragState);
+    window.addEventListener("blur", this.clearImageDragState);
     this.loadImageEditConfig();
     if (this.renderMode === "realtime") {
       this.startRealtimeCache();
     }
-    this.startWorkflowStream();
   },
   /** Close the cache subscription before the Vue view is destroyed. */
   beforeUnmount: function cleanupRealtimeCache() {
+    window.removeEventListener("dragend", this.clearImageDragState, true);
+    window.removeEventListener("drop", this.clearImageDragState);
+    window.removeEventListener("blur", this.clearImageDragState);
     this.stopRealtimeCache();
-    this.stopWorkflowStream();
   },
   computed: {
     /** Return products for the currently active platform. */
@@ -551,6 +618,19 @@ const app = createApp({
     }
   },
   methods: {
+    /** Persist the current workspace and product selection for the next browser refresh. */
+    persistViewState: function persistViewState() {
+      try {
+        window.localStorage.setItem(VIEW_STATE_STORAGE_KEY, JSON.stringify({
+          workspaceMode: this.workspaceMode,
+          selectedTemuMainId: this.selectedTemuMainId,
+          selected1688MainId: this.selected1688MainId
+        }));
+      } catch (error) {
+        return;
+      }
+    },
+
     /** Set a visible status message for the current operation. */
     setStatus: function setStatus(message, type) {
       this.statusText = message;
@@ -795,21 +875,17 @@ const app = createApp({
       });
     },
 
-    /** Apply one successful save response without overwriting newer local edits. */
+    /** Apply only the saved version and keep the live record so unblurred edits cannot roll back. */
     finishProductSave: function finishProductSave(cacheKey, result) {
       const state = this.productSaveStates[String(cacheKey || "")];
       if (!state || !state.inFlight) {
         return;
       }
-      const request = state.inFlight;
       state.inFlight = null;
       const product = result && result.product ? result.product : null;
       const record = this.findProductByCacheKey(cacheKey);
       if (record && product) {
         record.version = Number(product.version || record.version || 1);
-      }
-      if (product && state.generation === request.generation && !this.hasPendingProductModules(state)) {
-        this.replaceProductViewModel(product);
       }
       if (this.hasPendingProductModules(state)) {
         this.flushProductSave(cacheKey);
@@ -934,7 +1010,11 @@ const app = createApp({
       }).then(function handleListingMergeResponse(response) {
         return response.json().then(function handleListingMergePayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(getApiErrorMessage(payload, "Kimi 合并 Listing 失败。"));
+            const apiError = payload && payload.error && typeof payload.error === "object" ? payload.error : {};
+            const error = new Error(getApiErrorMessage(payload, "Kimi 合并 Listing 失败。"));
+            error.code = String(apiError.code || response.status || "REQUEST_FAILED");
+            error.statusCode = Number(response.status || 500);
+            throw error;
           }
           return readApiData(payload);
         });
@@ -944,7 +1024,7 @@ const app = createApp({
         view.listingUndoTokens[undoKey] = String(payload.undo_token || "");
         view.setStatus("Kimi 返回内容已更新到当前页面，暂未自动保存。", "success");
       }).catch(function handleListingMergeError(error) {
-        view.setStatus("Listing 合并失败：" + (error.message || "请求失败。"), "error");
+        view.setStatus("Listing 合并失败 [" + getWorkflowErrorCode(error) + "]：" + (error.message || "请求失败。"), "error");
       }).finally(function handleListingMergeFinished() {
         view.listingMergeBusy = false;
       });
@@ -1083,6 +1163,7 @@ const app = createApp({
         this.loadMapping(payload);
       }
       this.syncWorkflowSelection();
+      this.persistViewState();
     },
 
     /** Apply the long-lived local cache payload received from the server. */
@@ -1109,6 +1190,7 @@ const app = createApp({
         }
         this.selectedTemuGalleryIndex = 0;
         this.selected1688GalleryIndex = 0;
+        this.persistViewState();
         this.setStatus("服务器已完成绑定并更新当前 Temu / 1688 商品。", "success");
         return;
       }
@@ -1226,6 +1308,7 @@ const app = createApp({
     /** Switch only the right-hand workspace while preserving the Temu listing rail. */
     changeWorkspaceMode: function changeWorkspaceMode(mode) {
       this.workspaceMode = mode === "smart" ? "smart" : "realtime";
+      this.persistViewState();
       if (this.workspaceMode === "smart" && this.selectedTemuRecord) {
         this.syncWorkflowSelection();
       }
@@ -1237,28 +1320,6 @@ const app = createApp({
       this.workflowStatusType = type || "normal";
     },
 
-    /** Start receiving persisted intelligent-packing task updates. */
-    startWorkflowStream: function startWorkflowStream() {
-      this.stopWorkflowStream();
-      const view = this;
-      this.workflowSource = new EventSource(workflowApiUrl("/workflow/events"));
-      this.workflowSource.onmessage = function handleWorkflowMessage(event) {
-        try {
-          view.applyWorkflowPayload(JSON.parse(event.data));
-        } catch (error) {
-          view.setWorkflowStatus("智能组货状态格式错误。", "error");
-        }
-      };
-    },
-
-    /** Close the current intelligent-packing task stream. */
-    stopWorkflowStream: function stopWorkflowStream() {
-      if (this.workflowSource) {
-        this.workflowSource.close();
-        this.workflowSource = null;
-      }
-    },
-
     /** Apply one workflow state snapshot and refresh the selected task. */
     applyWorkflowPayload: function applyWorkflowPayload(payload) {
       const state = payload && payload.workflow ? payload.workflow : payload;
@@ -1268,7 +1329,10 @@ const app = createApp({
         this.syncWorkflowPrompts(task);
       }
       if (task && !this.workflowPromptBusy) {
-        this.setWorkflowStatus(this.workflowTaskStatusText(this.selectedTemuMainId), task.status === "completed" ? "success" : "normal");
+        const statusType = task.status === "completed" || task.status === "images_ready"
+          ? "success"
+          : task.status === "generation_error" || task.status === "search_error" ? "error" : "normal";
+        this.setWorkflowStatus(this.workflowTaskStatusText(this.selectedTemuMainId), statusType);
       }
     },
 
@@ -1300,6 +1364,8 @@ const app = createApp({
           image_url: String(source[index].image_url || ""),
           status: String(source[index].status || ""),
           error: String(source[index].error || ""),
+          error_code: String(source[index].error_code || ""),
+          error_status: Number(source[index].error_status || 0),
           search_url: String(source[index].search_url || ""),
           search_status: this.workflowSearchBusyKeys[promptKey] ? "searching" : String(source[index].search_status || ""),
           search_error: String(source[index].search_error || "")
@@ -1309,6 +1375,17 @@ const app = createApp({
       if (task && Number(task.selected_result_index) >= 0) {
         this.workflowSelectedResultIndex = Number(task.selected_result_index);
       }
+    },
+
+    /** Return a concise candidate error message with its backend error code. */
+    workflowPromptErrorText: function workflowPromptErrorText(item) {
+      const source = item || {};
+      const code = String(source.error_code || (source.error_status ? "HTTP_" + source.error_status : "WORKFLOW_ERROR"));
+      const rawMessage = String(source.error || "生图失败。").replace(/\s+/g, " ").trim();
+      const message = rawMessage.indexOf("<!DOCTYPE") >= 0 || rawMessage.indexOf("<html") >= 0
+        ? "上游服务返回网关错误。"
+        : rawMessage.slice(0, 120);
+      return "生成失败 [" + code + "] " + message;
     },
 
     /** Keep one user-edited prompt while workflow SSE snapshots are arriving. */
@@ -1347,7 +1424,8 @@ const app = createApp({
           product: {
             title: this.selectedTemuRecord.product_name,
             category: this.selectedTemuRecord.product_category,
-            attributes: this.selectedTemuRecord.attributes_json
+            attributes: this.selectedTemuRecord.attributes_json,
+            price_reference: getWorkflowPriceReference(this.selectedTemuRecord)
           }
         })
       }).then(function handleWorkflowPromptSuccess(payload) {
@@ -1398,12 +1476,12 @@ const app = createApp({
         } else {
           delete view.workflowPromptDrafts[String(Number(index))];
         }
-        view.setWorkflowStatus(index === undefined ? "已提交后台生成，图片会逐张显示。" : "已提交后台重生，完成后会自动更新。", "success");
+        view.setWorkflowStatus(index === undefined ? "四张白底图已生成，请选择一张。" : "图片已重新生成。", "success");
       }).catch(function handleWorkflowGenerationError(error) {
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
           return;
         }
-        view.setWorkflowStatus("BeeAPI 生图失败：" + error.message, "error");
+        view.setWorkflowStatus("BeeAPI 生图失败 [" + getWorkflowErrorCode(error) + "]：" + error.message, "error");
       }).finally(function finishWorkflowGenerationRequest() {
         view.workflowGenerateBusy = false;
       });
@@ -1537,6 +1615,7 @@ const app = createApp({
       this.galleryEditSelection = [];
       this.closeGalleryImageEditor();
       this.syncWorkflowSelection();
+      this.persistViewState();
     },
 
     /** Delete the selected or explicitly targeted Temu product directly from the backend cache. */
@@ -1739,8 +1818,9 @@ const app = createApp({
         }
         view.replaceSkuImagesWithGenerated(sku, imageUrl);
         view.imageFusionUndoTokens[busyKey] = String(payload.undo_token || "");
+        view.saveProductModule(record, "skus");
         const size = String(payload.size || editSize || "1k").toUpperCase();
-        view.setStatus("SKU #" + (Number(rowIndex) + 1) + " 溶图完成（" + size + "），可点返回恢复两张原图。", "success");
+        view.setStatus("SKU #" + (Number(rowIndex) + 1) + " 溶图完成（" + size + "），可点恢复原图。", "success");
       }).catch(function handleImageEditError(error) {
         view.setStatus("溶图失败：" + (error.message || "请求失败。"), "error");
       }).finally(function handleImageEditFinished() {
@@ -1777,6 +1857,7 @@ const app = createApp({
         sku.sku_image_urls = imageUrls;
         sku.sku_image_url = imageUrls[0] || "";
         delete view.imageFusionUndoTokens[busyKey];
+        view.saveProductModule(record, "skus");
         view.setStatus("已通过 Server API 恢复 SKU 溶图前的两张图片。", "success");
       }).catch(function handleFusionUndoError(error) {
         view.setStatus("溶图返回失败：" + (error.message || "请求失败。"), "error");
@@ -2273,6 +2354,9 @@ const app = createApp({
         sku_original_price: "",
          sku_stock: 0,
          sku_weight: 0,
+        sku_length: "",
+        sku_width: "",
+        sku_height: "",
         sku_image_url: "",
         sku_image_urls: []
       };
@@ -2432,6 +2516,9 @@ const app = createApp({
         newRow.sku_original_price = "";
         newRow.sku_stock = 0;
         newRow.sku_weight = 0;
+        newRow.sku_length = "";
+        newRow.sku_width = "";
+        newRow.sku_height = "";
         newRow.sku_image_url = "";
         newRow.sku_image_urls = [];
         newRow[targetField] = propertyName + ":" + targetValue;
@@ -2798,6 +2885,7 @@ const app = createApp({
         }).then(function applyRestoreViewModel(payload) {
           view.applyCachePayload(payload);
           view.workspaceMode = "realtime";
+          view.persistViewState();
           view.setStatus("扩展 JSON 已恢复到服务器。", "success");
         }).catch(function handleRestoreError(error) {
           view.setStatus(error.message || "恢复失败。", "error");
@@ -2999,7 +3087,11 @@ const app = createApp({
       }).then(function handleGalleryEditResponse(response) {
         return response.json().then(function handleGalleryEditPayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            throw new Error(getApiErrorMessage(payload, "图片生成失败。"));
+            const apiError = payload && payload.error && typeof payload.error === "object" ? payload.error : {};
+            const error = new Error(getApiErrorMessage(payload, "图片生成失败。"));
+            error.code = String(apiError.code || response.status || "REQUEST_FAILED");
+            error.statusCode = Number(response.status || 500);
+            throw error;
           }
           return readApiData(payload);
         });
@@ -3013,7 +3105,7 @@ const app = createApp({
         }
       }).catch(function handleGalleryEditError(error) {
         if (requestId === view.imageEditorRequestId && view.imageEditorOpen) {
-          view.imageEditorError = error.message || "图片生成失败。";
+          view.imageEditorError = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "图片生成失败。");
         }
       }).finally(function handleGalleryEditFinished() {
         if (requestId === view.imageEditorRequestId) {
@@ -3081,7 +3173,7 @@ const app = createApp({
       return images[index] || images[0] || "";
     },
 
-    /** Start dragging one 1688 product image to a Temu image target. */
+    /** Start dragging one 1688 image to its matching Temu image target. */
     startAliImageDrag: function startAliImageDrag(event, record, image, sourceType, index) {
       const imageUrl = String(image || "").trim();
       if (!imageUrl) {
@@ -3125,12 +3217,29 @@ const app = createApp({
 
     /** Mark one Temu image area as the active image drop target. */
     setImageDropTarget: function setImageDropTarget(targetType, targetIndex) {
+      if (String(targetType || "") === "temu-sku"
+        && (!this.dragImageReference || String(this.dragImageReference.source_type || "") !== "sku")) {
+        this.imageDropTarget = null;
+        return;
+      }
       this.imageDropTarget = [targetType || "", targetIndex === undefined ? "" : String(targetIndex)].join("|");
     },
 
     /** Test whether one Temu image area is the active image drop target. */
     isImageDropTarget: function isImageDropTarget(targetType, targetIndex) {
       return this.imageDropTarget === [targetType || "", targetIndex === undefined ? "" : String(targetIndex)].join("|");
+    },
+
+    /** Clear stale image drop highlights after a browser drag ends or leaves the page. */
+    clearImageDragState: function clearImageDragState(event) {
+      this.imageDropTarget = null;
+      this.imageReorderTarget = null;
+      if (!event || event.type === "dragend" || event.type === "blur") {
+        this.dragImageReference = null;
+        this.imageReorderReference = null;
+        this.dragSkuReference = null;
+        this.dragDropTarget = null;
+      }
     },
 
     /** Build a stable key for one product image list while a drag is active. */
@@ -3212,7 +3321,7 @@ const app = createApp({
       this.imageReorderTarget = [targetType || "", targetIndex === undefined ? "" : String(targetIndex)].join("|");
     },
 
-    /** Mark one position for both new-image insertion and same-list reordering. */
+    /** Mark one position for same-list image reordering and ignore cross-list image drops. */
     setImageInteractionTarget: function setImageInteractionTarget(targetType, targetIndex) {
       const targetName = String(targetType || "");
       const targetRecord = targetName.indexOf("temu-") === 0 ? this.selectedTemuRecord : this.selected1688Record;
@@ -3227,7 +3336,7 @@ const app = createApp({
         this.imageDropTarget = null;
         return;
       }
-      this.setImageDropTarget(targetType, targetIndex);
+      this.imageDropTarget = null;
       this.imageReorderTarget = null;
     },
 
@@ -3320,7 +3429,7 @@ const app = createApp({
       return true;
     },
 
-    /** Drop one 1688 image into the Temu product gallery or reorder the current gallery. */
+    /** Add a 1688 gallery image to Temu or reorder the Temu gallery. */
     dropAliImageToTemuGallery: function dropAliImageToTemuGallery(event, record, targetIndex) {
       event.preventDefault();
       event.stopPropagation();
@@ -3330,7 +3439,7 @@ const app = createApp({
         return;
       }
       const reference = this.dragImageReference || this.readDraggedImageReference(event);
-      const imageUrl = reference && reference.image_url ? String(reference.image_url) : "";
+      const imageUrl = reference && String(reference.source_type || "") === "gallery" ? String(reference.image_url || "") : "";
       if (record && imageUrl) {
         const added = this.appendTemuGalleryImage(record, imageUrl, targetIndex);
         if (targetIndex === undefined) {
@@ -3338,14 +3447,14 @@ const app = createApp({
         }
         this.updateGallerySelection(record, "temu", record.gallery_image_urls.indexOf(imageUrl));
         this.setStatus(targetIndex === undefined
-          ? (added ? "已将 1688 图片添加到 Temu 主图。" : "已将已有图片设为 Temu 主图。")
-          : (added ? "已将 1688 图片插入 Temu 主图列表。" : "已调整 Temu 主图顺序。"), "success");
+          ? (added ? "已将 1688 主图添加到 Temu 主图。" : "已将已有图片设为 Temu 主图。")
+          : (added ? "已将 1688 主图插入 Temu 主图列表。" : "已调整 Temu 主图顺序。"), "success");
         this.saveProductModule(record, "images");
       }
       this.endAliImageDrag();
     },
 
-    /** Drop one 1688 image into the Temu detail image list or reorder the current list. */
+    /** Add a 1688 detail image to Temu or reorder the Temu detail list. */
     dropAliImageToTemuDetail: function dropAliImageToTemuDetail(event, record, targetIndex) {
       event.preventDefault();
       event.stopPropagation();
@@ -3355,12 +3464,12 @@ const app = createApp({
         return;
       }
       const reference = this.dragImageReference || this.readDraggedImageReference(event);
-      const imageUrl = reference && reference.image_url ? String(reference.image_url) : "";
+      const imageUrl = reference && String(reference.source_type || "") === "detail" ? String(reference.image_url || "") : "";
       if (record && imageUrl) {
         const added = this.appendTemuDetailImage(record, imageUrl, targetIndex);
         this.setStatus(targetIndex === undefined
-          ? "已将 1688 图片添加到 Temu 商品详情。"
-          : (added ? "已将 1688 图片插入 Temu 详情图列表。" : "已调整 Temu 详情图顺序。"), "success");
+          ? "已将 1688 详情图添加到 Temu 商品详情。"
+          : (added ? "已将 1688 详情图插入 Temu 详情图列表。" : "已调整 Temu 详情图顺序。"), "success");
         this.saveProductModule(record, "images");
       }
       this.endAliImageDrag();
@@ -3371,7 +3480,8 @@ const app = createApp({
       event.preventDefault();
       event.stopPropagation();
       const reference = this.dragImageReference || this.readDraggedImageReference(event);
-      const imageUrl = reference && reference.image_url ? String(reference.image_url) : "";
+      const isSkuImage = reference && String(reference.source_type || "") === "sku";
+      const imageUrl = isSkuImage && reference.image_url ? String(reference.image_url) : "";
       if (targetSku && imageUrl) {
         const beforeCount = this.skuImageUrls(targetSku).length;
         this.appendSkuImage(targetSku, imageUrl);
@@ -3676,53 +3786,20 @@ const app = createApp({
       return result;
     },
 
-    /** Request the server to generate and download the Temu-only 妙手 ZIP. */
+    /** Request a streamed server download for the Temu-only 妙手 ZIP. */
     exportMiaoshouZip: async function exportMiaoshouZip() {
       if (this.miaoshouExportBusy || !this.temuRecords.length) {
         return;
       }
       this.miaoshouExportBusy = true;
-      try {
-        const response = await fetch(apiUrl("/zip"), { cache: "no-store" });
-        if (!response.ok) {
-          let message = "服务器妙手导出失败。";
-          try {
-            const payload = await response.json();
-            if (payload && payload.error && payload.error.message) {
-              message = payload.error.message;
-            }
-          } catch (parseError) {
-            message = "服务器妙手导出失败，HTTP " + response.status + "。";
-          }
-          throw new Error(message);
-        }
-        const blob = await response.blob();
-        if (!blob.size) {
-          throw new Error("服务器返回了空 ZIP 文件。");
-        }
-        const contentDisposition = response.headers.get("Content-Disposition") || "";
-        const fileMatch = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
-        const fileName = fileMatch ? decodeURIComponent(fileMatch[1]) : "Temu-妙手导入包-" + Date.now() + ".zip";
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        /** Release the downloaded Blob URL after Windows has started the file transfer. */
-        function releaseMiaoshouDownloadUrl() {
-          URL.revokeObjectURL(url);
-          link.remove();
-        }
-        window.setTimeout(releaseMiaoshouDownloadUrl, 1000);
-        const failureCount = Number(response.headers.get("X-Miaoshou-Image-Failures") || 0);
-        const failureText = failureCount ? "，" + failureCount + " 张图片下载失败" : "";
-        this.setStatus("服务器已生成妙手 ZIP，共 " + (response.headers.get("X-Miaoshou-Product-Count") || this.temuRecords.length) + " 个 Temu 商品" + failureText + "。", failureCount ? "normal" : "success");
-      } catch (error) {
-        this.setStatus("妙手 ZIP 导出失败：" + (error.message || "未知错误"), "error");
-      } finally {
-        this.miaoshouExportBusy = false;
+      this.setStatus("服务器正在流式生成妙手 ZIP，完成后会自动下载。", "normal");
+      window.location.href = apiUrl("/zip");
+      const view = this;
+      /** Release the ZIP export busy state after the browser starts the download. */
+      function releaseMiaoshouExportBusy() {
+        view.miaoshouExportBusy = false;
       }
+      window.setTimeout(releaseMiaoshouExportBusy, 1500);
     },
 
     /** Build and download a new identifier-only group mapping JSON file. */

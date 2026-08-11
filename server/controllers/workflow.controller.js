@@ -1,3 +1,6 @@
+/** Keep one synchronous workflow generation request bounded to five minutes. */
+const WORKFLOW_GENERATION_TIMEOUT_MS = 300000;
+
 /** Intelligent-packing HTTP controller backed by the workflow domain service. */
 class WorkflowController {
   /** Store workflow and optional binding services. */
@@ -34,15 +37,6 @@ class WorkflowController {
     }
   }
 
-  /** Connect one browser or extension to the workflow SSE stream. */
-  connectEvents(request, response, next) {
-    try {
-      this.workflow.handleEvents(request, response);
-    } catch (error) {
-      next(error);
-    }
-  }
-
   /** Generate four intelligent-packing prompts for one Temu product. */
   async generatePrompts(request, response, next) {
     try {
@@ -53,9 +47,15 @@ class WorkflowController {
     }
   }
 
-  /** Schedule all or one intelligent-packing candidate image for generation. */
+  /** Generate all or one intelligent-packing candidate image and wait for its result. */
   async generateImages(request, response, next) {
     try {
+      if (request && typeof request.setTimeout === "function") {
+        request.setTimeout(WORKFLOW_GENERATION_TIMEOUT_MS);
+      }
+      if (response && typeof response.setTimeout === "function") {
+        response.setTimeout(WORKFLOW_GENERATION_TIMEOUT_MS);
+      }
       const result = await this.workflow.generateImages(request.validatedBody, request.requestId);
       response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {

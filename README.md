@@ -9,7 +9,7 @@
 - `extension/`：采集原始页面数据并提交 `/api/v1/products/collect`，同时把原始批次保存到 `chrome.storage.local` 的 extension cache。
 - `cache/`：由后端独占读写 Server cache；`cache/history/` 保存可跨重启使用的操作快照。
 
-所有后端接口只使用 `/api/v1` 前缀，JSON 接口统一返回 `{ ok, data, error, meta }`；工作流、商品刷新、日志和队列继续使用 SSE。旧的 `/api/*`、`/v1/api/*` 和 Legacy Adapter 已移除，前端和扩展不得再拼接旧路径。
+所有后端接口只使用 `/api/v1` 前缀，JSON 接口统一返回 `{ ok, data, error, meta }`；生图和提示词接口通过 HTTP 请求等待结果，商品刷新、日志和队列继续使用 SSE。旧的 `/api/*`、`/v1/api/*` 和 Legacy Adapter 已移除，前端和扩展不得再拼接旧路径。
 
 运行 `npm run dev` 会同时启动前后端。服务器 Network 风格日志页面为 `http://127.0.0.1:5173/server/logs`。
 
@@ -174,7 +174,7 @@ Express 服务把数据写到项目根目录的 `cache/cache.json`，并通过 `
 - `实时渲染`：打开 `npm run dev` 后，点击扩展弹窗中的“打开实时渲染”，页面会从根目录 `cache/cache.json` 读取并实时刷新。
 - `导出模式`：点击“导出模式”，导入统一 JSON，随后可导出当前规范化 JSON 或组货 JSON。
 
-工作台顶部的“导出妙手 ZIP”会把全部 Temu 商品一次打包为妙手素材包：标题、货源链接、类目和原价来自 Temu，属性会自动拼接到详情描述，Temu 详情图为空时回退到 Temu 轮播图。库存为空按 0 导出，SKU 重量按 KG 导出，尺寸留空；导出过程不会使用 1688 商品、价格或图片。
+工作台顶部的“导出妙手 ZIP”会把全部 Temu 商品一次打包为妙手素材包：标题、货源链接、类目和原价来自 Temu，属性会自动拼接到详情描述，Temu 详情图为空时回退到 Temu 轮播图。库存为空按 0 导出，SKU 重量按 KG 导出，长宽高按 `长*宽*高` 写入 SKU 尺寸列；导出过程不会使用 1688 商品、价格或图片。
 
 妙手 ZIP 通过 `GET /api/v1/zip` 在 3000 端生成，浏览器只负责下载服务端返回的 ZIP 文件。
 

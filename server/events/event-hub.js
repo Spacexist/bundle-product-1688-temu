@@ -8,6 +8,7 @@ class EventHub {
     this.sequence = 0;
     this.maxHistory = Number(settings.maxHistory || 100);
     this.heartbeatMs = Number(settings.heartbeatMs || 15000);
+    this.retryMs = Number(settings.retryMs || 5000);
     this.writeLog = settings.writeLog;
   }
 
@@ -99,7 +100,7 @@ class EventHub {
     const client = { response: response, heartbeat: null, closed: false };
     const cursor = this.getEventCursor(request);
     this.clients.push(client);
-    this.writeClient(client, "retry: 1000\n\n");
+    this.writeClient(client, "retry: " + this.retryMs + "\n\n");
     let replayedCount = 0;
     if (cursor > 0) {
       for (let index = 0; index < this.history.length; index += 1) {

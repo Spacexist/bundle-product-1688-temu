@@ -42,7 +42,7 @@ const imageSearchSchema = z.union([
 const replaceSkuSchema = z.object({
   target_temu_platform_id: z.union([z.string(), z.number()]).optional(),
   target_temu_main_id: z.union([z.string(), z.number()]).optional(),
-  target_temu_version: z.number().int().positive().optional(),
+  target_temu_version: z.number().int().positive(),
   target_sku_index: z.number().int().nonnegative().optional(),
   target_sku_id: z.union([z.string(), z.number()]).optional(),
   source_1688_platform_id: z.union([z.string(), z.number()]).optional(),

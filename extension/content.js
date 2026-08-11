@@ -167,6 +167,12 @@ function handleUnifiedCollectorClick(event) {
       return;
     }
     var responseData = response.data && typeof response.data === "object" ? response.data : {};
+    if (actionType === "replaceUnifiedSku"
+      && unifiedSelectedTemuRecord
+      && responseData.product
+      && Number(responseData.product.version) > 0) {
+      unifiedSelectedTemuRecord.version = Number(responseData.product.version);
+    }
     var completedMessage = actionType === "replaceUnifiedSku"
       ? "已替换 " + String(responseData.replaced_sku_count || 0) + " 条 Temu SKU"
       : response.workflow_completed || responseData.bound_temu ? "已绑定 Temu" : response.replaced ? "重复商品已更新" : "已写入 cache";

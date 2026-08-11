@@ -878,6 +878,46 @@ function collect1688DataFromPage() {
     return match ? match[1].replace(/\s+/g, "") : source;
   }
 
+  /** Read one non-empty value from the current or original 1688 SKU row. */
+  function read1688SkuValue(current, original, names) {
+    var rows = [current || {}, original || {}];
+    var fields = Array.isArray(names) ? names : [];
+    for (var rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      var row = rows[rowIndex];
+      for (var fieldIndex = 0; fieldIndex < fields.length; fieldIndex += 1) {
+        var value = row[fields[fieldIndex]];
+        if (value !== undefined && value !== null && value !== "") {
+          return value;
+        }
+      }
+    }
+    return "";
+  }
+
+  /** Read one SKU measurement from direct or nested 1688 product fields. */
+  function read1688SkuDimension(current, original, names) {
+    var direct = read1688SkuValue(current, original, names);
+    if (direct !== "") {
+      return direct;
+    }
+    var rows = [current || {}, original || {}];
+    var containers = ["dimensions", "skuDimensions", "packageDimensions"];
+    for (var rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      var row = rows[rowIndex];
+      for (var containerIndex = 0; containerIndex < containers.length; containerIndex += 1) {
+        var container = row[containers[containerIndex]];
+        if (!container || typeof container !== "object") {
+          continue;
+        }
+        var nested = read1688SkuValue(container, null, names);
+        if (nested !== "") {
+          return nested;
+        }
+      }
+    }
+    return "";
+  }
+
   /** Find the matching original SKU record by key or SKU ID. */
   function findOriginalSkuItem(originalMap, key, skuId) {
     if (!originalMap || typeof originalMap !== "object") {
@@ -939,6 +979,10 @@ function collect1688DataFromPage() {
           || price
       );
       var spec = splitSkuSpec(item.specAttrs);
+      var weight = read1688SkuValue(item, originalItem, ["sku_weight", "skuWeight", "weight", "weightKg", "重量"]);
+      var length = read1688SkuDimension(item, originalItem, ["sku_length", "skuLength", "length_cm", "lengthCm", "length", "dimensionLength", "packageLength", "长"]);
+      var width = read1688SkuDimension(item, originalItem, ["sku_width", "skuWidth", "width_cm", "widthCm", "width", "dimensionWidth", "packageWidth", "宽"]);
+      var height = read1688SkuDimension(item, originalItem, ["sku_height", "skuHeight", "height_cm", "heightCm", "height", "dimensionHeight", "packageHeight", "高"]);
       result.push({
         skuId: item.skuId,
         subSku1: formatSkuProperty(names[0] || spec.firstName, spec.first),
@@ -947,6 +991,10 @@ function collect1688DataFromPage() {
         price: price,
         discountPrice: discountPrice,
         stock: item.canBookCount,
+        sku_weight: weight,
+        sku_length: length,
+        sku_width: width,
+        sku_height: height,
         saleCount: item.saleCount,
         specId: item.specId,
         imageUrl: imageMap[spec.first] || imageMap[item.specAttrs] || ""
