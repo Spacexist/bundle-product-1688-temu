@@ -71,13 +71,41 @@ const operationUndoSchema = z.object({ undo_token: z.string().min(1) });
 const imageEditSchema = z.object({
   image_urls: z.array(z.string().min(1)).min(1).max(2),
   prompt: z.string().optional(),
+  size: z.string().optional(),
+  carousel_task_id: z.string().min(1).optional(),
+  carousel_page_index: z.number().int().min(0).max(9).optional()
+});
+
+const packingWorkflowPromptSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]),
+  image_url: z.string().min(1),
+  custom_prompt: z.string().trim().min(1).max(10000),
+  product: z.record(z.string(), z.unknown())
+});
+
+const carouselWorkflowPromptSchema = z.object({
+  mode: z.literal("carousel"),
+  temu_main_id: z.union([z.string(), z.number()]),
+  temu_platform_id: z.union([z.string(), z.number()]),
+  image_urls: z.array(z.string().min(1)).length(2),
+  source_indices: z.array(z.number().int().nonnegative()).length(2),
+  gallery_snapshot: z.array(z.string()),
+  count: z.number().int().min(2).max(10),
+  market_language: z.string().min(1).max(100),
+  prompt: z.string().max(5000).optional(),
+  advanced: z.boolean().optional(),
   size: z.string().optional()
 });
 
-const workflowPromptSchema = z.object({
-  temu_main_id: z.union([z.string(), z.number()]),
-  image_url: z.string().min(1),
-  product: z.record(z.string(), z.unknown())
+const workflowPromptSchema = z.union([packingWorkflowPromptSchema, carouselWorkflowPromptSchema]);
+
+const carouselPlanUpdateSchema = z.object({
+  pages: z.array(z.object({ purpose: z.string().max(500).optional(), prompt: z.string().min(1).max(10000) })).min(1).max(10)
+});
+
+const carouselApplySchema = z.object({
+  selected_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10),
+  replace_all: z.boolean().optional()
 });
 
 const workflowGenerateSchema = z.object({
@@ -109,6 +137,8 @@ module.exports = {
   operationUndoSchema: operationUndoSchema,
   imageEditSchema: imageEditSchema,
   workflowPromptSchema: workflowPromptSchema,
+  carouselPlanUpdateSchema: carouselPlanUpdateSchema,
+  carouselApplySchema: carouselApplySchema,
   workflowGenerateSchema: workflowGenerateSchema,
   workflowCompleteSchema: workflowCompleteSchema,
   detailImagesQuerySchema: detailImagesQuerySchema

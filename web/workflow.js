@@ -363,7 +363,7 @@ const workflowApp = createApp({
     selectSourceImage: function selectWorkflowSourceImage(image) {
       this.selectedImageUrl = String(image || "");
     },
-    /** Request four fixed-relation product-packing prompts from Kimi. */
+    /** Request four open-ended product-packing prompts from Kimi. */
     generatePrompts: function generateWorkflowPrompts() {
       if (!this.selectedTemu || !this.selectedImageUrl || this.promptBusy) {
         return;
@@ -377,6 +377,7 @@ const workflowApp = createApp({
         body: JSON.stringify({
           temu_main_id: this.selectedTemu.main_id,
           image_url: this.selectedImageUrl,
+          custom_prompt: "请结合当前 Temu 商品信息和图片，按照你认为最有销售价值的方向推荐 4 个可用于组货的商品。不要使用固定分类，候选方向由当前商品特征决定。",
           product: {
             title: this.selectedTemu.product_name,
             category: this.selectedTemu.product_category,

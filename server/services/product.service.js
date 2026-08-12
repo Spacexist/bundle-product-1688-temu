@@ -460,6 +460,72 @@ class ProductService {
     }
   }
 
+  /** Apply selected carousel outputs to source positions or replace the complete main gallery. */
+  async applyCarouselTask(task, selectedIndices, requestId, replaceAll) {
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateCarouselImages(payload) {
+      const found = task.temu_platform_id
+        ? service.findRecord(payload.records, "temu", task.temu_platform_id)
+        : service.findRecordByMainId(payload.records, "temu", task.temu_main_id);
+      if (!found) {
+        const error = new Error("找不到轮播任务对应的 Temu 商品。");
+        error.statusCode = 404;
+        error.code = "CAROUSEL_PRODUCT_NOT_FOUND";
+        throw error;
+      }
+      const generatedUrls = [];
+      const selectedPages = {};
+      for (let index = 0; index < selectedIndices.length; index += 1) {
+        const selectedIndex = Number(selectedIndices[index]);
+        if (selectedPages[selectedIndex]) {
+          continue;
+        }
+        selectedPages[selectedIndex] = true;
+        const page = task.pages[selectedIndex];
+        if (page && page.status === "succeeded" && page.image_url) {
+          generatedUrls.push(String(page.image_url));
+        }
+      }
+      if (!generatedUrls.length) {
+        const error = new Error("没有选择可替换的成功图片。");
+        error.statusCode = 400;
+        error.code = "CAROUSEL_OUTPUT_EMPTY";
+        throw error;
+      }
+      let gallery = generatedUrls.slice();
+      if (!replaceAll) {
+        gallery = Array.isArray(task.gallery_snapshot) ? task.gallery_snapshot.slice() : [];
+        const sourceIndices = Array.isArray(task.source_indices) ? task.source_indices.slice() : [];
+        /** Order source positions so removal cannot shift a later target. */
+        sourceIndices.sort(function sortCarouselSourceIndices(first, second) {
+          return Number(first) - Number(second);
+        });
+        const insertIndex = Number(sourceIndices[0] || 0);
+        for (let index = sourceIndices.length - 1; index >= 0; index -= 1) {
+          if (sourceIndices[index] >= 0 && sourceIndices[index] < gallery.length) {
+            gallery.splice(sourceIndices[index], 1);
+          }
+        }
+        for (let index = 0; index < generatedUrls.length; index += 1) {
+          gallery.splice(insertIndex + index, 0, generatedUrls[index]);
+        }
+      }
+      const undoToken = service.repository.createHistorySnapshot(found.record, "carousel_images");
+      found.record.gallery_image_urls = gallery;
+      found.record.main_image_url = gallery[0] || "";
+      await service.images.cacheRecordImages(found.record);
+      found.record.version = Number(found.record.version || 1) + 1;
+      return { product: service.viewModels.normalizeRecord(found.record), undo_token: undoToken };
+    });
+    this.events.publish({
+      resource: "product",
+      action: "carousel_applied",
+      ids: ["temu", String(transaction.result.product.platform_id)],
+      version: transaction.result.product.version
+    }, requestId);
+    return transaction.result;
+  }
+
   /** Persist canonical stock, weight and dimension keys for every saved SKU row. */
   normalizeSavedSkuRows(rows) {
     const target = Array.isArray(rows) ? rows : [];

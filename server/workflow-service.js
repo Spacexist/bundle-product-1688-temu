@@ -80,7 +80,6 @@ function parseWorkflowPromptContent(content) {
   if (sourcePrompts.length !== 4) {
     throw createWorkflowError("Kimi 必须返回四个组货商品。", 502);
   }
-  const fixedRelations = ["相似替代品", "功能互补品", "配套附件", "同风格关联品"];
   const prompts = [];
   for (let index = 0; index < sourcePrompts.length; index += 1) {
     const source = sourcePrompts[index] && typeof sourcePrompts[index] === "object" ? sourcePrompts[index] : {};
@@ -93,7 +92,7 @@ function parseWorkflowPromptContent(content) {
       throw createWorkflowError("Kimi 返回的第 " + (index + 1) + " 个生图提示词为空。", 502);
     }
     prompts.push({
-      relation: fixedRelations[index],
+      relation: String(source.relation || "组货方向 " + (index + 1)).trim(),
       product_name: String(source.product_name || productIntro).trim(),
       product_intro: productIntro,
       prompt: prompt,
@@ -179,6 +178,7 @@ class WorkflowService {
         temu_main_id: key,
         status: "idle",
         selected_image_url: "",
+        custom_prompt: "",
         prompts: [],
         selected_result_index: -1,
         search_url: "",
@@ -218,21 +218,21 @@ class WorkflowService {
   async generatePrompts(input, requestId) {
     const temuMainId = String(input.temu_main_id || "").trim();
     const imageUrl = String(input.image_url || "").trim();
+    const customPrompt = String(input.custom_prompt || "").trim();
     const product = input.product && typeof input.product === "object" ? input.product : {};
-    if (!temuMainId || !imageUrl) {
+    if (!temuMainId || !imageUrl || !customPrompt) {
       throw createWorkflowError("请选择 Temu 商品及分析主图。", 400);
     }
     const config = this.readConfig();
     const kimi = config && config.kimi && typeof config.kimi === "object" ? config.kimi : {};
     const endpoint = this.getKimiEndpoint(config);
     const systemPrompt = String(kimi.workflow_system_prompt || "").trim();
-    const taskPrompt = String(kimi.workflow_prompt || "").trim();
-    if (!endpoint || !kimi.apikey || !systemPrompt || !taskPrompt) {
+    if (!endpoint || !kimi.apikey || !systemPrompt) {
       throw createWorkflowError("server/config.json 未配置智能组货 Kimi 提示词。", 500);
     }
     const sourceImage = await this.readImageSource(imageUrl, requestId);
     const dataUrl = "data:" + sourceImage.mimeType + ";base64," + sourceImage.buffer.toString("base64");
-    const productText = taskPrompt + "\n\nTemu 商品信息：\n" + JSON.stringify(this.compactValue(product, 0), null, 2);
+    const productText = customPrompt + "\n\nTemu 商品信息：\n" + JSON.stringify(this.compactValue(product, 0), null, 2);
     const providerRequestPayload = {
       model: String(kimi.model || "kimi-k2.6"),
       messages: [
@@ -295,6 +295,7 @@ class WorkflowService {
     const task = this.getOrCreateTask(workflow, temuMainId);
     task.status = "prompts_ready";
     task.selected_image_url = imageUrl;
+    task.custom_prompt = customPrompt;
     task.prompts = prompts;
     task.selected_result_index = -1;
     task.search_url = "";

@@ -4,6 +4,7 @@ class ProviderController {
   constructor(options) {
     const settings = options || {};
     this.providers = settings.providers;
+    this.carousel = settings.carousel;
   }
 
   /** Merge the selected Temu and 1688 Listing values through Kimi. */
@@ -38,10 +39,28 @@ class ProviderController {
 
   /** Fuse two images through the configured BeeAPI endpoint. */
   async fuseImages(request, response, next) {
+    const input = request.validatedBody;
+    const taskId = String(input.carousel_task_id || "");
+    const pageIndex = Number(input.carousel_page_index);
     try {
-      const result = await this.providers.editImages(request.validatedBody, "fusion", request.requestId);
+      if (taskId && this.carousel) {
+        const carouselTask = this.carousel.markPageGenerating(taskId, pageIndex);
+        input.image_urls = carouselTask.source_image_urls.slice();
+        input.prompt = String(carouselTask.pages[pageIndex].prompt || "");
+        input.size = String(carouselTask.size || "1k");
+      }
+      const result = await this.providers.editImages(input, "fusion", request.requestId);
+      if (taskId && this.carousel) {
+        const task = this.carousel.markPageSucceeded(taskId, pageIndex, result.image_url);
+        if (!task) {
+          this.carousel.deleteGeneratedImage(result.image_url);
+        }
+      }
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
+      if (taskId && this.carousel) {
+        this.carousel.markPageFailed(taskId, pageIndex, error);
+      }
       next(error);
     }
   }

@@ -20,6 +20,11 @@ function createProviderRouter(options) {
   router.get("/workflow", workflow.getWorkflow.bind(workflow));
   router.get("/workflow/active", workflow.getActive.bind(workflow));
   router.post("/workflow/prompts", validationModule.validate(schemaModule.workflowPromptSchema, "body"), workflow.generatePrompts.bind(workflow));
+  router.get("/workflow/carousel", workflow.getCarouselTasks.bind(workflow));
+  router.get("/workflow/carousel/product/:temuMainId", workflow.getCarouselTask.bind(workflow));
+  router.patch("/workflow/carousel/:taskId", validationModule.validate(schemaModule.carouselPlanUpdateSchema, "body"), workflow.updateCarouselTask.bind(workflow));
+  router.post("/workflow/carousel/:taskId/apply", validationModule.validate(schemaModule.carouselApplySchema, "body"), workflow.applyCarouselTask.bind(workflow));
+  router.delete("/workflow/carousel/:taskId", workflow.deleteCarouselTask.bind(workflow));
   router.post("/workflow/generate", validationModule.validate(schemaModule.workflowGenerateSchema, "body"), workflow.generateImages.bind(workflow));
   router.post("/workflow/complete", validationModule.validate(schemaModule.workflowCompleteSchema, "body"), workflow.complete.bind(workflow));
 

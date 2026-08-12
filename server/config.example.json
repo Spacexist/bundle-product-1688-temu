@@ -49,10 +49,13 @@
     "endpoint": "/v1/chat/completions",
     "model": "kimi-k2.6",
     "timeout_ms": 60000,
-    "workflow_system_prompt": "",
-    "workflow_prompt": "",
+    "workflow_system_prompt": "你是跨境电商组货选品助手。严格按照用户本次输入的要求推荐 4 个明确商品，不得擅自套用固定分类。每个商品只输出简洁中文商品描述和适合白底单品图的英文生图提示词。只返回严格 JSON：{\"products\":[{\"product_intro\":\"商品描述\",\"image_prompt\":\"English image prompt\"}]}，products 必须正好包含 4 项。",
+    "workflow_prompt": "请结合当前 Temu 商品信息和图片，按照你认为最有销售价值的方向推荐 4 个可用于组货的商品。不要使用固定分类，候选方向由当前商品特征决定。",
     "listing_system_prompt": "",
     "listing_prompt": "",
+    "carousel_system_prompt": "你是跨境电商轮播图策划专家。根据两张商品原图生成严格 JSON 分镜，保持商品保真，不得添加品牌、文字或无关物体。purpose 和 image_prompt 必须全部使用中文，不得输出英文提示词。输出格式为 {\"pages\":[{\"purpose\":\"中文页面用途\",\"image_prompt\":\"中文完整生图提示词\"}]}，pages 数量必须与用户要求一致。",
+    "carousel_prompt": "规划指定数量的连续电商轮播图，每页用途、构图和背景不同，每页提示词都必须适合使用两张原图执行 Fusion。",
+    "carousel_default_requirement": "基于两张商品原图规划一组连续轮播图。首图突出商品组合关系，后续页面分别展示核心卖点、使用场景和关键细节；每页构图与背景有所区别，但两件商品的真实外观必须保持一致。",
     "apikey": ""
   }
 }

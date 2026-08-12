@@ -56,6 +56,8 @@ function createPublicServerConfig(config) {
       endpoint: kimi.endpoint || "",
       model: kimi.model || "",
       timeout_ms: kimi.timeout_ms || 60000,
+      workflow_prompt: kimi.workflow_prompt || "",
+      carousel_default_requirement: kimi.carousel_default_requirement || "",
       apikey_masked: maskSecret(kimi.apikey)
     }
   };
