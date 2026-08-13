@@ -1,6 +1,99 @@
-# 自动组货采集器
+# 自动组货 · Temu × 1688 智能工作台
 
-这是 Temu 和 1688 的合并版 Chrome Extension。扩展 cache 保存原始采集批次，Server cache 保存服务端规范化数据；扩展只提供统一 JSON 导出，不提供 Excel 导出。
+<p align="center">
+  <strong>采集、组货、AI 生图、SKU 编辑与妙手素材导出的一体化本地工作台</strong>
+</p>
+
+<p align="center">
+  <img alt="Node.js" src="https://img.shields.io/badge/Node.js-Express-339933?style=flat-square&logo=nodedotjs&logoColor=white">
+  <img alt="Vue" src="https://img.shields.io/badge/Vue-3-42b883?style=flat-square&logo=vuedotjs&logoColor=white">
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-7-646cff?style=flat-square&logo=vite&logoColor=white">
+  <img alt="Platforms" src="https://img.shields.io/badge/Platform-Temu%20%2B%201688-e66b43?style=flat-square">
+  <img alt="API" src="https://img.shields.io/badge/API-v1-526581?style=flat-square">
+</p>
+
+自动组货是面向 Temu 与 1688 商品处理流程的 Chrome Extension + Vue 工作台。扩展负责采集原始商品，Express Server 负责规范化、缓存、图片任务与第三方 API，工作台负责组货编辑、SKU 处理和导出。
+
+## UI 预览
+
+### 双平台商品工作台
+
+在同一个页面中查看 Temu 和 1688 商品，处理主图、轮播图、SKU、价格、库存、规格和详情素材。
+
+![Temu 与 1688 双平台工作台](docs/images/workbench-overview.png)
+
+### AI 智能组货
+
+自定义组货方向，由 Kimi 生成四组中文商品建议和中文生图提示词，并行调用 BeeAPI 生图后继续执行 1688 搜款。
+
+![AI 智能组货与生图界面](docs/images/smart-workflow.png)
+
+## 核心能力
+
+| 模块 | 能力 |
+| --- | --- |
+| 商品采集 | Chrome Extension 采集 Temu、1688 商品与完整 SKU 数据 |
+| 双平台工作台 | 左右对照商品、图片、规格、价格、库存和详情素材 |
+| 智能组货 | 自定义选品方向，固定返回 4 个候选商品，不套用固定分类 |
+| AI 图片 | 支持单图编辑、双图 Fusion、SKU 溶图和连续轮播图 |
+| SKU 编辑 | 拖拽规格、替换图片、复制 SKU1 价格/库存/长宽高 |
+| 任务反馈 | 绿色/黄色任务环区分主图与 SKU 任务，支持完成和失败状态 |
+| 导出 | 统一 JSON、组货映射与 Temu 妙手素材 ZIP |
+| 本地缓存 | 图片内容寻址、历史快照、版本冲突保护和 SSE 实时刷新 |
+
+## 快速开始
+
+### 1. 安装依赖
+
+```powershell
+npm install
+```
+
+### 2. 创建私有配置
+
+```powershell
+Copy-Item server/config.example.json server/config.json
+```
+
+在 `server/config.json` 中填写 BeeAPI 与 Kimi API Key。该文件已被 `.gitignore` 忽略，不会提交到仓库。
+
+### 3. 启动开发环境
+
+```powershell
+npm run dev
+```
+
+- 工作台：`http://127.0.0.1:5173`
+- API：`http://127.0.0.1:3000/api/v1`
+- 请求日志：`http://127.0.0.1:5173/server/logs`
+
+### 4. 配置生图质量
+
+普通生图、单图编辑与 Fusion API 共用 `server/config.json` 中的质量配置：
+
+```json
+{
+  "quality": "medium"
+}
+```
+
+| 值 | 说明 |
+| --- | --- |
+| `medium` | 默认质量，兼顾生成速度与效果 |
+| `high` | 高质量模式，通常需要更长生成时间 |
+
+只有明确填写 `high` 才会启用高质量；缺失、空值或其他值都会回退到 `medium`。配置会统一传给 BeeAPI generations 和 Fusion/edits 请求。
+
+## 项目结构
+
+```text
+自动组货/
+├─ extension/       Chrome 商品采集扩展
+├─ web/             Vue 3 + Vite 工作台
+├─ server/          Express API 与第三方服务编排
+├─ cache/           Server cache、图片与历史快照
+└─ docs/images/     README 项目截图
+```
 
 ## 当前架构
 

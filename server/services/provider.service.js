@@ -472,6 +472,11 @@ class ProviderService {
     return "1k";
   }
 
+  /** Normalize image quality to the two configured provider-supported levels. */
+  normalizeImageQuality(rawQuality) {
+    return String(rawQuality || "medium").trim().toLowerCase() === "high" ? "high" : "medium";
+  }
+
   /** Extract one generated image URL or data URL from an OpenAI-compatible response. */
   readGeneratedImage(candidate, mimeType) {
     if (candidate && typeof candidate === "object") {
@@ -539,11 +544,13 @@ class ProviderService {
       throw createProviderError("图片编辑提示词不能为空。", 400);
     }
     const size = this.normalizeImageEditSize(source.size);
+    const quality = this.normalizeImageQuality(config.quality);
     const form = new FormData();
     const preparedImages = [];
     form.append("model", String(config.model || "gpt-image-2"));
     form.append("prompt", prompt);
     form.append("size", size);
+    form.append("quality", quality);
     form.append("n", "1");
     for (let index = 0; index < imageUrls.length; index += 1) {
       const image = await this.readImageSource(imageUrls[index], requestId);
@@ -555,6 +562,7 @@ class ProviderService {
       model: String(config.model || "gpt-image-2"),
       prompt: prompt,
       size: size,
+      quality: quality,
       images: preparedImages
     }, requestId);
     const controller = new AbortController();
@@ -605,6 +613,7 @@ class ProviderService {
       model: String(config.model || "gpt-image-2"),
       image_url: imageUrl,
       size: size,
+      quality: quality,
       price: prices[size] === undefined ? null : prices[size],
       undo_token: requestMode === "fusion"
         ? this.createUndoToken("image-fusion", { image_urls: imageUrls.slice() })

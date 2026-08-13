@@ -59,6 +59,11 @@ function readWorkflowProviderCode(payload, fallback) {
   return String(providerError.code || source.code || providerError.type || fallback || "UPSTREAM_ERROR");
 }
 
+/** Normalize image quality to medium unless the server explicitly requests high. */
+function normalizeWorkflowImageQuality(rawQuality) {
+  return String(rawQuality || "medium").trim().toLowerCase() === "high" ? "high" : "medium";
+}
+
 /** Parse exactly four structured product suggestions from a Kimi response. */
 function parseWorkflowPromptContent(content) {
   let text = String(content || "").trim();
@@ -320,6 +325,7 @@ class WorkflowService {
       model: String(config.model || "gpt-image-2"),
       prompt: String(prompt || "").trim(),
       size: String(config.generation_size || "1024x1024"),
+      quality: normalizeWorkflowImageQuality(config.quality),
       n: 1
     };
     this.writeLog("OUTBOUND", "BeeAPI generation POST " + endpoint, providerRequestPayload, requestId);

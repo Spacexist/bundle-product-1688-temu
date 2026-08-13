@@ -45,6 +45,7 @@ function createPublicServerConfig(config) {
       endpoint: image.endpoint || "",
       generation_endpoint: image.generation_endpoint || "",
       generation_size: image.generation_size || "1024x1024",
+      quality: String(image.quality || "medium").toLowerCase() === "high" ? "high" : "medium",
       model: image.model || "",
       price: image.price || {},
       edit_prompt: image.edit_prompt || "",
