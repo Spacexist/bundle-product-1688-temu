@@ -188,6 +188,71 @@ class ProductService {
     return transaction.result;
   }
 
+  /** Copy SKU1 price, stock or dimensions to every remaining SKU and persist once. */
+  async copyFirstSkuAttribute(input, requestId) {
+    const service = this;
+    const transaction = await this.repository.mutate(async function mutateFirstSkuAttribute(payload) {
+      const found = service.findRecord(payload.records, input.platform, input.platform_id);
+      if (!found) {
+        const missingError = new Error("商品不存在或已被删除。");
+        missingError.statusCode = 404;
+        throw missingError;
+      }
+      const currentVersion = Number(found.record.version || 1);
+      if (Number(input.version) !== currentVersion) {
+        const conflictError = new Error("商品已被其他操作更新，请刷新后重试。");
+        conflictError.statusCode = 409;
+        conflictError.code = "PRODUCT_VERSION_CONFLICT";
+        conflictError.details = {
+          expected_version: Number(input.version),
+          current_version: currentVersion,
+          product: service.viewModels.normalizeRecord(found.record)
+        };
+        throw conflictError;
+      }
+      const rows = service.getStoredSkuRows(found.record, input.platform);
+      if (!rows.length) {
+        const emptyError = new Error("当前商品没有可复制的 SKU1。");
+        emptyError.statusCode = 400;
+        throw emptyError;
+      }
+      if (!Array.isArray(found.record.sku) || !found.record.sku.length) {
+        found.record.sku = [];
+        for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+          found.record.sku.push(service.copySkuRow(rows[rowIndex]));
+        }
+      }
+      const source = found.record.sku[0] || {};
+      const undoToken = service.repository.createHistorySnapshot(found.record, "copy_first_sku_attribute");
+      for (let index = 1; index < found.record.sku.length; index += 1) {
+        const target = found.record.sku[index] || {};
+        if (input.attribute === "price") {
+          target.sku_price = source.sku_price;
+        } else if (input.attribute === "stock") {
+          target.sku_stock = source.sku_stock;
+        } else {
+          target.sku_length = source.sku_length;
+          target.sku_width = source.sku_width;
+          target.sku_height = source.sku_height;
+        }
+        found.record.sku[index] = target;
+      }
+      service.normalizeSavedSkuRows(found.record.sku);
+      found.record.version = currentVersion + 1;
+      return {
+        product: service.viewModels.normalizeRecord(found.record),
+        undo_token: undoToken
+      };
+    });
+    this.events.publish({
+      resource: "product",
+      action: "first_sku_attribute_copied",
+      ids: [String(input.platform), String(input.platform_id), String(input.attribute)],
+      version: transaction.result.product.version
+    }, requestId);
+    return transaction.result;
+  }
+
   /** Return the raw SKU rows retained by one cached product. */
   getStoredSkuRows(record, platform) {
     const target = record && typeof record === "object" ? record : {};

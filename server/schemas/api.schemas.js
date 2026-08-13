@@ -53,6 +53,11 @@ const replaceSkuSchema = z.object({
   replace_all_skus: z.boolean().optional()
 });
 
+const copyFirstSkuAttributeSchema = z.object({
+  version: z.number().int().positive(),
+  attribute: z.enum(["price", "stock", "dimensions"])
+});
+
 const dollarTransferSchema = z.object({
   amount: z.union([z.string(), z.number()]),
   from: z.string().optional(),
@@ -133,6 +138,7 @@ module.exports = {
   imageSearchSchema: imageSearchSchema,
   dollarTransferSchema: dollarTransferSchema,
   replaceSkuSchema: replaceSkuSchema,
+  copyFirstSkuAttributeSchema: copyFirstSkuAttributeSchema,
   listingMergeSchema: listingMergeSchema,
   operationUndoSchema: operationUndoSchema,
   imageEditSchema: imageEditSchema,

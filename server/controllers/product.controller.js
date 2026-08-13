@@ -71,6 +71,19 @@ class ProductController {
     }
   }
 
+  /** Copy one editable SKU1 attribute to all SKU rows. */
+  async copyFirstSkuAttribute(request, response, next) {
+    try {
+      const input = request.validatedBody;
+      input.platform = request.params.platform;
+      input.platform_id = request.params.platformId;
+      const result = await this.products.copyFirstSkuAttribute(input, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Restore one previous module snapshot. */
   async undo(request, response, next) {
     try {

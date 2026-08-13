@@ -91,6 +91,9 @@ function parseWorkflowPromptContent(content) {
     if (!prompt) {
       throw createWorkflowError("Kimi 返回的第 " + (index + 1) + " 个生图提示词为空。", 502);
     }
+    if (!/[\u3400-\u9fff]/.test(prompt)) {
+      throw createWorkflowError("Kimi 返回的第 " + (index + 1) + " 个生图提示词不是中文，请重新生成。", 502, "WORKFLOW_PROMPT_LANGUAGE_INVALID");
+    }
     prompts.push({
       relation: String(source.relation || "组货方向 " + (index + 1)).trim(),
       product_name: String(source.product_name || productIntro).trim(),

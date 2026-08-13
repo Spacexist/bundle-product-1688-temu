@@ -37,6 +37,11 @@ function createApiRouter(options) {
     products.saveModule.bind(products)
   );
   router.post("/replaceSku", validationModule.validate(schemaModule.replaceSkuSchema, "body"), products.replaceSku.bind(products));
+  router.post(
+    "/products/:platform/:platformId/skus/copy-first",
+    validationModule.validate(schemaModule.copyFirstSkuAttributeSchema, "body"),
+    products.copyFirstSkuAttribute.bind(products)
+  );
   router.post("/products/undo", validationModule.validate(schemaModule.undoSchema, "body"), products.undo.bind(products));
   router.get("/events", connectEvents);
   router.get("/config", config.getPublicConfig.bind(config));
