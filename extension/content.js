@@ -5,6 +5,8 @@ var unifiedBindingModalId = "unified-temu-binding-modal";
 var unifiedTemuProductPattern = /(?:^|-)g-\d+\.html(?:$|[?#])/i;
 var unified1688ProductPattern = /\/offer\/\d+\.html/i;
 var unifiedSelectedTemuRecord = null;
+var unifiedContentScriptVersion = "3.1.1";
+var unifiedContentScriptToken = unifiedContentScriptVersion + "-" + String(Date.now()) + "-" + String(Math.random());
 var unifiedCollectionStatusLabels = {
   idle: "准备采集",
   collecting: "采集中",
@@ -74,12 +76,18 @@ function renderUnifiedCollectorButton(button, status, message) {
 
 /** Create one floating extension action button for the current product page. */
 function createUnifiedActionButton(buttonId, platform, action) {
+  var staleButton = document.getElementById(buttonId);
+  if (staleButton) {
+    staleButton.remove();
+  }
   var button = document.createElement("button");
   button.id = buttonId;
   button.type = "button";
   button.dataset.platform = platform;
   button.dataset.action = action;
-  button.addEventListener("click", handleUnifiedCollectorClick);
+  button.dataset.extensionVersion = unifiedContentScriptVersion;
+  button.dataset.extensionToken = unifiedContentScriptToken;
+  button.addEventListener("click", handleUnifiedCollectorClick, true);
   renderUnifiedCollectorButton(button, "idle", "点击开始");
   document.documentElement.appendChild(button);
   return button;
@@ -103,6 +111,14 @@ function initializeUnifiedCollectorButton() {
   var platform = getCurrentUnifiedPlatform();
   var oldButton = document.getElementById(unifiedCollectorButtonId);
   var oldReplacerButton = document.getElementById(unifiedSkuReplacerButtonId);
+  if (oldButton && oldButton.dataset.extensionToken !== unifiedContentScriptToken) {
+    oldButton.remove();
+    oldButton = null;
+  }
+  if (oldReplacerButton && oldReplacerButton.dataset.extensionToken !== unifiedContentScriptToken) {
+    oldReplacerButton.remove();
+    oldReplacerButton = null;
+  }
   if (!platform) {
     if (oldButton) {
       oldButton.remove();
@@ -137,6 +153,11 @@ function initializeUnifiedCollectorButton() {
 
 /** Send the current platform collection request to the background worker. */
 function handleUnifiedCollectorClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  if (typeof event.stopImmediatePropagation === "function") {
+    event.stopImmediatePropagation();
+  }
   var button = event.currentTarget;
   var platform = button.dataset.platform || getCurrentUnifiedPlatform();
   var targetTemuMainId = platform === "1688" && unifiedSelectedTemuRecord
@@ -162,7 +183,10 @@ function handleUnifiedCollectorClick(event) {
   }, function handleUnifiedResponse(response) {
     var lastError = chrome.runtime.lastError;
     if (lastError || !response || !response.ok) {
-    renderUnifiedCollectorButton(button, "failed", lastError ? lastError.message : response && response.error ? response.error : actionType === "replaceUnifiedSku" ? "替换失败" : "采集失败");
+      var failureMessage = lastError && /context invalidated|receiving end does not exist/i.test(String(lastError.message || ""))
+        ? "扩展已更新，请刷新本页"
+        : lastError ? lastError.message : response && response.error ? response.error : actionType === "replaceUnifiedSku" ? "替换失败" : "采集失败";
+      renderUnifiedCollectorButton(button, "failed", failureMessage);
       window.setTimeout(resetUnifiedCollectorButton, 2600, button);
       return;
     }
@@ -177,6 +201,9 @@ function handleUnifiedCollectorClick(event) {
       ? "已替换 " + String(responseData.replaced_sku_count || 0) + " 条 Temu SKU"
       : response.workflow_completed || responseData.bound_temu ? "已绑定 Temu" : response.replaced ? "重复商品已更新" : "已写入 cache";
     renderUnifiedCollectorButton(button, "completed", completedMessage);
+    if (platform === "1688" && actionType === "collectUnifiedProduct" && responseData.bound_temu) {
+      initializeUnifiedBindingPanel();
+    }
     window.setTimeout(resetUnifiedCollectorButton, 2400, button);
   });
 }
@@ -240,8 +267,11 @@ function handleUnifiedBindingImageError(event) {
 
 /** Apply the local hash image first and retain the CDN source as fallback. */
 function applyUnifiedBindingImageSource(image, record) {
-  var primaryUrl = getUnifiedBindingImage(record);
+  var cachedUrl = getUnifiedBindingImage(record);
   var fallbackUrl = String(record && record.cdn_image_url || "");
+  var primaryUrl = location.protocol === "https:" && /^http:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(cachedUrl)
+    ? fallbackUrl
+    : cachedUrl;
   image.dataset.fallbackSrc = fallbackUrl && fallbackUrl !== primaryUrl ? fallbackUrl : "";
   image.src = primaryUrl || fallbackUrl;
   image.addEventListener("error", handleUnifiedBindingImageError);
@@ -315,7 +345,11 @@ function confirmUnifiedTemuBinding(record, button) {
       return;
     }
     button.textContent = "绑定成功，正在返回工作台";
-    window.setTimeout(closeUnifiedBindingModal, 900);
+    window.setTimeout(function refreshUnifiedBindingAfterSuccess() {
+      closeUnifiedBindingModal();
+      initializeUnifiedBindingPanel();
+      initializeUnifiedCollectorButton();
+    }, 500);
   });
 }
 

@@ -222,6 +222,34 @@ class CollectionService {
           targetError.statusCode = 404;
           throw targetError;
         }
+        const previousAliPlatformId = String(targetTemu.bound_1688_platform_id || "");
+        const previousAliRecord = previousAliPlatformId
+          ? service.findByPlatformId(records, "1688", previousAliPlatformId)
+          : null;
+        if (previousAliRecord && previousAliRecord !== record) {
+          const incomingIndex = records.indexOf(record);
+          previousAliRecord.product_id = record.product_id;
+          previousAliRecord.product_name = record.product_name;
+          previousAliRecord.source_data = source;
+          previousAliRecord.sku = Array.isArray(source.skuRows) ? source.skuRows : [];
+          previousAliRecord.original_currency = record.original_currency || "CNY";
+          previousAliRecord.price_currency = record.price_currency || "CNY";
+          previousAliRecord.price_update_time = record.price_update_time || "";
+          delete previousAliRecord.main_image_url;
+          delete previousAliRecord.product_category;
+          delete previousAliRecord.category_ids;
+          delete previousAliRecord.gallery_image_urls;
+          delete previousAliRecord.detail_image_urls;
+          delete previousAliRecord.detail_description_url;
+          delete previousAliRecord.shop_name;
+          delete previousAliRecord.attributes_json;
+          delete previousAliRecord.listing_json;
+          previousAliRecord.version = Number(previousAliRecord.version || 1) + 1;
+          record = previousAliRecord;
+          if (incomingIndex >= 0) {
+            records.splice(incomingIndex, 1);
+          }
+        }
         temuRecord = service.bindOneToOne(records, record, targetTemu.platform_id);
       }
       return {

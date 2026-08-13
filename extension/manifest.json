@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "自动组货采集器",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "统一采集 Temu 和 1688 商品、SKU、图片与店铺数据，分别保存到扩展 cache 和 Server cache。",
   "permissions": [
     "activeTab",

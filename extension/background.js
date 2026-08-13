@@ -3,6 +3,34 @@ importScripts("collector-temu.js", "collector-1688.js");
 var unifiedConfigPromise = null;
 var extensionCacheStorageKey = "autoPackingExtensionCache";
 
+/** Ignore one unsupported page injection while refreshing other open product tabs. */
+function ignoreUnifiedInjectionError() {
+  return null;
+}
+
+/** Reinject the current content UI into already-open supported product tabs after an extension update. */
+function reinjectUnifiedContentScripts() {
+  chrome.tabs.query({ url: ["https://temu.com/*", "https://*.temu.com/*", "https://detail.1688.com/offer/*"] }, function handleSupportedTabs(tabs) {
+    var lastError = chrome.runtime.lastError;
+    if (lastError || !Array.isArray(tabs)) {
+      return;
+    }
+    for (var index = 0; index < tabs.length; index += 1) {
+      var tabId = Number(tabs[index] && tabs[index].id || 0);
+      if (!tabId) {
+        continue;
+      }
+      chrome.scripting.insertCSS({ target: { tabId: tabId }, files: ["content.css"] }).catch(ignoreUnifiedInjectionError);
+      chrome.scripting.executeScript({ target: { tabId: tabId }, files: ["content.js"] }).catch(ignoreUnifiedInjectionError);
+    }
+  });
+}
+
+/** Refresh stale page controls whenever the extension is installed or reloaded. */
+chrome.runtime.onInstalled.addListener(function handleUnifiedExtensionInstalled() {
+  reinjectUnifiedContentScripts();
+});
+
 /** Read extension API configuration once from the packaged config file. */
 function getUnifiedExtensionConfig() {
   if (!unifiedConfigPromise) {
