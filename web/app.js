@@ -291,7 +291,7 @@ const TaskStatusIndicator = {
 const app = createApp({
   template: `
     <div class="shell">
-      <header class="topbar">
+      <header class="topbar" :class="{ 'is-collapsed': topbarCollapsed }">
         <div class="toolbar">
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'smart' }" type="button" @click="changeWorkspaceMode('smart')">组货模式</button>
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'realtime' }" type="button" @click="changeWorkspaceMode('realtime')">工作台</button>
@@ -328,15 +328,15 @@ const app = createApp({
           <section v-if="selectedTemuRecord" class="panel platform-render temu-render">
             <div class="render-heading"><div><span class="platform-label temu-label">Temu</span><span v-if="hasOpenableImageTask(selectedTemuRecord) || hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" class="task-status-indicators heading-task-status-indicators"><task-status-indicator v-if="hasOpenableImageTask(selectedTemuRecord)" tone="green" :complete="isImageTaskComplete(selectedTemuRecord)" :error="hasImageTaskError(selectedTemuRecord)" :label="hasImageTaskError(selectedTemuRecord) ? '打开失败的图片任务' : '打开图片任务'" @activate="openRetainedImageEditor(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" tone="yellow" :complete="hasCompletedSkuBlendTask(selectedTemuRecord)" :error="hasSkuBlendError(selectedTemuRecord)" :label="hasSkuBlendError(selectedTemuRecord) ? '打开失败的 SKU 溶图任务' : '打开 SKU 溶图任务'" @activate="openSkuBlendTask(selectedTemuRecord)"></task-status-indicator></span><div class="render-title-row"><input class="render-title-input" type="text" v-model="selectedTemuRecord.product_name" @change="saveProductModule(selectedTemuRecord, 'basic')" aria-label="Temu 商品名称"><button v-if="workspaceMode === 'realtime'" class="listing-merge-button glass-action-button" type="button" :disabled="listingMergeBusy || !selected1688Record" @click="mergeSelectedListings">{{ listingMergeBusy ? '生成中…' : 'AI Listing' }}</button><button v-if="workspaceMode === 'smart'" class="workflow-direction-button subsku-editor glass-action-button" type="button" :disabled="workflowPromptBusy || !workflowSelectedImageUrl" @click="generateWorkflowPrompts">{{ workflowPromptBusy ? 'Kimi 分析中…' : '生成组货方向' }}</button><button v-if="hasListingUndo(selectedTemuRecord)" class="operation-undo-button" type="button" :disabled="listingUndoBusy" @click="undoSelectedListing">{{ listingUndoBusy ? '返回中…' : '返回' }}</button><button v-if="hasCarouselUndo(selectedTemuRecord)" class="operation-undo-button" type="button" @click="undoCarouselReplacement(selectedTemuRecord)">恢复轮播替换</button></div><input class="render-category-input" type="text" v-model="selectedTemuRecord.product_category" @change="saveProductModule(selectedTemuRecord, 'basic')" placeholder="未提供商品分类" aria-label="Temu 商品分类"></div></div>
             <div class="render-gallery">
-               <div class="gallery-thumbs" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord)">
-                <div v-for="(image, imageIndex) in galleryImages(selectedTemuRecord)" :key="image" class="thumb-item" draggable="true" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', imageIndex), 'is-ai-selected': isTemuGalleryEditSelected(selectedTemuRecord, imageIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, imageIndex)">
+               <div class="gallery-thumbs" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord)">
+                <div v-for="(image, imageIndex) in galleryImages(selectedTemuRecord)" :key="image" class="thumb-item" draggable="true" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', imageIndex), 'is-image-drop-target': isImageDropTarget('temu-gallery', imageIndex), 'is-ai-selected': isTemuGalleryEditSelected(selectedTemuRecord, imageIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, imageIndex)">
                   <button class="thumb" :class="{ active: selectedTemuGalleryIndex === imageIndex }" type="button" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @click="handleTemuGallerySelection($event, selectedTemuRecord, imageIndex)" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, imageIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品图片" draggable="false"><span v-if="isTemuGalleryEditSelected(selectedTemuRecord, imageIndex)" class="gallery-ai-check">✓</span></button>
                   <button class="image-delete-button" type="button" aria-label="删除图片" @click.stop="removeGalleryImage(selectedTemuRecord, imageIndex, 'temu')">×</button>
                 </div>
                 <button v-if="galleryEditSelection.length === 2" class="gallery-ai-edit-button" type="button" @click.stop="openGalleryImageEditor(selectedTemuRecord)">AI 编辑 2 张</button>
-                <label class="image-upload-button">+ 上传<input type="file" accept="image/*" multiple @change="handleGalleryUpload($event, selectedTemuRecord, 'temu')"></label>
+                <label class="image-upload-button" title="点击上传本地图片，悬停选择 SKU 图片" @mouseenter="openGallerySkuPicker($event, selectedTemuRecord)" @mouseleave="scheduleGallerySkuPickerClose">+ 上传<input type="file" accept="image/*" multiple @change="handleGalleryUpload($event, selectedTemuRecord, 'temu')"></label>
               </div>
-               <div class="gallery-main" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', 0) }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, 0)"><img v-if="currentImage(selectedTemuRecord, 'temu')" :key="currentImage(selectedTemuRecord, 'temu')" :src="imageSource(currentImage(selectedTemuRecord, 'temu'))" referrerpolicy="no-referrer" alt="Temu 主图" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', selectedTemuGalleryIndex)" @dragend="endImageReorder" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, selectedTemuGalleryIndex)"><span v-else class="muted">暂无图片</span><button v-if="currentImage(selectedTemuRecord, 'temu')" class="gallery-image-search-button" type="button" :disabled="imageSearchBusy" title="用当前图片搜索 1688" aria-label="用当前图片搜索 1688" @click.stop="searchTemuImageOn1688(selectedTemuRecord, currentImage(selectedTemuRecord, 'temu'))"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+               <div class="gallery-main" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', 0), 'is-image-drop-target': isImageDropTarget('temu-gallery', 0) }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', 0)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, 0)"><img v-if="currentImage(selectedTemuRecord, 'temu')" :key="currentImage(selectedTemuRecord, 'temu')" :src="imageSource(currentImage(selectedTemuRecord, 'temu'))" referrerpolicy="no-referrer" alt="Temu 主图" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', selectedTemuGalleryIndex)" @dragend="endImageReorder" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, selectedTemuGalleryIndex)"><span v-else class="muted">暂无图片</span><button v-if="currentImage(selectedTemuRecord, 'temu')" class="gallery-image-search-button" type="button" :disabled="imageSearchBusy" title="用当前图片搜索 1688" aria-label="用当前图片搜索 1688" @click.stop="searchTemuImageOn1688(selectedTemuRecord, currentImage(selectedTemuRecord, 'temu'))"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
             </div>
              <div class="sku-panel sku-spec-panel" :class="{ 'is-drop-mode': dragSkuReference }" @change="saveProductModule(selectedTemuRecord, 'skus')" @dragover.prevent @drop.prevent="ignoreNativeDrop">
                 <div class="sku-spec-groups">
@@ -353,7 +353,7 @@ const app = createApp({
                  <table class="sku-table sku-spec-table"><thead><tr><th>#</th><th>预览图</th><th v-for="group in skuSpecGroups(selectedTemuRecord)" :key="group.name" :class="{ 'is-drop-target': isAliDropTarget('group', group.name) }" @dragenter.prevent.stop="setAliDropTarget('group', group.name)" @dragover.prevent.stop="setAliDropTarget('group', group.name)" @drop.prevent.stop="dropAliSkuToTemuGroup($event, selectedTemuRecord, group.name)">{{ group.name }}</th><th><span class="sku-copy-first-heading">价格<button class="sku-copy-first-button" type="button" title="用 SKU1 的价格覆盖全部 SKU" aria-label="用 SKU1 的价格覆盖全部 SKU" :disabled="isCopyFirstSkuAttributeBusy(selectedTemuRecord, 'price')" @click.stop="copyFirstSkuAttribute(selectedTemuRecord, 'price')"></button></span></th><th><span class="sku-copy-first-heading">库存<button class="sku-copy-first-button" type="button" title="用 SKU1 的库存覆盖全部 SKU" aria-label="用 SKU1 的库存覆盖全部 SKU" :disabled="isCopyFirstSkuAttributeBusy(selectedTemuRecord, 'stock')" @click.stop="copyFirstSkuAttribute(selectedTemuRecord, 'stock')"></button></span></th><th class="sku-dimensions-column"><span class="sku-copy-first-heading">长宽高<button class="sku-copy-first-button" type="button" title="用 SKU1 的长宽高覆盖全部 SKU" aria-label="用 SKU1 的长宽高覆盖全部 SKU" :disabled="isCopyFirstSkuAttributeBusy(selectedTemuRecord, 'dimensions')" @click.stop="copyFirstSkuAttribute(selectedTemuRecord, 'dimensions')"></button></span></th></tr></thead><tbody>
                  <tr v-for="(sku, skuIndex) in selectedTemuRecord.sku" :key="getSkuKey(selectedTemuRecord, sku, skuIndex)">
                    <td>{{ skuIndex + 1 }}</td>
-                  <td class="sku-image-cell" :class="{ 'is-image-drop-target': isImageDropTarget('temu-sku', skuIndex) }" @dragenter.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @dragover.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @drop.prevent.stop="dropAliImageToTemuSku($event, selectedTemuRecord, sku, skuIndex)"><div class="sku-images-editor"><div v-for="(image, imageIndex) in skuImageUrls(sku)" :key="imageIndex" class="sku-image-item"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="SKU 图片" @click.stop="openImagePreview(image)"><button class="image-delete-button" type="button" aria-label="删除 SKU 图片" @click="removeSkuImageAt(selectedTemuRecord, sku, imageIndex)">×</button></div><label v-if="!skuImageUrls(sku).length" class="sku-image-empty-upload" title="点击上传本地图片，悬停选择主图" @mouseenter="openSkuImagePicker($event, selectedTemuRecord, sku, skuIndex)" @mouseleave="scheduleSkuImagePickerClose">+<input type="file" accept="image/*" @change.stop="handleSkuImageUpload($event, selectedTemuRecord, sku)"></label><div v-if="skuImageUrls(sku).length === 2 || hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-image-actions"><button v-if="skuImageUrls(sku).length === 2" class="sku-blend-button" type="button" :disabled="isSkuBlendBusy(selectedTemuRecord, sku, skuIndex)" title="将当前 SKU 的两张图片发送到 BeeAPI 并替换为返回图片" @click.stop="blendSkuImages(selectedTemuRecord, sku, skuIndex)">{{ isSkuBlendBusy(selectedTemuRecord, sku, skuIndex) ? '生成中…' : '溶图' }}</button><button v-if="hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-fusion-undo-button" type="button" :disabled="isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex)" @click.stop="undoSkuImageFusion(selectedTemuRecord, sku, skuIndex)">{{ isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex) ? '恢复中…' : '恢复原图' }}</button></div></div></td>
+                  <td class="sku-image-cell" :class="{ 'is-image-drop-target': isImageDropTarget('temu-sku', skuIndex) }" @dragenter.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @dragover.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @drop.prevent.stop="dropAliImageToTemuSku($event, selectedTemuRecord, sku, skuIndex)"><div class="sku-images-editor"><div v-for="(image, imageIndex) in skuImageUrls(sku)" :key="imageIndex" class="sku-image-item"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="SKU 图片" draggable="true" title="拖到上方主图列表" @dragstart.stop="startSkuImageDrag($event, selectedTemuRecord, image, skuIndex, imageIndex)" @dragend="endAliImageDrag" @click.stop="openImagePreview(image)"><button class="image-delete-button" type="button" aria-label="删除 SKU 图片" @click="removeSkuImageAt(selectedTemuRecord, sku, imageIndex)">×</button></div><label v-if="!skuImageUrls(sku).length" class="sku-image-empty-upload" title="点击上传本地图片，悬停选择主图" @mouseenter="openSkuImagePicker($event, selectedTemuRecord, sku, skuIndex)" @mouseleave="scheduleSkuImagePickerClose">+<input type="file" accept="image/*" @change.stop="handleSkuImageUpload($event, selectedTemuRecord, sku)"></label><div v-if="skuImageUrls(sku).length === 2 || hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-image-actions"><button v-if="skuImageUrls(sku).length === 2" class="sku-blend-button" type="button" :disabled="isSkuBlendBusy(selectedTemuRecord, sku, skuIndex)" title="将当前 SKU 的两张图片发送到 BeeAPI 并替换为返回图片" @click.stop="blendSkuImages(selectedTemuRecord, sku, skuIndex)">{{ isSkuBlendBusy(selectedTemuRecord, sku, skuIndex) ? '生成中…' : '溶图' }}</button><button v-if="hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-fusion-undo-button" type="button" :disabled="isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex)" @click.stop="undoSkuImageFusion(selectedTemuRecord, sku, skuIndex)">{{ isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex) ? '恢复中…' : '恢复原图' }}</button></div></div></td>
                     <td v-for="(group, groupIndex) in skuSpecGroups(selectedTemuRecord)" :key="group.name" class="sku-spec-cell" :class="{ 'is-drop-target': isTemuSkuCellDropTarget(skuIndex, group.name) }" @dragenter.prevent.stop="setTemuSkuCellDropTarget(skuIndex, group.name)" @dragover.prevent.stop="setTemuSkuCellDropTarget(skuIndex, group.name)" @drop.prevent.stop="dropAliSkuToTemuSkuCell($event, selectedTemuRecord, sku, skuIndex, group.name)"><input class="sku-edit-input" type="text" :value="skuSpecValue(sku, groupIndex)" @input="updateSkuSpecValue(sku, groupIndex, $event.target.value)" :aria-label="group.name"></td>
                     <td><input class="sku-edit-input" type="text" inputmode="decimal" v-model="sku.sku_price" aria-label="SKU 价格"></td><td><input class="sku-edit-input" type="text" inputmode="numeric" v-model="sku.sku_stock" aria-label="SKU 库存"></td><td class="sku-dimensions-cell"><div class="sku-dimension-bubbles" aria-label="SKU 尺寸"><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_length" aria-label="SKU 长度"><span class="sku-dimension-separator">:</span><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_width" aria-label="SKU 宽度"><span class="sku-dimension-separator">:</span><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_height" aria-label="SKU 高度"></div></td>
                  </tr>
@@ -410,6 +410,12 @@ const app = createApp({
           <div v-if="skuImagePickerImages().length" class="sku-image-picker-grid"><button v-for="(image, imageIndex) in skuImagePickerImages()" :key="imageIndex" type="button" :title="'使用主图 ' + (imageIndex + 1)" @click="selectSkuImageFromGallery(image)"><img :src="imageSource(image)" referrerpolicy="no-referrer" :alt="'主图 ' + (imageIndex + 1)"></button></div>
           <div v-else class="sku-image-picker-empty">当前商品暂无主图。</div>
         </aside>
+        <aside v-if="gallerySkuPickerOpen" class="subsku-editor sku-image-picker-bubble gallery-sku-picker-bubble" :style="gallerySkuPickerStyle()" aria-label="选择 SKU 图片加入主图" @mouseenter="cancelGallerySkuPickerClose" @mouseleave="scheduleGallerySkuPickerClose">
+          <div class="sku-image-picker-heading"><strong>选择 SKU 图片</strong><span>点击加入 Temu 主图</span></div>
+          <section v-if="gallerySkuPickerImages('temu').length" class="gallery-sku-picker-group"><strong>Temu SKU</strong><div class="sku-image-picker-grid"><button v-for="(image, imageIndex) in gallerySkuPickerImages('temu')" :key="'temu-' + imageIndex" type="button" :title="'加入 Temu SKU 图片 ' + (imageIndex + 1)" @click="selectGalleryImageFromSku(image)"><img :src="imageSource(image)" referrerpolicy="no-referrer" :alt="'Temu SKU 图片 ' + (imageIndex + 1)"></button></div></section>
+          <section v-if="gallerySkuPickerImages('1688').length" class="gallery-sku-picker-group"><strong>1688 SKU</strong><div class="sku-image-picker-grid"><button v-for="(image, imageIndex) in gallerySkuPickerImages('1688')" :key="'1688-' + imageIndex" type="button" :title="'加入 1688 SKU 图片 ' + (imageIndex + 1)" @click="selectGalleryImageFromSku(image)"><img :src="imageSource(image)" referrerpolicy="no-referrer" :alt="'1688 SKU 图片 ' + (imageIndex + 1)"></button></div></section>
+          <div v-if="!gallerySkuPickerImages('temu').length && !gallerySkuPickerImages('1688').length" class="sku-image-picker-empty">当前 Temu 和 1688 商品暂无 SKU 图片。</div>
+        </aside>
         <div v-if="workflowPromptDialogOpen" class="image-editor-modal">
           <section class="image-editor-dialog workflow-prompt-dialog" role="dialog" aria-modal="true" aria-label="自定义组货方向提示词">
             <header class="image-editor-header"><div><strong>自定义组货方向</strong><span>Kimi 将按照本次要求推荐 4 个商品</span></div><button type="button" aria-label="关闭组货提示词" @click="closeWorkflowPromptDialog">×</button></header>
@@ -428,7 +434,7 @@ const app = createApp({
                 <button class="carousel-slide-arrow previous" type="button" :disabled="imageCarouselPageIndex <= 0" aria-label="上一张轮播图" @click="changeCarouselPage(-1)">‹</button>
                 <article class="carousel-result-card">
                   <img v-if="currentCarouselPage().image_url" :src="imageSource(currentCarouselPage().image_url)" :alt="'轮播图 ' + (imageCarouselPageIndex + 1)">
-                  <div v-else class="carousel-result-placeholder"><span>{{ currentCarouselPage().status === 'generating' ? '生成中…' : currentCarouselPage().status === 'failed' ? '[' + currentCarouselPage().error_code + '] ' + currentCarouselPage().error : '等待生成' }}</span><button v-if="currentCarouselPage().status === 'failed'" type="button" @click="retryCarouselPage(imageCarouselPageIndex)">重试</button></div>
+                  <div v-else class="carousel-result-placeholder"><span>{{ currentCarouselPage().status === 'generating' ? '生成中…' : currentCarouselPage().status === 'failed' ? '[' + currentCarouselPage().error_code + '] ' + currentCarouselPage().error : '等待生成' }}</span><button v-if="currentCarouselPage().status === 'failed'" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex)" @click="retryCarouselPage(imageCarouselPageIndex)">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '重试中…' : '重试' }}</button></div>
                 </article>
                 <button class="carousel-slide-arrow next" type="button" :disabled="imageCarouselPageIndex >= imageCarouselTask.pages.length - 1" aria-label="下一张轮播图" @click="changeCarouselPage(1)">›</button>
                 <div class="carousel-slide-meta"><span class="carousel-slide-counter">{{ imageCarouselPageIndex + 1 }} / {{ imageCarouselTask.pages.length }}</span><label v-if="currentCarouselPage().status === 'succeeded'" class="carousel-result-select"><input type="checkbox" v-model="currentCarouselPage().selected">选用当前图</label></div>
@@ -443,12 +449,12 @@ const app = createApp({
             </div>
             <label v-if="!imageCarouselTask" class="image-editor-prompt"><span>提示词</span><textarea v-model="imageEditorPrompt" rows="4" aria-label="图片编辑提示词"></textarea></label>
             <div v-if="imageCarouselTask && imageCarouselTask.pages && imageCarouselTask.pages.length" class="carousel-page-editor">
-              <label class="image-editor-prompt"><span>分镜 {{ imageCarouselPageIndex + 1 }} / {{ imageCarouselTask.pages.length }}</span><input type="text" v-model="currentCarouselPage().purpose" :readonly="imageCarouselTask.status !== 'awaiting_review'" placeholder="页面用途（中文）"></label>
-              <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="imageCarouselTask.status !== 'awaiting_review'" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
+              <label class="image-editor-prompt"><span>分镜 {{ imageCarouselPageIndex + 1 }} / {{ imageCarouselTask.pages.length }}</span><input type="text" v-model="currentCarouselPage().purpose" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" placeholder="页面用途（中文）"></label>
+              <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
               <div v-if="imageCarouselTask.status === 'awaiting_review'" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions"><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="imageCarouselTask" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button class="image-editor-generate" type="button" :disabled="imageEditorBusy || imageCarouselGenerationBusy || !imageEditorPrompt.trim()" @click="submitGalleryImageEdit">{{ imageEditorBusy ? '规划中…' : imageCarouselTask && imageCarouselTask.status === 'awaiting_review' ? '确认分镜并生成' : imageCarouselGenerationBusy ? '生成中…' : imageEditorGeneratedUrl || imageCarouselTask ? '重新生成' : '开始生成' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status === 'generated' && isImageTaskComplete(selectedTemuRecord)" class="image-editor-main-apply" type="button" :disabled="imageCarouselGenerationBusy" title="使用全部成功分镜替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button class="image-editor-confirm" type="button" :disabled="imageEditorBusy || imageCarouselGenerationBusy || (imageCarouselTask ? successfulCarouselPageCount() < 1 : !imageEditorGeneratedUrl)" @click="confirmGalleryImageEdit">确认替换</button></footer>
+            <footer class="image-editor-actions"><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="imageCarouselTask" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="!imageCarouselTask || imageCarouselTask.status === 'awaiting_review'" class="image-editor-generate" type="button" :disabled="imageEditorBusy || imageCarouselGenerationBusy || !imageEditorPrompt.trim()" @click="submitGalleryImageEdit">{{ imageEditorBusy ? '规划中…' : imageCarouselTask ? '确认分镜并生成' : '开始生成' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status !== 'awaiting_review'" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy" @click="regenerateAllCarouselPages">{{ imageCarouselGenerationBusy ? '全部生成中…' : '全部重生' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status !== 'awaiting_review'" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !String(currentCarouselPage().prompt || '').trim()" @click="regenerateCurrentCarouselPage">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '单张生成中…' : '单独重生' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status === 'generated' && isImageTaskComplete(selectedTemuRecord)" class="image-editor-main-apply" type="button" :disabled="imageCarouselGenerationBusy" title="使用全部成功分镜替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button class="image-editor-confirm" type="button" :disabled="imageEditorBusy || imageCarouselGenerationBusy || (imageCarouselTask ? successfulCarouselPageCount() < 1 : !imageEditorGeneratedUrl)" @click="confirmGalleryImageEdit">确认替换</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -502,6 +508,9 @@ const app = createApp({
       skuImagePickerOpen: false,
       skuImagePickerTarget: null,
       skuImagePickerCloseTimer: null,
+      gallerySkuPickerOpen: false,
+      gallerySkuPickerTarget: null,
+      gallerySkuPickerCloseTimer: null,
       galleryEditRecordKey: "",
       galleryEditSelection: [],
       imageEditorSourceType: "gallery",
@@ -522,6 +531,7 @@ const app = createApp({
       imageCarouselMarketLanguage: "美国 / English",
       imageCarouselTask: null,
       imageCarouselTasksByMainId: {},
+      imageCarouselPageBusyKeys: {},
       imageCarouselPageIndex: 0,
       imageCarouselGenerationBusy: false,
       imageCarouselEstimatedTokens: 0,
@@ -566,6 +576,8 @@ const app = createApp({
       pendingCacheEvents: {},
       productSaveStates: {},
       copyFirstSkuAttributeBusyKeys: {},
+      topbarCollapsed: false,
+      topbarLastScrollY: 0,
       miaoshouExportBusy: false
     };
   },
@@ -574,6 +586,8 @@ const app = createApp({
     window.addEventListener("dragend", this.clearImageDragState, true);
     window.addEventListener("drop", this.clearImageDragState);
     window.addEventListener("blur", this.clearImageDragState);
+    window.addEventListener("scroll", this.handleWindowScroll, { passive: true });
+    this.topbarLastScrollY = Math.max(0, Number(window.scrollY) || 0);
     this.loadImageEditConfig();
     this.loadWorkflowPayload();
     if (this.renderMode === "realtime") {
@@ -585,6 +599,7 @@ const app = createApp({
     window.removeEventListener("dragend", this.clearImageDragState, true);
     window.removeEventListener("drop", this.clearImageDragState);
     window.removeEventListener("blur", this.clearImageDragState);
+    window.removeEventListener("scroll", this.handleWindowScroll);
     this.cancelSkuImagePickerClose();
     this.stopRealtimeCache();
   },
@@ -702,6 +717,17 @@ const app = createApp({
     }
   },
   methods: {
+    /** Collapse the wide navigation away from the page top and restore it only near the top. */
+    handleWindowScroll: function handleWindowScroll() {
+      const currentScrollY = Math.max(0, Number(window.scrollY) || 0);
+      if (currentScrollY <= 96) {
+        this.topbarCollapsed = false;
+      } else if (currentScrollY >= 128) {
+        this.topbarCollapsed = true;
+      }
+      this.topbarLastScrollY = currentScrollY;
+    },
+
     /** Persist the current workspace and product selection for the next browser refresh. */
     persistViewState: function persistViewState() {
       try {
@@ -2021,6 +2047,111 @@ const app = createApp({
       this.saveProductModule(target.record, "skus");
       this.closeSkuImagePicker();
       this.setStatus("已使用主图填充 SKU 图片。", "success");
+    },
+
+    /** Open the unified Temu and 1688 SKU-image bubble above the gallery upload button. */
+    openGallerySkuPicker: function openGallerySkuPicker(event, record) {
+      if (!record) {
+        return;
+      }
+      this.cancelGallerySkuPickerClose();
+      const anchor = event && event.currentTarget;
+      const rectangle = anchor && typeof anchor.getBoundingClientRect === "function" ? anchor.getBoundingClientRect() : null;
+      const bubbleWidth = 288;
+      let anchorLeft = rectangle ? rectangle.left - 12 : 12;
+      if (anchorLeft + bubbleWidth > window.innerWidth - 12) {
+        anchorLeft = window.innerWidth - bubbleWidth - 12;
+      }
+      if (anchorLeft < 12) {
+        anchorLeft = 12;
+      }
+      let pointerLeft = rectangle ? rectangle.left + rectangle.width / 2 - anchorLeft - 6 : 18;
+      if (pointerLeft < 18) {
+        pointerLeft = 18;
+      }
+      if (pointerLeft > bubbleWidth - 30) {
+        pointerLeft = bubbleWidth - 30;
+      }
+      this.gallerySkuPickerTarget = {
+        cacheKey: this.productCacheEventKey(record),
+        anchorLeft: anchorLeft,
+        anchorBottom: rectangle ? window.innerHeight - rectangle.top + 10 : 80,
+        maxHeight: rectangle ? Math.max(160, Math.min(420, rectangle.top - 24)) : 340,
+        pointerLeft: pointerLeft
+      };
+      this.gallerySkuPickerOpen = true;
+    },
+
+    /** Close the unified gallery SKU-image picker. */
+    closeGallerySkuPicker: function closeGallerySkuPicker() {
+      this.cancelGallerySkuPickerClose();
+      this.gallerySkuPickerOpen = false;
+      this.gallerySkuPickerTarget = null;
+    },
+
+    /** Schedule closing after the cursor-transfer grace period. */
+    scheduleGallerySkuPickerClose: function scheduleGallerySkuPickerClose() {
+      this.cancelGallerySkuPickerClose();
+      const view = this;
+      /** Close the gallery picker after the pointer has left both controls. */
+      this.gallerySkuPickerCloseTimer = window.setTimeout(function closeGallerySkuPickerAfterDelay() {
+        view.gallerySkuPickerCloseTimer = null;
+        view.closeGallerySkuPicker();
+      }, 220);
+    },
+
+    /** Cancel the pending close timer for the unified SKU-image bubble. */
+    cancelGallerySkuPickerClose: function cancelGallerySkuPickerClose() {
+      if (this.gallerySkuPickerCloseTimer !== null) {
+        window.clearTimeout(this.gallerySkuPickerCloseTimer);
+        this.gallerySkuPickerCloseTimer = null;
+      }
+    },
+
+    /** Return unique SKU images from the selected Temu or 1688 product. */
+    gallerySkuPickerImages: function gallerySkuPickerImages(platform) {
+      const record = platform === "1688" ? this.selected1688Record : this.selectedTemuRecord;
+      const rows = record && Array.isArray(record.sku) ? record.sku : [];
+      const images = [];
+      for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+        const rowImages = this.skuImageUrls(rows[rowIndex]);
+        for (let imageIndex = 0; imageIndex < rowImages.length; imageIndex += 1) {
+          const source = String(rowImages[imageIndex] || "").trim();
+          if (source && images.indexOf(source) < 0) {
+            images.push(source);
+          }
+        }
+      }
+      return images;
+    },
+
+    /** Position the unified SKU-image bubble above the gallery upload button. */
+    gallerySkuPickerStyle: function gallerySkuPickerStyle() {
+      const target = this.gallerySkuPickerTarget || {};
+      return {
+        left: String(Number(target.anchorLeft) || 12) + "px",
+        bottom: String(Number(target.anchorBottom) || 80) + "px",
+        maxHeight: String(Number(target.maxHeight) || 340) + "px",
+        "--sku-picker-max-height": String(Number(target.maxHeight) || 340) + "px",
+        "--sku-picker-pointer-left": String(Number(target.pointerLeft) || 18) + "px"
+      };
+    },
+
+    /** Add one chosen Temu or 1688 SKU image to the targeted Temu gallery. */
+    selectGalleryImageFromSku: function selectGalleryImageFromSku(imageUrl) {
+      const target = this.gallerySkuPickerTarget;
+      const source = String(imageUrl || "").trim();
+      const record = target ? this.findProductByCacheKey(target.cacheKey) : null;
+      if (!record || !source) {
+        this.closeGallerySkuPicker();
+        return;
+      }
+      const added = this.appendTemuGalleryImage(record, source);
+      const selectedIndex = record.gallery_image_urls.indexOf(source);
+      this.updateGallerySelection(record, "temu", selectedIndex);
+      this.saveProductModule(record, "images");
+      this.closeGallerySkuPicker();
+      this.setStatus(added ? "已将 SKU 图片加入 Temu 主图。" : "该 SKU 图片已在 Temu 主图中。", "success");
     },
 
     /** Check whether one SKU is currently waiting for an image-edit response. */
@@ -3961,25 +4092,65 @@ const app = createApp({
       await this.refreshCarouselTask();
     },
 
+    /** Build one task-and-page key for an individual carousel request. */
+    carouselPageBusyKey: function carouselPageBusyKey(pageIndex) {
+      const taskId = this.imageCarouselTask ? this.imageCarouselTask.id : "";
+      return String(taskId || "") + ":" + String(Number(pageIndex));
+    },
+
+    /** Return whether one carousel page has an active Fusion request. */
+    isCarouselPageBusy: function isCarouselPageBusy(pageIndex) {
+      return Boolean(this.imageCarouselPageBusyKeys[this.carouselPageBusyKey(pageIndex)]);
+    },
+
+    /** Persist the current carousel page text without changing other page states. */
+    async saveCarouselPage(pageIndex) {
+      const task = this.imageCarouselTask;
+      const page = task && task.pages ? task.pages[Number(pageIndex)] : null;
+      if (!task || !page || !String(page.prompt || "").trim()) {
+        throw new Error("当前分镜提示词不能为空。");
+      }
+      const endpoint = "/workflow/carousel/" + encodeURIComponent(task.id) + "/pages/" + encodeURIComponent(String(Number(pageIndex)));
+      const response = await fetch(apiUrl(endpoint), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purpose: String(page.purpose || ""), prompt: String(page.prompt || "").trim() })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload || !payload.ok) {
+        throw new Error(getApiErrorMessage(payload, "分镜保存失败。"));
+      }
+      const savedTask = payload.data.task;
+      const savedPage = savedTask && savedTask.pages ? savedTask.pages[Number(pageIndex)] : null;
+      if (savedPage) {
+        page.purpose = String(savedPage.purpose || "");
+        page.prompt = String(savedPage.prompt || "");
+      }
+    },
+
     /** Generate or retry exactly one carousel page through Fusion. */
     async generateCarouselPage(pageIndex) {
       const task = this.imageCarouselTask;
       const page = task && task.pages ? task.pages[Number(pageIndex)] : null;
-      if (!task || !page) {
+      const busyKey = this.carouselPageBusyKey(pageIndex);
+      if (!task || !page || this.imageCarouselPageBusyKeys[busyKey]) {
         return;
       }
-      page.status = "generating";
-      page.error = "";
-      page.error_code = "";
+      this.imageCarouselPageBusyKeys[busyKey] = true;
       try {
+        await this.saveCarouselPage(pageIndex);
+        const savedPage = this.imageCarouselTask.pages[Number(pageIndex)];
+        savedPage.status = "generating";
+        savedPage.error = "";
+        savedPage.error_code = "";
         const response = await fetch(apiUrl("/images/fusion"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            image_urls: task.source_image_urls,
-            prompt: page.prompt,
-            size: task.size || this.imageEditSize,
-            carousel_task_id: task.id,
+            image_urls: this.imageCarouselTask.source_image_urls,
+            prompt: savedPage.prompt,
+            size: this.imageCarouselTask.size || this.imageEditSize,
+            carousel_task_id: this.imageCarouselTask.id,
             carousel_page_index: Number(pageIndex)
           })
         });
@@ -3989,25 +4160,43 @@ const app = createApp({
           error.code = String(payload && payload.error && payload.error.code || response.status);
           throw error;
         }
-        page.status = "succeeded";
-        page.image_url = String(payload.data && payload.data.image_url || "");
-        page.selected = true;
+        savedPage.status = "succeeded";
+        savedPage.image_url = String(payload.data && payload.data.image_url || "");
+        savedPage.selected = true;
       } catch (error) {
-        page.status = "failed";
-        page.error = error.message || "图片生成失败。";
-        page.error_code = String(error.code || "IMAGE_GENERATION_FAILED");
+        const failedPage = this.imageCarouselTask && this.imageCarouselTask.pages
+          ? this.imageCarouselTask.pages[Number(pageIndex)]
+          : page;
+        failedPage.status = "failed";
+        failedPage.error = error.message || "图片生成失败。";
+        failedPage.error_code = String(error.code || "IMAGE_GENERATION_FAILED");
+      } finally {
+        delete this.imageCarouselPageBusyKeys[busyKey];
       }
     },
 
     /** Retry one failed result without regenerating successful pages. */
     async retryCarouselPage(pageIndex) {
-      if (this.imageCarouselGenerationBusy) {
+      if (this.isCarouselPageBusy(pageIndex)) {
         return;
       }
-      this.imageCarouselGenerationBusy = true;
       await this.generateCarouselPage(pageIndex);
-      this.imageCarouselGenerationBusy = false;
       await this.refreshCarouselTask();
+    },
+
+    /** Regenerate only the currently visible carousel page. */
+    async regenerateCurrentCarouselPage() {
+      const pageIndex = Number(this.imageCarouselPageIndex);
+      if (this.isCarouselPageBusy(pageIndex)) {
+        return;
+      }
+      await this.generateCarouselPage(pageIndex);
+      await this.refreshCarouselTask();
+    },
+
+    /** Regenerate every carousel page concurrently through the batch path. */
+    async regenerateAllCarouselPages() {
+      await this.generateCarouselPages();
     },
 
     /** Refresh the current runtime task from disk-backed server state. */
@@ -4110,6 +4299,7 @@ const app = createApp({
         delete this.imageCarouselTasksByMainId[String(task.temu_main_id || "")];
       }
       this.imageCarouselTask = null;
+      this.imageCarouselPageBusyKeys = {};
       this.imageCarouselPageIndex = 0;
       this.imageCarouselSourceMismatch = false;
       this.imageEditorError = "";
@@ -4366,6 +4556,14 @@ const app = createApp({
       this.imageDropTarget = [targetType || "", targetIndex === undefined ? "" : String(targetIndex)].join("|");
     },
 
+    /** Start dragging one Temu or 1688 SKU image toward the Temu main gallery. */
+    startSkuImageDrag: function startSkuImageDrag(event, record, image, skuIndex, imageIndex) {
+      this.startAliImageDrag(event, record, image, "sku", skuIndex);
+      if (this.dragImageReference) {
+        this.dragImageReference.source_image_index = Number(imageIndex);
+      }
+    },
+
     /** Test whether one Temu image area is the active image drop target. */
     isImageDropTarget: function isImageDropTarget(targetType, targetIndex) {
       return this.imageDropTarget === [targetType || "", targetIndex === undefined ? "" : String(targetIndex)].join("|");
@@ -4477,6 +4675,13 @@ const app = createApp({
         this.imageDropTarget = null;
         return;
       }
+      const reference = this.dragImageReference;
+      if (targetName === "temu-gallery" && reference
+        && (String(reference.source_type || "") === "gallery" || String(reference.source_type || "") === "sku")) {
+        this.setImageDropTarget(targetType, targetIndex);
+        this.imageReorderTarget = null;
+        return;
+      }
       this.imageDropTarget = null;
       this.imageReorderTarget = null;
     },
@@ -4580,7 +4785,9 @@ const app = createApp({
         return;
       }
       const reference = this.dragImageReference || this.readDraggedImageReference(event);
-      const imageUrl = reference && String(reference.source_type || "") === "gallery" ? String(reference.image_url || "") : "";
+      const sourceType = reference ? String(reference.source_type || "") : "";
+      const canAddToGallery = sourceType === "gallery" || sourceType === "sku";
+      const imageUrl = canAddToGallery ? String(reference.image_url || "") : "";
       if (record && imageUrl) {
         const added = this.appendTemuGalleryImage(record, imageUrl, targetIndex);
         if (targetIndex === undefined) {
@@ -4588,8 +4795,8 @@ const app = createApp({
         }
         this.updateGallerySelection(record, "temu", record.gallery_image_urls.indexOf(imageUrl));
         this.setStatus(targetIndex === undefined
-          ? (added ? "已将 1688 主图添加到 Temu 主图。" : "已将已有图片设为 Temu 主图。")
-          : (added ? "已将 1688 主图插入 Temu 主图列表。" : "已调整 Temu 主图顺序。"), "success");
+          ? (added ? "已将图片添加到 Temu 主图。" : "已将已有图片设为 Temu 主图。")
+          : (added ? "已将图片插入 Temu 主图列表。" : "已调整 Temu 主图顺序。"), "success");
         this.saveProductModule(record, "images");
       }
       this.endAliImageDrag();

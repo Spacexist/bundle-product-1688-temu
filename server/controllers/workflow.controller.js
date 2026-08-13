@@ -120,6 +120,16 @@ class WorkflowController {
     }
   }
 
+  /** Save one non-running carousel page without resetting the remaining task. */
+  updateCarouselPage(request, response, next) {
+    try {
+      const task = this.carousel.updateTaskPage(request.params.taskId, request.params.pageIndex, request.validatedBody);
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Apply selected successful pages as one durable product image mutation. */
   async applyCarouselTask(request, response, next) {
     try {

@@ -340,6 +340,23 @@ class CarouselRuntimeService {
     return this.writeTask(task);
   }
 
+  /** Update one editable carousel page while other pages continue generating. */
+  updateTaskPage(taskId, pageIndex, input) {
+    const task = this.readTask(taskId);
+    const index = Number(pageIndex);
+    if (!task || !task.pages[index]) {
+      throw createCarouselError("轮播分镜不存在。", 404, "CAROUSEL_PAGE_NOT_FOUND");
+    }
+    if (task.pages[index].status === "generating") {
+      throw createCarouselError("当前分镜正在生成，暂时不能修改。", 409, "CAROUSEL_PAGE_GENERATING");
+    }
+    task.pages[index].purpose = String(input.purpose || "").trim();
+    task.pages[index].prompt = String(input.prompt || "").trim();
+    task.pages[index].error = "";
+    task.pages[index].error_code = "";
+    return this.writeTask(task);
+  }
+
   /** Mark one page as running before its shared Fusion request starts. */
   markPageGenerating(taskId, pageIndex) {
     const task = this.readTask(taskId);

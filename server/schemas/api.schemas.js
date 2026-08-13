@@ -108,6 +108,11 @@ const carouselPlanUpdateSchema = z.object({
   pages: z.array(z.object({ purpose: z.string().max(500).optional(), prompt: z.string().min(1).max(10000) })).min(1).max(10)
 });
 
+const carouselPageUpdateSchema = z.object({
+  purpose: z.string().max(500).optional(),
+  prompt: z.string().trim().min(1).max(10000)
+});
+
 const carouselApplySchema = z.object({
   selected_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10),
   replace_all: z.boolean().optional()
@@ -144,6 +149,7 @@ module.exports = {
   imageEditSchema: imageEditSchema,
   workflowPromptSchema: workflowPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
+  carouselPageUpdateSchema: carouselPageUpdateSchema,
   carouselApplySchema: carouselApplySchema,
   workflowGenerateSchema: workflowGenerateSchema,
   workflowCompleteSchema: workflowCompleteSchema,
