@@ -14,7 +14,9 @@ class DirectImageRuntimeService {
   /** Store runtime dependencies and recover tasks interrupted by a server restart. */
   constructor(options) {
     const settings = options || {};
-    this.runtimeDirectory = path.join(settings.cacheDirectory, "runtime", "direct-image");
+    const runtimeName = settings.runtimeName === "sku-blend" ? "sku-blend" : "direct-image";
+    this.runtimeDirectory = path.join(settings.cacheDirectory, "runtime", runtimeName);
+    this.taskScope = settings.taskScope === "sku" ? "sku" : "product";
     this.providers = settings.providers;
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     this.recoverInterruptedTasks();
@@ -112,16 +114,18 @@ class DirectImageRuntimeService {
     if (!taskId || imageUrls.length !== expectedCount) {
       throw createDirectImageError(mode === "edit" ? "单图编辑必须提交一张图片。" : "双图溶图必须提交两张图片。", 400, "DIRECT_IMAGE_SOURCE_INVALID");
     }
-    this.deleteTasksForProduct(source.temu_main_id);
+    this.deleteConflictingTasks(source);
     const task = {
       id: taskId,
       temu_main_id: String(source.temu_main_id || ""),
       temu_platform_id: String(source.temu_platform_id || ""),
       mode: mode,
       source_image_urls: imageUrls,
-      source_type: source.source_type === "detail" ? "detail" : "gallery",
+      source_type: source.source_type === "sku" ? "sku" : source.source_type === "detail" ? "detail" : "gallery",
       source_indices: Array.isArray(source.source_indices) ? source.source_indices.slice() : [],
       detail_index: Number(source.detail_index === undefined ? -1 : source.detail_index),
+      sku_id: String(source.sku_id || ""),
+      sku_index: Number(source.sku_index === undefined ? -1 : source.sku_index),
       prompt: String(source.prompt || ""),
       size: String(source.size || "1k"),
       status: "queued",
@@ -185,6 +189,29 @@ class DirectImageRuntimeService {
       this.startTask(created.task.id, requestId).catch(ignoreDirectImageStartFailure);
     }
     return this.readTask(created.task.id) || created.task;
+  }
+
+  /** Delete only the retained task that conflicts with the incoming product or SKU target. */
+  deleteConflictingTasks(source) {
+    const input = source && typeof source === "object" ? source : {};
+    if (this.taskScope !== "sku") {
+      this.deleteTasksForProduct(input.temu_main_id);
+      return;
+    }
+    const mainId = String(input.temu_main_id || "");
+    const skuId = String(input.sku_id || "");
+    const skuIndex = Number(input.sku_index === undefined ? -1 : input.sku_index);
+    const tasks = this.readTasks();
+    for (let index = 0; index < tasks.length; index += 1) {
+      const task = tasks[index] || {};
+      const sameProduct = String(task.temu_main_id || "") === mainId;
+      const sameSku = skuId
+        ? String(task.sku_id || "") === skuId
+        : Number(task.sku_index === undefined ? -1 : task.sku_index) === skuIndex;
+      if (sameProduct && sameSku) {
+        this.deleteTask(task.id);
+      }
+    }
   }
 
   /** Delete every retained task for one Temu product before starting a replacement. */

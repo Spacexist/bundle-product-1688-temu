@@ -192,6 +192,19 @@ class ImageCacheService {
     return localUrl;
   }
 
+  /** Retry generated-image caching and retain the provider URL when local download remains unavailable. */
+  async cacheGeneratedImage(source) {
+    const value = String(source || "");
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.cacheImage(value, "transfer", "generated", true);
+      } catch (error) {
+        continue;
+      }
+    }
+    return value;
+  }
+
   /** Cache every URL in one image list while retaining order and failed sources. */
   async cacheImageList(sources, platform, kind) {
     const input = Array.isArray(sources) ? sources : [];

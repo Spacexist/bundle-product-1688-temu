@@ -82,11 +82,18 @@ function createApp() {
     getKimiEndpoint: providers.getKimiEndpoint.bind(providers),
     readImageSource: providers.readImageSource.bind(providers),
     writeLog: diagnostics.write.bind(diagnostics),
-    images: images
+    images: images,
+    providers: providers
   });
   const directImages = new directImageRuntimeModule.DirectImageRuntimeService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     providers: providers
+  });
+  const skuBlendTasks = new directImageRuntimeModule.DirectImageRuntimeService({
+    cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
+    providers: providers,
+    runtimeName: "sku-blend",
+    taskScope: "sku"
   });
   const workflow = workflowServiceModule.createWorkflowService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
@@ -94,8 +101,9 @@ function createApp() {
     getKimiEndpoint: providers.getKimiEndpoint.bind(providers),
     compactValue: providers.compactValue.bind(providers),
     readImageSource: providers.readImageSource.bind(providers),
+    /** Cache one workflow result without discarding a successful provider URL on CDN failure. */
     cacheGeneratedImage: function cacheWorkflowGeneratedImage(source) {
-      return images.cacheImage(source, "transfer", "generated", true);
+      return images.cacheGeneratedImage(source);
     },
     imageTaskQueue: imageTaskQueue,
     writeLog: diagnostics.write.bind(diagnostics),
@@ -126,7 +134,7 @@ function createApp() {
   const imageController = new imageControllerModule.ImageController({ images: images, imageSearch: imageSearch, workflow: workflow });
   const configController = new configControllerModule.ConfigController();
   const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
-  const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel, directImages: directImages });
+  const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel, directImages: directImages, skuBlendTasks: skuBlendTasks });
   const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, products: products });
   const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics });
   const app = express();

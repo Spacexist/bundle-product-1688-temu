@@ -110,6 +110,16 @@ class WorkflowController {
     }
   }
 
+  /** Start one server-owned Kimi plus Fusion pipeline and return its persisted task immediately. */
+  startCarouselPlan(request, response, next) {
+    try {
+      const task = this.carousel.startPlanning(request.validatedBody, request.requestId);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Save advanced-mode page edits and release the task for generation. */
   updateCarouselTask(request, response, next) {
     try {
@@ -125,6 +135,16 @@ class WorkflowController {
     try {
       const task = this.carousel.updateTaskPage(request.params.taskId, request.params.pageIndex, request.validatedBody);
       response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Start selected carousel pages in the background and return without waiting for Fusion completion. */
+  generateCarouselTask(request, response, next) {
+    try {
+      const task = this.carousel.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
     }

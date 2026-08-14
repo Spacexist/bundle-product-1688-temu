@@ -6,6 +6,7 @@ class ProviderController {
     this.providers = settings.providers;
     this.carousel = settings.carousel;
     this.directImages = settings.directImages;
+    this.skuBlendTasks = settings.skuBlendTasks;
   }
 
   /** Merge the selected Temu and 1688 Listing values through Kimi. */
@@ -115,6 +116,36 @@ class ProviderController {
   deleteDirectImageTask(request, response, next) {
     try {
       const task = this.directImages.deleteTask(request.params.taskId);
+      response.json({ ok: true, data: { deleted: Boolean(task) }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Create one persistent SKU fusion task and return before provider completion. */
+  createSkuBlendTask(request, response, next) {
+    try {
+      const input = Object.assign({}, request.validatedBody, { mode: "fusion", source_type: "sku" });
+      const task = this.skuBlendTasks.createAndStartTask(input, request.requestId);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return every retained SKU fusion task used by yellow Workbench indicators. */
+  getSkuBlendTasks(request, response, next) {
+    try {
+      response.json({ ok: true, data: { tasks: this.skuBlendTasks.readTasks() }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Delete one retained SKU fusion task after undo or explicit replacement. */
+  deleteSkuBlendTask(request, response, next) {
+    try {
+      const task = this.skuBlendTasks.deleteTask(request.params.taskId);
       response.json({ ok: true, data: { deleted: Boolean(task) }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

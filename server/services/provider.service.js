@@ -605,7 +605,7 @@ class ProviderService {
     if (!generatedSource) {
       throw createProviderError("BeeAPI 已响应，但没有找到生成图片。", 502);
     }
-    const imageUrl = await this.images.cacheImage(generatedSource, "transfer", "generated", true);
+    const imageUrl = await this.images.cacheGeneratedImage(generatedSource);
     const prices = config.price && typeof config.price === "object" ? config.price : {};
     return {
       provider: "beeapi",

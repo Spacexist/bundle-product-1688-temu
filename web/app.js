@@ -537,6 +537,8 @@ const app = createApp({
       imageEditorGeneratedUrl: "",
       imageEditorBusy: false,
       imageEditorError: "",
+      imageEditorRestoreMainId: String(persistedViewState.imageEditorMainId || ""),
+      imageEditorRestoreInFlight: false,
       imageEditorRequestId: 0,
       imageEditorBackdropPressed: false,
       imageDirectTask: null,
@@ -554,6 +556,7 @@ const app = createApp({
       imageCarouselEstimatedTokens: 0,
       imageCarouselSourceMismatch: false,
       imageCarouselPollTimer: null,
+      imageCarouselIndicatorTimer: null,
       imageSearchBusy: false,
       specOptionDrafts: {},
       newSpecGroupName: "",
@@ -565,6 +568,8 @@ const app = createApp({
       imageEditErrorKeys: {},
       imageFusionUndoBusyKeys: {},
       imageFusionUndoTokens: {},
+      skuBlendTasksByKey: {},
+      skuBlendIndicatorTimer: null,
       listingMergeBusy: false,
       listingUndoBusy: false,
       listingUndoTokens: {},
@@ -611,6 +616,7 @@ const app = createApp({
     this.loadImageEditConfig();
     this.loadWorkflowPayload();
     this.refreshDirectImageTaskIndicators();
+    this.refreshSkuBlendTaskIndicators();
     if (this.renderMode === "realtime") {
       this.startRealtimeCache();
     }
@@ -629,6 +635,14 @@ const app = createApp({
     if (this.imageDirectIndicatorTimer) {
       window.clearTimeout(this.imageDirectIndicatorTimer);
       this.imageDirectIndicatorTimer = null;
+    }
+    if (this.imageCarouselIndicatorTimer) {
+      window.clearTimeout(this.imageCarouselIndicatorTimer);
+      this.imageCarouselIndicatorTimer = null;
+    }
+    if (this.skuBlendIndicatorTimer) {
+      window.clearTimeout(this.skuBlendIndicatorTimer);
+      this.skuBlendIndicatorTimer = null;
     }
     this.stopRealtimeCache();
   },
@@ -763,7 +777,8 @@ const app = createApp({
         window.localStorage.setItem(VIEW_STATE_STORAGE_KEY, JSON.stringify({
           workspaceMode: this.workspaceMode,
           selectedTemuMainId: this.selectedTemuMainId,
-          selected1688MainId: this.selected1688MainId
+          selected1688MainId: this.selected1688MainId,
+          imageEditorMainId: this.imageEditorRestoreMainId
         }));
       } catch (error) {
         return;
@@ -1315,8 +1330,7 @@ const app = createApp({
         : {};
       const records = payload && Array.isArray(payload.records) ? payload.records : [];
       this.applyRecords(records, "cache.json", payload);
-      this.refreshCarouselTaskIndicators();
-      this.refreshDirectImageTaskIndicators();
+      this.refreshImageTaskIndicatorsAndRestore();
       if (instruction.type === "binding_completed") {
         const temuMainId = String(instruction.temu_main_id || "");
         const aliMainId = String(instruction.ali_main_id || "");
@@ -1699,6 +1713,67 @@ const app = createApp({
       });
     },
 
+    /** Apply one terminal workflow generation snapshot returned or recovered from the backend. */
+    applyWorkflowGenerationResult: function applyWorkflowGenerationResult(temuMainId, task, index) {
+      const requestedTemuMainId = String(temuMainId || "");
+      this.storeWorkflowTask(requestedTemuMainId, task);
+      const generationFailed = this.workflowTaskHasGenerationError(task) || !this.workflowTaskHasGeneratedAllImages(task);
+      if (generationFailed) {
+        this.workflowTaskErrorKeys[requestedTemuMainId] = true;
+      } else {
+        delete this.workflowTaskErrorKeys[requestedTemuMainId];
+      }
+      if (String(this.selectedTemuMainId) !== requestedTemuMainId) {
+        return;
+      }
+      this.syncWorkflowPrompts(task);
+      if (index === undefined) {
+        this.workflowPromptDrafts = {};
+      } else {
+        delete this.workflowPromptDrafts[String(Number(index))];
+      }
+      this.setWorkflowStatus(generationFailed ? "生图已结束，存在生成失败的图片。" : index === undefined ? "四张白底图已生成，请选择一张。" : "图片已重新生成。", generationFailed ? "error" : "success");
+    },
+
+    /** Poll the persisted workflow state when the long generation response is interrupted. */
+    recoverWorkflowGenerationResult: async function recoverWorkflowGenerationResult(temuMainId) {
+      const requestedTemuMainId = String(temuMainId || "");
+      let lastError = null;
+      for (let attempt = 0; attempt < 310; attempt += 1) {
+        try {
+          const payload = await requestWorkflowJson(workflowApiUrl("/workflow"), { cache: "no-store" });
+          const state = payload && payload.workflow ? payload.workflow : payload;
+          const tasks = state && state.tasks && typeof state.tasks === "object" ? state.tasks : {};
+          const task = tasks[requestedTemuMainId];
+          if (task) {
+            this.storeWorkflowTask(requestedTemuMainId, task);
+            if (String(this.selectedTemuMainId) === requestedTemuMainId) {
+              this.syncWorkflowPrompts(task);
+            }
+            let running = task.status === "generating";
+            const prompts = Array.isArray(task.prompts) ? task.prompts : [];
+            for (let promptIndex = 0; promptIndex < prompts.length; promptIndex += 1) {
+              if (prompts[promptIndex].status === "queued" || prompts[promptIndex].status === "generating") {
+                running = true;
+                break;
+              }
+            }
+            if (!running) {
+              return task;
+            }
+          }
+        } catch (error) {
+          lastError = error;
+        }
+        /** Pause before reading the durable workflow state again. */
+        function waitForWorkflowRecoveryTick(resolve) {
+          window.setTimeout(resolve, 1000);
+        }
+        await new Promise(waitForWorkflowRecoveryTick);
+      }
+      throw lastError || new Error("后台生图结果读取超时。");
+    },
+
     /** Generate the four candidate images immediately after Kimi returns directions. */
     generateWorkflowImages: function generateWorkflowImages(index, requestedMainId, requestedPrompts) {
       const temuMainId = String(requestedMainId || this.selectedTemuRecord && this.selectedTemuRecord.main_id || "");
@@ -1728,29 +1803,18 @@ const app = createApp({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       }).then(function handleWorkflowGenerationSuccess(payload) {
-        view.storeWorkflowTask(requestedTemuMainId, payload.task);
-        const generationFailed = view.workflowTaskHasGenerationError(payload.task) || !view.workflowTaskHasGeneratedAllImages(payload.task);
-        if (generationFailed) {
-          view.workflowTaskErrorKeys[requestedTemuMainId] = true;
-        } else {
-          delete view.workflowTaskErrorKeys[requestedTemuMainId];
-        }
-        if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
-          return;
-        }
-        view.syncWorkflowPrompts(payload.task);
-        if (index === undefined) {
-          view.workflowPromptDrafts = {};
-        } else {
-          delete view.workflowPromptDrafts[String(Number(index))];
-        }
-        view.setWorkflowStatus(generationFailed ? "生图已结束，存在生成失败的图片。" : index === undefined ? "四张白底图已生成，请选择一张。" : "图片已重新生成。", generationFailed ? "error" : "success");
+        view.applyWorkflowGenerationResult(requestedTemuMainId, payload.task, index);
       }).catch(function handleWorkflowGenerationError(error) {
-        view.workflowTaskErrorKeys[requestedTemuMainId] = true;
-        if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
-          return;
-        }
-        view.setWorkflowStatus("BeeAPI 生图失败 [" + getWorkflowErrorCode(error) + "]：" + error.message, "error");
+        const requestError = error;
+        return view.recoverWorkflowGenerationResult(requestedTemuMainId).then(function applyRecoveredWorkflowGeneration(task) {
+          view.applyWorkflowGenerationResult(requestedTemuMainId, task, index);
+        }).catch(function handleWorkflowRecoveryError() {
+          view.workflowTaskErrorKeys[requestedTemuMainId] = true;
+          if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
+            return;
+          }
+          view.setWorkflowStatus("BeeAPI 生图失败 [" + getWorkflowErrorCode(requestError) + "]：" + requestError.message, "error");
+        });
       }).finally(function finishWorkflowGenerationRequest() {
         delete view.workflowGenerateBusyKeys[requestedTemuMainId];
         if (String(view.selectedTemuMainId) === requestedTemuMainId) {
@@ -2343,8 +2407,114 @@ const app = createApp({
       item.sku_image_url = url;
     },
 
-    /** Send exactly two SKU images to BeeAPI and keep its single returned image. */
-    blendSkuImages: function blendSkuImages(record, sku, rowIndex) {
+    /** Find the current product and SKU row owned by one persisted SKU fusion task. */
+    findSkuBlendTaskTarget: function findSkuBlendTaskTarget(task) {
+      const source = task && typeof task === "object" ? task : {};
+      let record = null;
+      for (let index = 0; index < this.temuRecords.length; index += 1) {
+        if (String(this.temuRecords[index].main_id || "") === String(source.temu_main_id || "")) {
+          record = this.temuRecords[index];
+          break;
+        }
+      }
+      if (!record) {
+        return null;
+      }
+      return this.findCurrentSkuTarget(this.productCacheEventKey(record), String(source.sku_id || ""), Number(source.sku_index));
+    },
+
+    /** Apply one persisted SKU fusion task to yellow indicators and the latest SKU row. */
+    applySkuBlendTask: function applySkuBlendTask(task) {
+      const target = this.findSkuBlendTaskTarget(task);
+      if (!target) {
+        return "";
+      }
+      const busyKey = this.getSkuBlendKey(target.record, target.sku, target.rowIndex);
+      const status = String(task.status || "");
+      this.skuBlendTasksByKey[busyKey] = task;
+      this.imageEditBusyKeys[busyKey] = status === "queued" || status === "generating";
+      if (status !== "succeeded") {
+        delete this.imageFusionUndoTokens[busyKey];
+      }
+      if (status === "failed" || status === "interrupted") {
+        this.imageEditErrorKeys[busyKey] = "[" + String(task.error_code || "SKU_BLEND_FAILED") + "] " + String(task.error || "溶图失败。");
+        return busyKey;
+      }
+      delete this.imageEditErrorKeys[busyKey];
+      if (status !== "succeeded") {
+        return busyKey;
+      }
+      this.imageFusionUndoTokens[busyKey] = String(task.undo_token || "");
+      const imageUrl = String(task.image_url || "").trim();
+      const currentImages = this.skuImageUrls(target.sku);
+      if (imageUrl && (currentImages.length !== 1 || currentImages[0] !== imageUrl)) {
+        this.replaceSkuImagesWithGenerated(target.sku, imageUrl);
+        this.saveProductModule(target.record, "skus");
+      }
+      return busyKey;
+    },
+
+    /** Refresh SKU fusion tasks from cache/runtime/sku-blend and continue polling active work. */
+    async refreshSkuBlendTaskIndicators() {
+      try {
+        const response = await fetch(apiUrl("/images/sku-blend-tasks"), { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload || !payload.ok) {
+          return false;
+        }
+        const tasks = payload.data && Array.isArray(payload.data.tasks) ? payload.data.tasks : [];
+        const previousLookup = this.skuBlendTasksByKey;
+        this.skuBlendTasksByKey = {};
+        let hasActiveTask = false;
+        for (let index = 0; index < tasks.length; index += 1) {
+          const task = tasks[index] || {};
+          this.applySkuBlendTask(task);
+          if (task.status === "queued" || task.status === "generating") {
+            hasActiveTask = true;
+          }
+        }
+        for (const key in previousLookup) {
+          if (!this.skuBlendTasksByKey[key]) {
+            delete this.imageEditBusyKeys[key];
+            delete this.imageEditErrorKeys[key];
+            delete this.imageFusionUndoTokens[key];
+          }
+        }
+        if (hasActiveTask && !this.skuBlendIndicatorTimer) {
+          const view = this;
+          /** Refresh yellow indicators until every persisted SKU fusion task settles. */
+          function refreshActiveSkuBlendIndicators() {
+            view.skuBlendIndicatorTimer = null;
+            view.refreshSkuBlendTaskIndicators();
+          }
+          this.skuBlendIndicatorTimer = window.setTimeout(refreshActiveSkuBlendIndicators, 1000);
+        }
+        return true;
+      } catch (error) {
+        return false;
+      }
+    },
+
+    /** Remove one persisted SKU fusion task and all of its local indicator state. */
+    async deleteSkuBlendTaskByKey(busyKey) {
+      const key = String(busyKey || "");
+      const task = this.skuBlendTasksByKey[key] || null;
+      delete this.skuBlendTasksByKey[key];
+      delete this.imageEditBusyKeys[key];
+      delete this.imageEditErrorKeys[key];
+      delete this.imageFusionUndoTokens[key];
+      if (!task || !task.id) {
+        return;
+      }
+      try {
+        await fetch(apiUrl("/images/sku-blend-tasks/" + encodeURIComponent(String(task.id))), { method: "DELETE" });
+      } catch (error) {
+        return;
+      }
+    },
+
+    /** Submit exactly two SKU images as one server-owned recoverable fusion task. */
+    blendSkuImages: async function blendSkuImages(record, sku, rowIndex) {
       const images = this.skuImageUrls(sku);
       if (!record || !sku || images.length !== 2) {
         this.setStatus("溶图需要当前 SKU 正好有两张图片。", "normal");
@@ -2359,50 +2529,53 @@ const app = createApp({
       if (this.imageEditBusyKeys[busyKey]) {
         return;
       }
-      const cacheKey = this.productCacheEventKey(record);
-      const skuId = String(sku.sku_id || "");
-      delete this.imageEditErrorKeys[busyKey];
-      this.imageEditBusyKeys[busyKey] = true;
-      const view = this;
+      const taskId = "sku-blend-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
       const editSize = this.imageEditSize;
-      this.setStatus("正在提交两张 SKU 图片到本地 Server…", "normal");
-      fetch(apiUrl("/images/fusion"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_urls: images,
-          prompt: fusionPrompt,
-          size: editSize
-        })
-      }).then(function handleImageEditResponse(response) {
-        return response.json().then(function handleImageEditPayload(payload) {
-          if (!response.ok || !payload || !payload.ok) {
-            throw new Error(getApiErrorMessage(payload, "溶图服务请求失败。"));
-          }
-          return readApiData(payload);
+      const localTask = {
+        id: taskId,
+        temu_main_id: String(record.main_id || ""),
+        temu_platform_id: String(record.platform_id || ""),
+        sku_id: String(sku.sku_id || ""),
+        sku_index: Number(rowIndex),
+        source_image_urls: images.slice(),
+        prompt: fusionPrompt,
+        size: editSize,
+        status: "queued",
+        image_url: "",
+        undo_token: "",
+        error: "",
+        error_code: ""
+      };
+      this.applySkuBlendTask(localTask);
+      this.setStatus("SKU 溶图已提交到后台，刷新页面也会继续。", "normal");
+      try {
+        const response = await fetch(apiUrl("/images/sku-blend-tasks"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_task_id: taskId,
+            temu_main_id: localTask.temu_main_id,
+            temu_platform_id: localTask.temu_platform_id,
+            sku_id: localTask.sku_id,
+            sku_index: localTask.sku_index,
+            image_urls: localTask.source_image_urls,
+            prompt: localTask.prompt,
+            size: localTask.size
+          })
         });
-      }).then(function handleImageEditSuccess(payload) {
-        const imageUrl = String(payload.image_url || "").trim();
-        if (!imageUrl) {
-          throw new Error("溶图服务没有返回图片。");
+        const payload = await response.json();
+        if (!response.ok || !payload || !payload.ok) {
+          throw new Error(getApiErrorMessage(payload, "溶图任务创建失败。"));
         }
-        const currentTarget = view.findCurrentSkuTarget(cacheKey, skuId, rowIndex);
-        if (!currentTarget) {
-          throw new Error("当前 SKU 已发生变化，无法应用溶图结果。");
-        }
-        view.replaceSkuImagesWithGenerated(currentTarget.sku, imageUrl);
-        delete view.imageEditErrorKeys[busyKey];
-        view.imageFusionUndoTokens[busyKey] = String(payload.undo_token || "");
-        view.saveProductModule(currentTarget.record, "skus");
-        const size = String(payload.size || editSize || "1k").toUpperCase();
-        view.setStatus("SKU #" + (currentTarget.rowIndex + 1) + " 溶图完成（" + size + "），可点恢复原图。", "success");
-      }).catch(function handleImageEditError(error) {
+        const task = payload.data && payload.data.task ? payload.data.task : localTask;
+        this.applySkuBlendTask(task);
+        await this.refreshSkuBlendTaskIndicators();
+      } catch (error) {
         const errorMessage = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "请求失败。");
-        view.imageEditErrorKeys[busyKey] = errorMessage;
-        view.setStatus("溶图失败：" + errorMessage, "error");
-      }).finally(function handleImageEditFinished() {
-        view.imageEditBusyKeys[busyKey] = false;
-      });
+        this.imageEditBusyKeys[busyKey] = false;
+        this.imageEditErrorKeys[busyKey] = errorMessage;
+        this.setStatus("溶图失败：" + errorMessage, "error");
+      }
     },
 
     /** Restore one SKU's original two images through the server undo API. */
@@ -2440,6 +2613,7 @@ const app = createApp({
         currentTarget.sku.sku_image_urls = imageUrls;
         currentTarget.sku.sku_image_url = imageUrls[0] || "";
         delete view.imageFusionUndoTokens[busyKey];
+        view.deleteSkuBlendTaskByKey(busyKey);
         view.saveProductModule(currentTarget.record, "skus");
         view.setStatus("已通过 Server API 恢复 SKU 溶图前的两张图片。", "success");
       }).catch(function handleFusionUndoError(error) {
@@ -3706,6 +3880,7 @@ const app = createApp({
       this.imageEditorPrompt = this.imageEditorEditPrompt;
       this.imageEditorGeneratedUrl = "";
       this.imageEditorError = "";
+      this.imageEditorBusy = false;
       this.imageDirectTask = null;
       this.imageEditorOpen = true;
       this.loadDirectImageTaskForProduct(record, [source]);
@@ -3929,8 +4104,9 @@ const app = createApp({
           }
           this.imageDirectIndicatorTimer = window.setTimeout(refreshActiveDirectImageIndicators, 1000);
         }
+        return true;
       } catch (error) {
-        return;
+        return false;
       }
     },
 
@@ -3944,15 +4120,70 @@ const app = createApp({
         }
         const tasks = payload.data && Array.isArray(payload.data.tasks) ? payload.data.tasks : [];
         const taskLookup = {};
+        let hasActiveTask = false;
         for (let index = 0; index < tasks.length; index += 1) {
           const key = String(tasks[index] && tasks[index].temu_main_id || "");
           if (key) {
             taskLookup[key] = tasks[index];
           }
+          if (tasks[index] && (tasks[index].status === "planning" || tasks[index].status === "generating")) {
+            hasActiveTask = true;
+          }
         }
         this.imageCarouselTasksByMainId = taskLookup;
+        if (hasActiveTask && !this.imageCarouselIndicatorTimer) {
+          const view = this;
+          /** Refresh carousel indicators while any server-owned task is active. */
+          function refreshActiveCarouselIndicators() {
+            view.imageCarouselIndicatorTimer = null;
+            view.refreshCarouselTaskIndicators();
+          }
+          this.imageCarouselIndicatorTimer = window.setTimeout(refreshActiveCarouselIndicators, 1000);
+        }
+        return true;
       } catch (error) {
+        return false;
+      }
+    },
+
+    /** Refresh all retained image task stores before attempting one F5 editor recovery. */
+    async refreshImageTaskIndicatorsAndRestore() {
+      await this.refreshSkuBlendTaskIndicators();
+      const directLoaded = await this.refreshDirectImageTaskIndicators();
+      const carouselLoaded = await this.refreshCarouselTaskIndicators();
+      if (directLoaded && carouselLoaded) {
+        await this.restoreImageEditorTaskAfterReload();
+      }
+    },
+
+    /** Reopen the image editor and resume polling for the task that owned the pre-refresh dialog. */
+    async restoreImageEditorTaskAfterReload() {
+      const mainId = String(this.imageEditorRestoreMainId || "");
+      if (!mainId || this.imageEditorRestoreInFlight || this.imageEditorOpen) {
         return;
+      }
+      let record = null;
+      for (let index = 0; index < this.temuRecords.length; index += 1) {
+        if (String(this.temuRecords[index].main_id || "") === mainId) {
+          record = this.temuRecords[index];
+          break;
+        }
+      }
+      if (!record) {
+        return;
+      }
+      this.imageEditorRestoreInFlight = true;
+      try {
+        const directTask = this.imageDirectTasksByMainId[mainId] || null;
+        const carouselTask = this.imageCarouselTasksByMainId[mainId] || null;
+        if (!directTask && !carouselTask) {
+          this.imageEditorRestoreMainId = "";
+          this.persistViewState();
+          return;
+        }
+        this.openRetainedImageEditor(record);
+      } finally {
+        this.imageEditorRestoreInFlight = false;
       }
     },
 
@@ -4184,6 +4415,7 @@ const app = createApp({
       const sameSession = this.imageEditorRecordKey === this.imageRecordKey(record)
         && Boolean(this.imageEditorBusy || this.imageEditorGeneratedUrl || this.imageDirectTask || this.imageCarouselTask);
       this.selectedTemuMainId = record.main_id;
+      this.imageEditorRestoreMainId = mainId;
       this.selectBound1688ForTemu(record);
       if (!sameSession && directTask) {
         this.galleryEditRecordKey = this.imageRecordKey(record);
@@ -4210,6 +4442,7 @@ const app = createApp({
       }
       if (task) {
         this.imageCarouselTask = task;
+        this.imageCarouselGenerationBusy = task.status === "planning" || task.status === "generating";
         this.imageCarouselCount = Number(task.count || 2);
         this.imageCarouselMarketLanguage = String(task.market_language || "美国 / English");
         this.imageCarouselReasoningEnabled = Boolean(task.reasoning_enabled);
@@ -4242,9 +4475,11 @@ const app = createApp({
       this.imageEditorPrompt = sources.length === 2 ? this.imageEditorFusionPrompt : this.imageEditorEditPrompt;
       this.imageEditorGeneratedUrl = "";
       this.imageEditorError = "";
+      this.imageEditorBusy = false;
       this.imageDirectTask = null;
       this.imageEditorBackdropPressed = false;
       this.imageCarouselTask = null;
+      this.imageCarouselGenerationBusy = false;
       this.imageCarouselPageIndex = 0;
       this.imageCarouselEstimatedTokens = 0;
       this.imageCarouselSourceMismatch = false;
@@ -4347,6 +4582,8 @@ const app = createApp({
         error_code: ""
       };
       this.applyDirectImageTask(directTask);
+      this.imageEditorRestoreMainId = directTask.temu_main_id;
+      this.persistViewState();
       const view = this;
       fetch(apiUrl("/images/direct-tasks"), {
         method: "POST",
@@ -4417,6 +4654,7 @@ const app = createApp({
         }
         this.imageCarouselTask = task;
         this.rememberCarouselTask(task);
+        this.imageCarouselGenerationBusy = task.status === "planning" || task.status === "generating";
         this.normalizeCarouselPageIndex();
         this.imageCarouselCount = Number(task.count || 1);
         this.imageCarouselMarketLanguage = String(task.market_language || "美国 / English");
@@ -4497,7 +4735,7 @@ const app = createApp({
       return state.task;
     },
 
-    /** Create and stream one Kimi reasoning-mode carousel plan. */
+    /** Submit one server-owned Kimi plus Fusion pipeline without holding the dialog open. */
     async startCarouselPlan() {
       const record = this.selectedTemuRecord;
       const sources = this.galleryImageEditorSources(record);
@@ -4507,11 +4745,13 @@ const app = createApp({
       }
       this.imageCarouselCount = count;
       this.imageEditorBusy = true;
+      this.imageEditorRestoreMainId = String(record.main_id || "");
+      this.persistViewState();
       this.imageEditorError = "";
       this.imageEditorBackdropPressed = false;
       this.imageCarouselEstimatedTokens = 0;
       try {
-        const response = await fetch(apiUrl("/workflow/prompts"), {
+        const response = await fetch(apiUrl("/workflow/carousel/plan"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -4529,23 +4769,24 @@ const app = createApp({
             size: this.imageEditSize
           })
         });
-        const task = await this.readCarouselPlanStream(response);
+        const payload = await response.json();
+        if (!response.ok || !payload || !payload.ok) {
+          throw new Error(getApiErrorMessage(payload, "轮播后台任务提交失败。"));
+        }
+        const task = payload.data && payload.data.task ? payload.data.task : null;
         if (!task) {
-          throw new Error("Kimi 没有返回轮播任务。");
+          throw new Error("后台没有返回轮播任务。");
         }
         this.imageCarouselTask = task;
         this.rememberCarouselTask(task);
-        if (task.status === "ready") {
-          this.imageEditorBusy = false;
-          await this.generateCarouselPages();
-        }
+        this.imageCarouselGenerationBusy = task.status === "planning" || task.status === "generating";
+        this.scheduleCarouselTaskPoll();
       } catch (error) {
-        if (error.details && error.details.task) {
-          this.imageCarouselTask = error.details.task;
-          this.rememberCarouselTask(this.imageCarouselTask);
-          this.imageCarouselSourceMismatch = true;
+        this.imageEditorError = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "轮播后台任务提交失败。");
+        if (!this.imageCarouselTask) {
+          this.imageEditorRestoreMainId = "";
+          this.persistViewState();
         }
-        this.imageEditorError = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "轮播规划失败。");
       } finally {
         this.imageEditorBusy = false;
       }
@@ -4584,21 +4825,47 @@ const app = createApp({
       }
     },
 
-    /** Start every pending carousel page concurrently through the shared Fusion API. */
+    /** Submit selected pages as one server-owned background Fusion batch. */
+    async startCarouselGeneration(task, pageIndices) {
+      if (!task || !task.id || !Array.isArray(pageIndices) || !pageIndices.length) {
+        return;
+      }
+      const response = await fetch(apiUrl("/workflow/carousel/" + encodeURIComponent(task.id) + "/generate"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page_indices: pageIndices })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload || !payload.ok) {
+        throw new Error(getApiErrorMessage(payload, "轮播后台任务提交失败。"));
+      }
+      const submittedTask = payload.data && payload.data.task ? payload.data.task : task;
+      this.rememberCarouselTask(submittedTask);
+      if (this.imageCarouselTask && String(this.imageCarouselTask.id || "") === String(submittedTask.id || "")) {
+        this.imageCarouselTask = submittedTask;
+        this.imageCarouselGenerationBusy = submittedTask.status === "generating";
+        this.scheduleCarouselTaskPoll();
+      }
+    },
+
+    /** Submit every carousel page once and let the backend execute them concurrently. */
     async generateCarouselPages() {
       const task = this.imageCarouselTask;
-      if (!task || !task.pages || this.imageCarouselGenerationBusy) {
+      if (!task || !Array.isArray(task.pages) || task.status === "generating") {
         return;
+      }
+      const pageIndices = [];
+      for (let index = 0; index < task.pages.length; index += 1) {
+        pageIndices.push(index);
       }
       this.imageCarouselGenerationBusy = true;
       this.imageEditorError = "";
-      const requests = [];
-      for (let index = 0; index < task.pages.length; index += 1) {
-        requests.push(this.generateCarouselPage(index));
+      try {
+        await this.startCarouselGeneration(task, pageIndices);
+      } catch (error) {
+        this.imageCarouselGenerationBusy = false;
+        this.imageEditorError = error.message || "轮播后台任务提交失败。";
       }
-      await Promise.all(requests);
-      this.imageCarouselGenerationBusy = false;
-      await this.refreshCarouselTask();
     },
 
     /** Build one task-and-page key for an individual carousel request. */
@@ -4609,7 +4876,8 @@ const app = createApp({
 
     /** Return whether one carousel page has an active Fusion request. */
     isCarouselPageBusy: function isCarouselPageBusy(pageIndex) {
-      return Boolean(this.imageCarouselPageBusyKeys[this.carouselPageBusyKey(pageIndex)]);
+      const page = this.imageCarouselTask && this.imageCarouselTask.pages ? this.imageCarouselTask.pages[Number(pageIndex)] : null;
+      return Boolean(page && page.status === "generating") || Boolean(this.imageCarouselPageBusyKeys[this.carouselPageBusyKey(pageIndex)]);
     },
 
     /** Persist the current carousel page text without changing other page states. */
@@ -4637,7 +4905,7 @@ const app = createApp({
       }
     },
 
-    /** Generate or retry exactly one carousel page through Fusion. */
+    /** Save and submit exactly one carousel page to the background Fusion worker. */
     async generateCarouselPage(pageIndex) {
       const task = this.imageCarouselTask;
       const page = task && task.pages ? task.pages[Number(pageIndex)] : null;
@@ -4648,37 +4916,9 @@ const app = createApp({
       this.imageCarouselPageBusyKeys[busyKey] = true;
       try {
         await this.saveCarouselPage(pageIndex);
-        const savedPage = this.imageCarouselTask.pages[Number(pageIndex)];
-        savedPage.status = "generating";
-        savedPage.error = "";
-        savedPage.error_code = "";
-        const response = await fetch(apiUrl("/images/fusion"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            image_urls: this.imageCarouselTask.source_image_urls,
-            prompt: savedPage.prompt,
-            size: this.imageCarouselTask.size || this.imageEditSize,
-            carousel_task_id: this.imageCarouselTask.id,
-            carousel_page_index: Number(pageIndex)
-          })
-        });
-        const payload = await response.json();
-        if (!response.ok || !payload || !payload.ok) {
-          const error = new Error(getApiErrorMessage(payload, "图片生成失败。"));
-          error.code = String(payload && payload.error && payload.error.code || response.status);
-          throw error;
-        }
-        savedPage.status = "succeeded";
-        savedPage.image_url = String(payload.data && payload.data.image_url || "");
-        savedPage.selected = true;
+        await this.startCarouselGeneration(task, [Number(pageIndex)]);
       } catch (error) {
-        const failedPage = this.imageCarouselTask && this.imageCarouselTask.pages
-          ? this.imageCarouselTask.pages[Number(pageIndex)]
-          : page;
-        failedPage.status = "failed";
-        failedPage.error = error.message || "图片生成失败。";
-        failedPage.error_code = String(error.code || "IMAGE_GENERATION_FAILED");
+        this.imageEditorError = error.message || "轮播后台任务提交失败。";
       } finally {
         delete this.imageCarouselPageBusyKeys[busyKey];
       }
@@ -4690,7 +4930,6 @@ const app = createApp({
         return;
       }
       await this.generateCarouselPage(pageIndex);
-      await this.refreshCarouselTask();
     },
 
     /** Regenerate only the currently visible carousel page. */
@@ -4700,7 +4939,6 @@ const app = createApp({
         return;
       }
       await this.generateCarouselPage(pageIndex);
-      await this.refreshCarouselTask();
     },
 
     /** Regenerate every carousel page concurrently through the batch path. */
@@ -4719,6 +4957,8 @@ const app = createApp({
       if (response.ok && payload && payload.ok) {
         this.imageCarouselTask = payload.data.task || null;
         this.rememberCarouselTask(this.imageCarouselTask);
+        this.imageCarouselGenerationBusy = Boolean(this.imageCarouselTask
+          && (this.imageCarouselTask.status === "planning" || this.imageCarouselTask.status === "generating"));
         this.normalizeCarouselPageIndex();
       }
     },
@@ -4829,6 +5069,8 @@ const app = createApp({
       this.imageCarouselEstimatedTokens = 0;
       this.imageCarouselSourceMismatch = false;
       this.imageEditorError = "";
+      this.imageEditorRestoreMainId = "";
+      this.persistViewState();
     },
 
     /** Delete one failed plan before submitting the same source pair again. */
@@ -4861,6 +5103,7 @@ const app = createApp({
           return;
         }
         detailList.splice(detailIndex, 1, generatedUrl);
+        this.saveProductModule(record, "images");
         this.setStatus("已确认编辑并替换详情图。", "success");
         this.deleteDirectImageTask();
         this.closeGalleryImageEditor(true);
@@ -4879,6 +5122,7 @@ const app = createApp({
       }
       list.splice(insertIndex, 0, generatedUrl);
       record.main_image_url = list[0] || "";
+      this.saveProductModule(record, "images");
       this.selectedTemuGalleryIndex = insertIndex;
       this.selectedGalleryIndex = insertIndex;
       this.setStatus(indices.length === 2 ? "已确认溶图并替换两张原图。" : "已确认编辑并替换原图。", "success");
@@ -4981,6 +5225,8 @@ const app = createApp({
     /** Close the image editor while retaining unfinished or unconfirmed image work for reopening. */
     closeGalleryImageEditor: function closeGalleryImageEditor(forceReset) {
       this.imageEditorOpen = false;
+      this.imageEditorRestoreMainId = "";
+      this.persistViewState();
       if (forceReset && this.imageDirectTask) {
         this.deleteDirectImageTask();
       }
@@ -5654,14 +5900,23 @@ const app = createApp({
         return;
       }
       this.miaoshouExportBusy = true;
-      this.setStatus("服务器正在流式生成妙手 ZIP，完成后会自动下载。", "normal");
-      window.location.href = apiUrl("/zip");
-      const view = this;
-      /** Release the ZIP export busy state after the browser starts the download. */
-      function releaseMiaoshouExportBusy() {
-        view.miaoshouExportBusy = false;
+      try {
+        this.setStatus("正在同步当前页面缓存，随后生成妙手 ZIP。", "normal");
+        for (let index = 0; index < this.temuRecords.length; index += 1) {
+          await this.waitForProductSaveIdle(this.temuRecords[index]);
+        }
+        this.setStatus("服务器正在以当前缓存生成妙手 ZIP，完成后会自动下载。", "normal");
+        window.location.href = apiUrl("/zip");
+        const view = this;
+        /** Release the ZIP export busy state after the browser starts the download. */
+        function releaseMiaoshouExportBusy() {
+          view.miaoshouExportBusy = false;
+        }
+        window.setTimeout(releaseMiaoshouExportBusy, 1500);
+      } catch (error) {
+        this.miaoshouExportBusy = false;
+        this.setStatus("妙手导出前同步缓存失败：" + String(error && error.message || "未知错误。"), "error");
       }
-      window.setTimeout(releaseMiaoshouExportBusy, 1500);
     },
 
     /** Build and download a new identifier-only group mapping JSON file. */

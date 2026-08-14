@@ -166,7 +166,7 @@
     var queueActiveList = document.getElementById("queueActiveList");
     var queuePendingList = document.getElementById("queuePendingList");
     var serverLogEventSource = null;
-    var queueEventSource = null;
+    var queuePollTimer = null;
     var queueState = {
       concurrency: 3,
       active: 0,
@@ -648,7 +648,7 @@
       }
     }
 
-    /** Load the current shared image queue snapshot before opening its live stream. */
+    /** Load the current shared image queue snapshot without retaining another HTTP connection. */
     async function loadQueueState() {
       try {
         var response = await fetch("/api/v1/queue", { cache: "no-store" });
@@ -658,6 +658,8 @@
         }
         var queueData = payload && payload.data && typeof payload.data === "object" ? payload.data : payload;
         applyQueuePayload(queueData && queueData.queue ? queueData.queue : queueData);
+        queueLiveStatus.className = "status is-online";
+        queueLiveStatus.textContent = "队列轮询";
       } catch (error) {
         queueLiveStatus.className = "status";
         queueLiveStatus.textContent = "队列读取失败";
@@ -687,29 +689,6 @@
       setConnectionStatus(false, "正在重连");
     }
 
-    /** Handle one live queue snapshot received from the Server. */
-    function handleQueueMessage(event) {
-      try {
-        var payload = JSON.parse(event.data);
-        applyQueuePayload(payload);
-      } catch (error) {
-        queueLiveStatus.className = "status";
-        queueLiveStatus.textContent = "队列格式错误";
-      }
-    }
-
-    /** Mark the shared image queue stream as connected. */
-    function handleQueueOpen() {
-      queueLiveStatus.className = "status is-online";
-      queueLiveStatus.textContent = "队列实时";
-    }
-
-    /** Mark the shared image queue stream as reconnecting. */
-    function handleQueueError() {
-      queueLiveStatus.className = "status";
-      queueLiveStatus.textContent = "队列重连中";
-    }
-
     /** Connect the page to the server-side live log event stream. */
     function connectServerLogs() {
       if (serverLogEventSource) {
@@ -721,15 +700,23 @@
       serverLogEventSource.onerror = handleServerLogError;
     }
 
-    /** Connect the page to the shared image queue event stream. */
-    function connectImageQueue() {
-      if (queueEventSource) {
-        queueEventSource.close();
+    /** Refresh the shared image queue periodically without consuming a permanent browser connection. */
+    async function pollImageQueue() {
+      queuePollTimer = null;
+      await loadQueueState();
+      queuePollTimer = window.setTimeout(pollImageQueue, 1000);
+    }
+
+    /** Release the page-owned live connection and queue timer during navigation. */
+    function cleanupLiveConnections() {
+      if (serverLogEventSource) {
+        serverLogEventSource.close();
+        serverLogEventSource = null;
       }
-      queueEventSource = new EventSource("/api/v1/queue/events");
-      queueEventSource.onmessage = handleQueueMessage;
-      queueEventSource.onopen = handleQueueOpen;
-      queueEventSource.onerror = handleQueueError;
+      if (queuePollTimer) {
+        window.clearTimeout(queuePollTimer);
+        queuePollTimer = null;
+      }
     }
 
     /** Re-render grouped requests after the status filter changes. */
@@ -764,7 +751,7 @@
       await loadLogHistory();
       await loadQueueState();
       connectServerLogs();
-      connectImageQueue();
+      queuePollTimer = window.setTimeout(pollImageQueue, 1000);
     }
 
     statusFilter.addEventListener("change", handleStatusFilterChange);
@@ -772,6 +759,7 @@
     pauseButton.addEventListener("click", handlePauseClick);
     clearButton.addEventListener("click", handleClearClick);
     window.addEventListener("load", initializeLogPage);
+    window.addEventListener("beforeunload", cleanupLiveConnections);
   </script>
 </body>
 </html>

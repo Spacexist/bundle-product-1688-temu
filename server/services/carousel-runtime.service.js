@@ -21,6 +21,7 @@ class CarouselRuntimeService {
     this.readImageSource = settings.readImageSource;
     this.writeLog = settings.writeLog;
     this.images = settings.images;
+    this.providers = settings.providers;
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     this.recoverInterruptedTasks();
   }
@@ -316,6 +317,33 @@ class CarouselRuntimeService {
     }
   }
 
+  /** Start Kimi planning in the background and automatically launch basic-mode Fusion pages. */
+  startPlanning(input, requestId) {
+    const service = this;
+    /** Ignore streamed planning snapshots because clients recover through persisted task polling. */
+    function ignorePlanningProgress() {
+      return;
+    }
+    /** Continue a completed basic plan directly into background page generation. */
+    function startPlannedFusionPages(task) {
+      if (!task || task.status !== "ready" || task.mode !== "basic") {
+        return;
+      }
+      const pageIndices = [];
+      for (let index = 0; index < task.pages.length; index += 1) {
+        pageIndices.push(index);
+      }
+      service.startGeneration(task.id, pageIndices, requestId);
+    }
+    /** Keep the persisted failure state without producing an unhandled rejection. */
+    function ignorePlanningFailure() {
+      return;
+    }
+    const planning = this.planTask(input, requestId, ignorePlanningProgress);
+    planning.then(startPlannedFusionPages).catch(ignorePlanningFailure);
+    return this.findTaskByTemuMainId(input.temu_main_id);
+  }
+
   /** Replace the editable advanced-mode plan before generation starts. */
   updateTaskPlan(taskId, input) {
     const task = this.readTask(taskId);
@@ -417,6 +445,54 @@ class CarouselRuntimeService {
       }
     }
     task.status = pending || running ? "generating" : "generated";
+  }
+
+  /** Generate one persisted carousel page independently from its initiating browser request. */
+  async generatePage(taskId, pageIndex, requestId) {
+    const task = this.markPageGenerating(taskId, pageIndex);
+    const page = task.pages[Number(pageIndex)];
+    try {
+      const result = await this.providers.editImages({
+        image_urls: task.source_image_urls.slice(),
+        prompt: String(page.prompt || ""),
+        size: String(task.size || "1k")
+      }, "fusion", requestId);
+      return this.markPageSucceeded(task.id, pageIndex, result.image_url);
+    } catch (error) {
+      return this.markPageFailed(task.id, pageIndex, error);
+    }
+  }
+
+  /** Start several Fusion pages concurrently and return the durable task immediately. */
+  startGeneration(taskId, pageIndices, requestId) {
+    const task = this.readTask(taskId);
+    if (!task || !this.providers) {
+      throw createCarouselError("轮播任务不存在或图片服务未初始化。", 404, "CAROUSEL_TASK_NOT_FOUND");
+    }
+    const requested = Array.isArray(pageIndices) ? pageIndices : [];
+    const uniqueIndices = [];
+    for (let index = 0; index < requested.length; index += 1) {
+      const pageIndex = Number(requested[index]);
+      if (!Number.isInteger(pageIndex) || !task.pages[pageIndex]) {
+        throw createCarouselError("轮播分镜索引无效。", 400, "CAROUSEL_PAGE_NOT_FOUND");
+      }
+      if (uniqueIndices.indexOf(pageIndex) < 0) {
+        uniqueIndices.push(pageIndex);
+      }
+    }
+    for (let index = 0; index < uniqueIndices.length; index += 1) {
+      const pageIndex = uniqueIndices[index];
+      const currentTask = this.readTask(task.id);
+      if (currentTask && currentTask.pages[pageIndex] && currentTask.pages[pageIndex].status === "generating") {
+        continue;
+      }
+      /** Keep an unexpected background failure from becoming an unhandled rejection. */
+      function ignoreCarouselGenerationFailure() {
+        return;
+      }
+      this.generatePage(task.id, pageIndex, requestId).catch(ignoreCarouselGenerationFailure);
+    }
+    return this.readTask(task.id) || task;
   }
 
   /** Delete one local generated image owned by an abandoned runtime task. */

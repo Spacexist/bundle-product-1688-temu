@@ -100,6 +100,17 @@ const directImageTaskSchema = z.object({
   size: z.string().optional()
 });
 
+const skuBlendTaskSchema = z.object({
+  client_task_id: z.string().regex(/^sku-blend-[a-zA-Z0-9-]+$/),
+  temu_main_id: z.union([z.string(), z.number()]).transform(String),
+  temu_platform_id: z.union([z.string(), z.number()]).transform(String).optional(),
+  sku_id: z.union([z.string(), z.number()]).transform(String).optional(),
+  sku_index: z.number().int().nonnegative(),
+  image_urls: z.array(z.string().min(1)).length(2),
+  prompt: z.string().min(1),
+  size: z.string().optional()
+});
+
 const packingWorkflowPromptSchema = z.object({
   temu_main_id: z.union([z.string(), z.number()]),
   image_url: z.string().min(1),
@@ -131,6 +142,10 @@ const carouselPlanUpdateSchema = z.object({
 const carouselPageUpdateSchema = z.object({
   purpose: z.string().max(500).optional(),
   prompt: z.string().trim().min(1).max(10000)
+});
+
+const carouselGenerationSchema = z.object({
+  page_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10)
 });
 
 const carouselApplySchema = z.object({
@@ -169,9 +184,12 @@ module.exports = {
   workbenchFocusSchema: workbenchFocusSchema,
   imageEditSchema: imageEditSchema,
   directImageTaskSchema: directImageTaskSchema,
+  skuBlendTaskSchema: skuBlendTaskSchema,
   workflowPromptSchema: workflowPromptSchema,
+  carouselWorkflowPromptSchema: carouselWorkflowPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
   carouselPageUpdateSchema: carouselPageUpdateSchema,
+  carouselGenerationSchema: carouselGenerationSchema,
   carouselApplySchema: carouselApplySchema,
   workflowGenerateSchema: workflowGenerateSchema,
   workflowCompleteSchema: workflowCompleteSchema,

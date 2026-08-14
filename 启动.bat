@@ -29,6 +29,20 @@ if /i "%~1"=="--check" (
   echo [OK] Startup environment check passed.
   exit /b 0
 )
+
+rem Stop stale API and Vite listeners before starting a fresh local service pair.
+echo [CLEANUP] Checking ports 3000 and 5173 for old services...
+for %%G in (3000 5173) do (
+  for /f "tokens=5" %%P in ('netstat -ano -p tcp ^| findstr /R /C:":%%G .*LISTENING"') do (
+    echo [CLEANUP] Releasing port %%G from PID %%P...
+    taskkill /PID %%P /T /F >nul 2>&1
+  )
+)
+ping 127.0.0.1 -n 2 >nul
+for %%G in (3000 5173) do (
+  for /f "tokens=5" %%P in ('netstat -ano -p tcp ^| findstr /R /C:":%%G .*LISTENING"') do goto :port_cleanup_error
+)
+
 echo [START] Open http://127.0.0.1:5173 if the browser does not open.
 
 rem Open the browser after the local services have had time to start.
@@ -57,6 +71,10 @@ goto :fatal_exit
 
 :install_error
 echo [ERROR] npm install failed. Check the network connection and try again.
+goto :fatal_exit
+
+:port_cleanup_error
+echo [ERROR] Failed to stop an old service on port 3000 or 5173.
 goto :fatal_exit
 
 :fatal_exit
