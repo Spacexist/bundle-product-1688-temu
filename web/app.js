@@ -253,6 +253,7 @@ function requestWorkflowJson(url, options) {
 
 const VIEW_STATE_STORAGE_KEY = "pod-auto-build.view-state";
 const CAROUSEL_UNDO_STORAGE_KEY = "pod-auto-build.carousel-undo";
+const WORKFLOW_INDICATOR_ACK_STORAGE_KEY = "pod-auto-build.workflow-indicator-ack";
 
 /** Read the last workbench selection without breaking startup when browser storage is unavailable. */
 function readPersistedViewState() {
@@ -271,6 +272,17 @@ function readCarouselUndoTokens() {
     const raw = window.localStorage.getItem(CAROUSEL_UNDO_STORAGE_KEY);
     const tokens = raw ? JSON.parse(raw) : {};
     return tokens && typeof tokens === "object" ? tokens : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+/** Read durable intelligent-packing indicator acknowledgements retained by this browser. */
+function readWorkflowIndicatorAcknowledgements() {
+  try {
+    const raw = window.localStorage.getItem(WORKFLOW_INDICATOR_ACK_STORAGE_KEY);
+    const acknowledgements = raw ? JSON.parse(raw) : {};
+    return acknowledgements && typeof acknowledgements === "object" ? acknowledgements : {};
   } catch (error) {
     return {};
   }
@@ -571,7 +583,9 @@ const app = createApp({
       workflowPromptBusy: false,
       workflowPromptBusyKeys: {},
       workflowTaskErrorKeys: {},
+      workflowIndicatorAcknowledgements: readWorkflowIndicatorAcknowledgements(),
       workflowGenerateBusy: false,
+      workflowGenerateBusyKeys: {},
       workflowSearchBusyKeys: {},
       workflowStatusText: "等待选择 Temu 商品。",
       workflowStatusType: "normal",
@@ -1465,6 +1479,7 @@ const app = createApp({
     applyWorkflowPayload: function applyWorkflowPayload(payload) {
       const state = payload && payload.workflow ? payload.workflow : payload;
       this.workflow = state && typeof state === "object" ? state : { active_temu_main_id: "", tasks: {} };
+      this.resumePendingWorkflowGenerations();
       const task = this.selectedWorkflowTask;
       if (task && Array.isArray(task.prompts) && !this.workflowPromptBusy) {
         this.syncWorkflowPrompts(task);
@@ -1474,6 +1489,19 @@ const app = createApp({
           ? "success"
           : task.status === "generation_error" || task.status === "search_error" ? "error" : "normal";
         this.setWorkflowStatus(this.workflowTaskStatusText(this.selectedTemuMainId), statusType);
+      }
+    },
+
+    /** Resume every persisted prompt task that has not yet entered image generation. */
+    resumePendingWorkflowGenerations: function resumePendingWorkflowGenerations() {
+      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
+      const taskIds = Object.keys(tasks);
+      for (let index = 0; index < taskIds.length; index += 1) {
+        const mainId = String(taskIds[index]);
+        const task = tasks[mainId];
+        if (task && task.status === "prompts_ready" && Array.isArray(task.prompts) && task.prompts.length === 4 && !this.workflowGenerateBusyKeys[mainId]) {
+          this.generateWorkflowImages(undefined, mainId, task.prompts);
+        }
       }
     },
 
@@ -1511,11 +1539,16 @@ const app = createApp({
       const images = this.workflowSourceImages;
       this.workflowPromptDrafts = {};
       this.workflowSearchBusyKeys = {};
-      this.workflowPromptBusy = Boolean(this.workflowPromptBusyKeys[String(record && record.main_id || "")]);
+      const selectedMainId = String(record && record.main_id || "");
+      this.workflowPromptBusy = Boolean(this.workflowPromptBusyKeys[selectedMainId]);
+      this.workflowGenerateBusy = Boolean(this.workflowGenerateBusyKeys[selectedMainId]);
       this.workflowSelectedImageUrl = task && task.selected_image_url ? task.selected_image_url : record && record.main_image_url ? record.main_image_url : images[0] || "";
       this.workflowSelectedResultIndex = task && Number.isFinite(Number(task.selected_result_index)) ? Number(task.selected_result_index) : -1;
       this.syncWorkflowPrompts(task);
       this.setWorkflowStatus(this.workflowPromptBusy ? "Kimi 正在后台分析当前商品…" : task && task.status !== "idle" ? this.workflowTaskStatusText(this.selectedTemuMainId) : record ? "已选择 Temu 商品，请确认分析主图。" : "等待选择 Temu 商品。", "normal");
+      if (task && task.status === "prompts_ready" && Array.isArray(task.prompts) && task.prompts.length === 4 && !this.workflowPromptBusy && !this.workflowGenerateBusy) {
+        this.generateWorkflowImages(undefined, selectedMainId, task.prompts);
+      }
     },
 
     /** Copy persisted workflow prompts into editable page-local objects. */
@@ -1628,13 +1661,12 @@ const app = createApp({
       }).then(function handleWorkflowPromptSuccess(payload) {
         view.storeWorkflowTask(requestedTemuMainId, payload.task);
         delete view.workflowTaskErrorKeys[requestedTemuMainId];
-        if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
-          return;
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.syncWorkflowPrompts(payload.task);
+          view.workflowSelectedResultIndex = -1;
+          view.setWorkflowStatus("四个组货方向已生成，正在自动生成四张图片…", "normal");
         }
-        view.syncWorkflowPrompts(payload.task);
-        view.workflowSelectedResultIndex = -1;
-        view.setWorkflowStatus("四个组货方向已生成，正在自动生成四张图片…", "normal");
-        view.generateWorkflowImages();
+        view.generateWorkflowImages(undefined, requestedTemuMainId, payload.task && payload.task.prompts);
       }).catch(function handleWorkflowPromptError(error) {
         view.workflowTaskErrorKeys[requestedTemuMainId] = true;
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
@@ -1651,22 +1683,28 @@ const app = createApp({
     },
 
     /** Generate the four candidate images immediately after Kimi returns directions. */
-    generateWorkflowImages: function generateWorkflowImages(index) {
-      if (!this.selectedTemuRecord || this.workflowPrompts.length !== 4) {
+    generateWorkflowImages: function generateWorkflowImages(index, requestedMainId, requestedPrompts) {
+      const temuMainId = String(requestedMainId || this.selectedTemuRecord && this.selectedTemuRecord.main_id || "");
+      const promptSource = Array.isArray(requestedPrompts) ? requestedPrompts : this.workflowPrompts;
+      if (!temuMainId || promptSource.length !== 4 || this.workflowGenerateBusyKeys[temuMainId]) {
         return;
       }
-      this.workflowGenerateBusy = true;
-      this.setWorkflowStatus(index === undefined ? "BeeAPI 正在依次生成四张白底图…" : "BeeAPI 正在重新生成第 " + (Number(index) + 1) + " 张图…", "normal");
-      const prompts = [];
-      for (let promptIndex = 0; promptIndex < this.workflowPrompts.length; promptIndex += 1) {
-        prompts.push(this.workflowPrompts[promptIndex].prompt);
+      this.workflowGenerateBusyKeys[temuMainId] = true;
+      if (String(this.selectedTemuMainId) === temuMainId) {
+        this.workflowGenerateBusy = true;
+        this.setWorkflowStatus(index === undefined ? "BeeAPI 正在依次生成四张白底图…" : "BeeAPI 正在重新生成第 " + (Number(index) + 1) + " 张图…", "normal");
       }
-      const body = { temu_main_id: this.selectedTemuRecord.main_id, prompts: prompts };
+      const prompts = [];
+      for (let promptIndex = 0; promptIndex < promptSource.length; promptIndex += 1) {
+        const promptItem = promptSource[promptIndex] || {};
+        prompts.push(String(promptItem.prompt || ""));
+      }
+      const body = { temu_main_id: temuMainId, prompts: prompts };
       if (index !== undefined) {
         body.index = Number(index);
       }
       const view = this;
-      const requestedTemuMainId = String(this.selectedTemuRecord.main_id);
+      const requestedTemuMainId = temuMainId;
       delete this.workflowTaskErrorKeys[requestedTemuMainId];
       requestWorkflowJson(workflowApiUrl("/workflow/generate"), {
         method: "POST",
@@ -1674,7 +1712,12 @@ const app = createApp({
         body: JSON.stringify(body)
       }).then(function handleWorkflowGenerationSuccess(payload) {
         view.storeWorkflowTask(requestedTemuMainId, payload.task);
-        delete view.workflowTaskErrorKeys[requestedTemuMainId];
+        const generationFailed = view.workflowTaskHasGenerationError(payload.task) || !view.workflowTaskHasGeneratedAllImages(payload.task);
+        if (generationFailed) {
+          view.workflowTaskErrorKeys[requestedTemuMainId] = true;
+        } else {
+          delete view.workflowTaskErrorKeys[requestedTemuMainId];
+        }
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
           return;
         }
@@ -1684,7 +1727,7 @@ const app = createApp({
         } else {
           delete view.workflowPromptDrafts[String(Number(index))];
         }
-        view.setWorkflowStatus(index === undefined ? "四张白底图已生成，请选择一张。" : "图片已重新生成。", "success");
+        view.setWorkflowStatus(generationFailed ? "生图已结束，存在生成失败的图片。" : index === undefined ? "四张白底图已生成，请选择一张。" : "图片已重新生成。", generationFailed ? "error" : "success");
       }).catch(function handleWorkflowGenerationError(error) {
         view.workflowTaskErrorKeys[requestedTemuMainId] = true;
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
@@ -1692,13 +1735,17 @@ const app = createApp({
         }
         view.setWorkflowStatus("BeeAPI 生图失败 [" + getWorkflowErrorCode(error) + "]：" + error.message, "error");
       }).finally(function finishWorkflowGenerationRequest() {
-        view.workflowGenerateBusy = false;
+        delete view.workflowGenerateBusyKeys[requestedTemuMainId];
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.workflowGenerateBusy = false;
+        }
       });
     },
 
     /** Select one generated image for the 1688 image-search step. */
     selectWorkflowResult: function selectWorkflowResult(index) {
       if (this.workflowPrompts[index] && this.workflowPrompts[index].image_url) {
+        this.acknowledgeWorkflowTaskIndicator(this.selectedTemuRecord);
         this.workflowSelectedResultIndex = Number(index);
       }
     },
@@ -3699,19 +3746,112 @@ const app = createApp({
         return false;
       }
       const mainId = String(record.main_id || "");
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+        return true;
+      }
       const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
       const task = tasks[mainId];
-      return Boolean(this.workflowPromptBusyKeys[mainId] || this.workflowTaskErrorKeys[mainId] || task && task.status && task.status !== "idle");
+      if (!this.workflowTaskErrorKeys[mainId] && (!task || !Array.isArray(task.prompts) || !task.prompts.length)) {
+        return false;
+      }
+      return !this.isWorkflowTaskIndicatorAcknowledged(record);
     },
 
-    /** Return whether one intelligent-packing task has completed its binding workflow. */
+    /** Build one stable signature for the current intelligent-packing result shown by an indicator. */
+    workflowTaskIndicatorSignature: function workflowTaskIndicatorSignature(record) {
+      if (!record) {
+        return "";
+      }
+      const mainId = String(record.main_id || "");
+      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
+      const task = tasks[mainId] || {};
+      const signatureParts = [String(task.status || ""), String(task.selected_image_url || ""), String(task.custom_prompt || "")];
+      const prompts = Array.isArray(task.prompts) ? task.prompts : [];
+      for (let index = 0; index < prompts.length; index += 1) {
+        signatureParts.push(String(prompts[index].status || ""));
+        signatureParts.push(String(prompts[index].image_url || ""));
+        signatureParts.push(String(prompts[index].error_code || ""));
+      }
+      if (this.workflowTaskErrorKeys[mainId]) {
+        signatureParts.push("client-error");
+      }
+      return signatureParts.join("|");
+    },
+
+    /** Return whether the user already opened the current intelligent-packing result. */
+    isWorkflowTaskIndicatorAcknowledged: function isWorkflowTaskIndicatorAcknowledged(record) {
+      if (!record) {
+        return false;
+      }
+      const mainId = String(record.main_id || "");
+      const signature = this.workflowTaskIndicatorSignature(record);
+      return Boolean(signature && this.workflowIndicatorAcknowledgements[mainId] === signature);
+    },
+
+    /** Record that the user opened the current intelligent-packing result. */
+    acknowledgeWorkflowTaskIndicator: function acknowledgeWorkflowTaskIndicator(record) {
+      if (!record) {
+        return;
+      }
+      const mainId = String(record.main_id || "");
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+        return;
+      }
+      const signature = this.workflowTaskIndicatorSignature(record);
+      if (!signature) {
+        return;
+      }
+      this.workflowIndicatorAcknowledgements[mainId] = signature;
+      try {
+        window.localStorage.setItem(WORKFLOW_INDICATOR_ACK_STORAGE_KEY, JSON.stringify(this.workflowIndicatorAcknowledgements));
+      } catch (error) {
+        return;
+      }
+    },
+
+    /** Return whether all four intelligent-packing images generated successfully. */
+    workflowTaskHasGeneratedAllImages: function workflowTaskHasGeneratedAllImages(task) {
+      const prompts = task && Array.isArray(task.prompts) ? task.prompts : [];
+      if (prompts.length !== 4) {
+        return false;
+      }
+      for (let index = 0; index < prompts.length; index += 1) {
+        if (prompts[index].status !== "generated" || !prompts[index].image_url) {
+          return false;
+        }
+      }
+      return true;
+    },
+
+    /** Return whether one intelligent-packing task contains any image-generation failure. */
+    workflowTaskHasGenerationError: function workflowTaskHasGenerationError(task) {
+      if (!task) {
+        return false;
+      }
+      if (task.status === "generation_error") {
+        return true;
+      }
+      const prompts = Array.isArray(task.prompts) ? task.prompts : [];
+      for (let index = 0; index < prompts.length; index += 1) {
+        if (prompts[index].status === "error" || prompts[index].error_code) {
+          return true;
+        }
+      }
+      return false;
+    },
+
+    /** Return whether one intelligent-packing task has finished generating all four images. */
     isWorkflowTaskComplete: function isWorkflowTaskComplete(record) {
       if (!record) {
         return false;
       }
+      const mainId = String(record.main_id || "");
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+        return false;
+      }
       const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
-      const task = tasks[String(record.main_id || "")];
-      return Boolean(task && task.status === "completed");
+      const task = tasks[mainId];
+      return this.workflowTaskHasGeneratedAllImages(task);
     },
 
     /** Return whether one intelligent-packing task retained a generation or search failure. */
@@ -3721,8 +3861,11 @@ const app = createApp({
       }
       const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
       const mainId = String(record.main_id || "");
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+        return false;
+      }
       const task = tasks[mainId];
-      return Boolean(this.workflowTaskErrorKeys[mainId] || task && (task.status === "generation_error" || task.status === "search_error"));
+      return Boolean(this.workflowTaskErrorKeys[mainId] || this.workflowTaskHasGenerationError(task));
     },
 
     /** Select one Temu product and open its intelligent-packing workspace. */
@@ -3730,6 +3873,7 @@ const app = createApp({
       if (!record) {
         return;
       }
+      this.acknowledgeWorkflowTaskIndicator(record);
       this.selectedTemuMainId = record.main_id;
       this.selectBound1688ForTemu(record);
       this.workspaceMode = "smart";
