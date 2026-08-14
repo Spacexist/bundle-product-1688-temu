@@ -87,6 +87,19 @@ const imageEditSchema = z.object({
   carousel_page_index: z.number().int().min(0).max(9).optional()
 });
 
+const directImageTaskSchema = z.object({
+  client_task_id: z.string().regex(/^direct-[a-zA-Z0-9-]+$/),
+  temu_main_id: z.union([z.string(), z.number()]).transform(String),
+  temu_platform_id: z.union([z.string(), z.number()]).transform(String).optional(),
+  mode: z.enum(["edit", "fusion"]),
+  image_urls: z.array(z.string().min(1)).min(1).max(2),
+  source_type: z.enum(["gallery", "detail"]),
+  source_indices: z.array(z.number().int().nonnegative()).max(2).optional(),
+  detail_index: z.number().int().min(-1).optional(),
+  prompt: z.string().min(1),
+  size: z.string().optional()
+});
+
 const packingWorkflowPromptSchema = z.object({
   temu_main_id: z.union([z.string(), z.number()]),
   image_url: z.string().min(1),
@@ -155,6 +168,7 @@ module.exports = {
   operationUndoSchema: operationUndoSchema,
   workbenchFocusSchema: workbenchFocusSchema,
   imageEditSchema: imageEditSchema,
+  directImageTaskSchema: directImageTaskSchema,
   workflowPromptSchema: workflowPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
   carouselPageUpdateSchema: carouselPageUpdateSchema,

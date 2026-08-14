@@ -12,6 +12,7 @@ const collectionModule = require("./services/collection.service");
 const providerServiceModule = require("./services/provider.service");
 const workflowServiceModule = require("./workflow-service");
 const carouselRuntimeModule = require("./services/carousel-runtime.service");
+const directImageRuntimeModule = require("./services/direct-image-runtime.service");
 const bindingServiceModule = require("./binding-service");
 const productControllerModule = require("./controllers/product.controller");
 const imageControllerModule = require("./controllers/image.controller");
@@ -83,6 +84,10 @@ function createApp() {
     writeLog: diagnostics.write.bind(diagnostics),
     images: images
   });
+  const directImages = new directImageRuntimeModule.DirectImageRuntimeService({
+    cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
+    providers: providers
+  });
   const workflow = workflowServiceModule.createWorkflowService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     readConfig: configModule.readServerConfig,
@@ -121,7 +126,7 @@ function createApp() {
   const imageController = new imageControllerModule.ImageController({ images: images, imageSearch: imageSearch, workflow: workflow });
   const configController = new configControllerModule.ConfigController();
   const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
-  const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel });
+  const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel, directImages: directImages });
   const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, products: products });
   const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics });
   const app = express();

@@ -5,6 +5,7 @@ class ProviderController {
     const settings = options || {};
     this.providers = settings.providers;
     this.carousel = settings.carousel;
+    this.directImages = settings.directImages;
   }
 
   /** Merge the selected Temu and 1688 Listing values through Kimi. */
@@ -61,6 +62,61 @@ class ProviderController {
       if (taskId && this.carousel) {
         this.carousel.markPageFailed(taskId, pageIndex, error);
       }
+      next(error);
+    }
+  }
+
+  /** Create one persistent direct-image task and return before provider completion. */
+  createDirectImageTask(request, response, next) {
+    try {
+      const task = this.directImages.createAndStartTask(request.validatedBody, request.requestId);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return every retained direct-image task used by Workbench reopen controls. */
+  getDirectImageTasks(request, response, next) {
+    try {
+      response.json({ ok: true, data: { tasks: this.directImages.readTasks() }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return the newest retained direct-image task for one Temu product. */
+  getDirectImageTaskForProduct(request, response, next) {
+    try {
+      const task = this.directImages.findTaskByTemuMainId(request.params.temuMainId);
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return one retained direct-image task by its stable identifier. */
+  getDirectImageTask(request, response, next) {
+    try {
+      const task = this.directImages.readTask(request.params.taskId);
+      if (!task) {
+        const error = new Error("单结果图片任务不存在。");
+        error.statusCode = 404;
+        error.code = "DIRECT_IMAGE_TASK_NOT_FOUND";
+        throw error;
+      }
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Delete one retained direct-image task after apply or explicit abandonment. */
+  deleteDirectImageTask(request, response, next) {
+    try {
+      const task = this.directImages.deleteTask(request.params.taskId);
+      response.json({ ok: true, data: { deleted: Boolean(task) }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
       next(error);
     }
   }

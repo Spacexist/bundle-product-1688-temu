@@ -539,6 +539,10 @@ const app = createApp({
       imageEditorError: "",
       imageEditorRequestId: 0,
       imageEditorBackdropPressed: false,
+      imageDirectTask: null,
+      imageDirectTasksByMainId: {},
+      imageDirectPollTimer: null,
+      imageDirectIndicatorTimer: null,
       imageCarouselCount: 1,
       imageCarouselMarketLanguage: "美国 / English",
       imageCarouselReasoningEnabled: false,
@@ -606,6 +610,7 @@ const app = createApp({
     this.topbarLastScrollY = Math.max(0, Number(window.scrollY) || 0);
     this.loadImageEditConfig();
     this.loadWorkflowPayload();
+    this.refreshDirectImageTaskIndicators();
     if (this.renderMode === "realtime") {
       this.startRealtimeCache();
     }
@@ -617,6 +622,14 @@ const app = createApp({
     window.removeEventListener("blur", this.clearImageDragState);
     window.removeEventListener("scroll", this.handleWindowScroll);
     this.cancelSkuImagePickerClose();
+    if (this.imageDirectPollTimer) {
+      window.clearTimeout(this.imageDirectPollTimer);
+      this.imageDirectPollTimer = null;
+    }
+    if (this.imageDirectIndicatorTimer) {
+      window.clearTimeout(this.imageDirectIndicatorTimer);
+      this.imageDirectIndicatorTimer = null;
+    }
     this.stopRealtimeCache();
   },
   computed: {
@@ -1277,14 +1290,17 @@ const app = createApp({
       }
       this.updateGallerySelection(this.selectedTemuRecord, "temu", previousTemuGalleryIndex);
       this.updateGallerySelection(this.selected1688Record, "1688", previousAliGalleryIndex);
-      this.galleryEditRecordKey = "";
-      this.galleryEditSelection = [];
-      this.imageEditorSourceType = "gallery";
-      this.imageEditorSourceUrls = [];
-      this.imageEditorDetailIndex = -1;
-      this.imageEditorRecordKey = "";
+      const retainImageEditor = Boolean(this.imageEditorBusy || this.imageEditorGeneratedUrl || this.imageDirectTask || this.imageCarouselTask);
+      if (!retainImageEditor) {
+        this.galleryEditRecordKey = "";
+        this.galleryEditSelection = [];
+        this.imageEditorSourceType = "gallery";
+        this.imageEditorSourceUrls = [];
+        this.imageEditorDetailIndex = -1;
+        this.imageEditorRecordKey = "";
+        this.imageEditorOpen = false;
+      }
       this.syncWorkflowSelection();
-      this.imageEditorOpen = false;
       if (payload && Array.isArray(payload.mappings)) {
         this.loadMapping(payload);
       }
@@ -1300,6 +1316,7 @@ const app = createApp({
       const records = payload && Array.isArray(payload.records) ? payload.records : [];
       this.applyRecords(records, "cache.json", payload);
       this.refreshCarouselTaskIndicators();
+      this.refreshDirectImageTaskIndicators();
       if (instruction.type === "binding_completed") {
         const temuMainId = String(instruction.temu_main_id || "");
         const aliMainId = String(instruction.ali_main_id || "");
@@ -3689,7 +3706,9 @@ const app = createApp({
       this.imageEditorPrompt = this.imageEditorEditPrompt;
       this.imageEditorGeneratedUrl = "";
       this.imageEditorError = "";
+      this.imageDirectTask = null;
       this.imageEditorOpen = true;
+      this.loadDirectImageTaskForProduct(record, [source]);
     },
 
     /** Return the selected Temu gallery image sources shown in the editor dialog. */
@@ -3715,6 +3734,203 @@ const app = createApp({
       const key = item ? String(item.temu_main_id || "") : "";
       if (key) {
         this.imageCarouselTasksByMainId[key] = item;
+      }
+    },
+
+    /** Store one direct-image task under its owning Temu product. */
+    storeDirectImageTask: function storeDirectImageTask(task) {
+      if (!task || !task.id) {
+        return;
+      }
+      const mainId = String(task.temu_main_id || "");
+      if (mainId) {
+        this.imageDirectTasksByMainId[mainId] = task;
+      }
+    },
+
+    /** Return whether one direct-image task belongs to the current source selection. */
+    directImageTaskMatches: function directImageTaskMatches(task, record, sources) {
+      if (!task || !record || String(task.temu_main_id || "") !== String(record.main_id || "")) {
+        return false;
+      }
+      const taskSources = Array.isArray(task.source_image_urls) ? task.source_image_urls : [];
+      const selectedSources = Array.isArray(sources) ? sources : [];
+      if (taskSources.length !== selectedSources.length) {
+        return false;
+      }
+      for (let index = 0; index < taskSources.length; index += 1) {
+        if (String(taskSources[index]) !== String(selectedSources[index])) {
+          return false;
+        }
+      }
+      return true;
+    },
+
+    /** Apply one persisted direct-image task to the currently retained editor session. */
+    applyDirectImageTask: function applyDirectImageTask(task) {
+      if (!task || !task.id) {
+        return;
+      }
+      this.storeDirectImageTask(task);
+      this.imageDirectTask = task;
+      const status = String(task.status || "");
+      if (status === "succeeded") {
+        this.imageEditorBusy = false;
+        this.imageEditorGeneratedUrl = String(task.image_url || "");
+        this.imageEditorError = this.imageEditorGeneratedUrl ? "" : "[DIRECT_IMAGE_RESULT_MISSING] 图片任务没有返回生成结果。";
+        return;
+      }
+      if (status === "failed" || status === "interrupted") {
+        this.imageEditorBusy = false;
+        this.imageEditorGeneratedUrl = "";
+        this.imageEditorError = "[" + String(task.error_code || "DIRECT_IMAGE_GENERATION_FAILED") + "] " + String(task.error || "图片生成失败。");
+        return;
+      }
+      this.imageEditorBusy = true;
+      this.imageEditorGeneratedUrl = "";
+      this.imageEditorError = "";
+    },
+
+    /** Poll one direct-image task until the backend persists a terminal result. */
+    pollDirectImageTask: function pollDirectImageTask(taskId, remainingMisses) {
+      const safeTaskId = String(taskId || "");
+      if (!safeTaskId) {
+        return;
+      }
+      if (this.imageDirectPollTimer) {
+        window.clearTimeout(this.imageDirectPollTimer);
+        this.imageDirectPollTimer = null;
+      }
+      const misses = remainingMisses === undefined ? 60 : Number(remainingMisses);
+      const view = this;
+      fetch(apiUrl("/images/direct-tasks/" + encodeURIComponent(safeTaskId)), { cache: "no-store" }).then(function handleDirectTaskResponse(response) {
+        return response.json().then(function handleDirectTaskPayload(payload) {
+          if (!response.ok || !payload || !payload.ok) {
+            const error = new Error(getApiErrorMessage(payload, "单结果图片任务读取失败。"));
+            error.statusCode = Number(response.status || 500);
+            throw error;
+          }
+          return payload.data && payload.data.task ? payload.data.task : null;
+        });
+      }).then(function handleDirectTaskLoaded(task) {
+        if (!task) {
+          throw new Error("单结果图片任务不存在。");
+        }
+        view.storeDirectImageTask(task);
+        if (!view.imageDirectTask || String(view.imageDirectTask.id) !== safeTaskId) {
+          return;
+        }
+        view.applyDirectImageTask(task);
+        if (task.status === "queued" || task.status === "generating") {
+          /** Continue polling while the provider task remains active. */
+          function continueDirectTaskPolling() {
+            view.pollDirectImageTask(safeTaskId, 60);
+          }
+          view.imageDirectPollTimer = window.setTimeout(continueDirectTaskPolling, 900);
+        }
+      }).catch(function handleDirectTaskPollError(error) {
+        if (!view.imageDirectTask || String(view.imageDirectTask.id) !== safeTaskId) {
+          return;
+        }
+        if (misses > 0) {
+          /** Retry task discovery when the POST response or one local request was interrupted. */
+          function retryDirectTaskPolling() {
+            view.pollDirectImageTask(safeTaskId, misses - 1);
+          }
+          view.imageDirectPollTimer = window.setTimeout(retryDirectTaskPolling, 1000);
+          return;
+        }
+        view.imageEditorBusy = false;
+        view.imageEditorError = "[DIRECT_IMAGE_TASK_UNREACHABLE] " + String(error && error.message || "单结果图片任务无法恢复。");
+      });
+    },
+
+    /** Load the newest direct-image task when reopening the same source selection. */
+    loadDirectImageTaskForProduct: function loadDirectImageTaskForProduct(record, sources) {
+      if (!record) {
+        return;
+      }
+      const retainedTask = this.imageDirectTasksByMainId[String(record.main_id || "")];
+      if (this.directImageTaskMatches(retainedTask, record, sources)) {
+        this.applyDirectImageTask(retainedTask);
+        if (retainedTask.status === "queued" || retainedTask.status === "generating") {
+          this.pollDirectImageTask(retainedTask.id);
+        }
+        return;
+      }
+      const view = this;
+      fetch(apiUrl("/images/direct-tasks/product/" + encodeURIComponent(String(record.main_id || ""))), { cache: "no-store" }).then(function handleProductDirectTaskResponse(response) {
+        if (!response.ok) {
+          return null;
+        }
+        return response.json();
+      }).then(function handleProductDirectTaskPayload(payload) {
+        const task = payload && payload.ok && payload.data ? payload.data.task : null;
+        if (!view.directImageTaskMatches(task, record, sources)) {
+          return;
+        }
+        view.applyDirectImageTask(task);
+        if (task.status === "queued" || task.status === "generating") {
+          view.pollDirectImageTask(task.id);
+        }
+      }).catch(function ignoreProductDirectTaskReadFailure() {
+        return;
+      });
+    },
+
+    /** Remove one retained direct-image task after apply or explicit reset. */
+    deleteDirectImageTask: function deleteDirectImageTask() {
+      const task = this.imageDirectTask;
+      if (!task || !task.id) {
+        return;
+      }
+      const taskId = String(task.id);
+      const mainId = String(task.temu_main_id || "");
+      if (this.imageDirectPollTimer) {
+        window.clearTimeout(this.imageDirectPollTimer);
+        this.imageDirectPollTimer = null;
+      }
+      this.imageDirectTask = null;
+      if (mainId) {
+        delete this.imageDirectTasksByMainId[mainId];
+      }
+      fetch(apiUrl("/images/direct-tasks/" + encodeURIComponent(taskId)), { method: "DELETE" }).catch(function ignoreDirectTaskDeleteFailure() {
+        return;
+      });
+    },
+
+    /** Refresh every retained direct-image task used by homepage reopen controls. */
+    async refreshDirectImageTaskIndicators() {
+      try {
+        const response = await fetch(apiUrl("/images/direct-tasks"), { cache: "no-store" });
+        const payload = await response.json();
+        if (!response.ok || !payload || !payload.ok) {
+          return;
+        }
+        const tasks = payload.data && Array.isArray(payload.data.tasks) ? payload.data.tasks : [];
+        const taskLookup = {};
+        let hasActiveTask = false;
+        for (let index = 0; index < tasks.length; index += 1) {
+          const key = String(tasks[index] && tasks[index].temu_main_id || "");
+          if (key) {
+            taskLookup[key] = tasks[index];
+          }
+          if (tasks[index] && (tasks[index].status === "queued" || tasks[index].status === "generating")) {
+            hasActiveTask = true;
+          }
+        }
+        this.imageDirectTasksByMainId = taskLookup;
+        if (hasActiveTask && !this.imageDirectIndicatorTimer) {
+          const view = this;
+          /** Refresh background indicators until every retained direct-image task settles. */
+          function refreshActiveDirectImageIndicators() {
+            view.imageDirectIndicatorTimer = null;
+            view.refreshDirectImageTaskIndicators();
+          }
+          this.imageDirectIndicatorTimer = window.setTimeout(refreshActiveDirectImageIndicators, 1000);
+        }
+      } catch (error) {
+        return;
       }
     },
 
@@ -3887,6 +4103,9 @@ const app = createApp({
         return false;
       }
       const mainId = String(record.main_id || "");
+      if (this.imageDirectTasksByMainId[mainId]) {
+        return true;
+      }
       if (this.imageCarouselTasksByMainId[mainId]) {
         return true;
       }
@@ -3900,6 +4119,11 @@ const app = createApp({
         return false;
       }
       const mainId = String(record.main_id || "");
+      const directTask = this.imageDirectTasksByMainId[mainId]
+        || (this.imageDirectTask && String(this.imageDirectTask.temu_main_id || "") === mainId ? this.imageDirectTask : null);
+      if (directTask && (directTask.status === "failed" || directTask.status === "interrupted" || directTask.error_code)) {
+        return true;
+      }
       const task = this.imageCarouselTasksByMainId[mainId]
         || (this.imageEditorRecordKey === this.imageRecordKey(record) ? this.imageCarouselTask : null);
       if (task) {
@@ -3926,6 +4150,11 @@ const app = createApp({
         return false;
       }
       const mainId = String(record.main_id || "");
+      const directTask = this.imageDirectTasksByMainId[mainId]
+        || (this.imageDirectTask && String(this.imageDirectTask.temu_main_id || "") === mainId ? this.imageDirectTask : null);
+      if (directTask) {
+        return directTask.status === "succeeded" && Boolean(directTask.image_url);
+      }
       const task = this.imageCarouselTasksByMainId[mainId]
         || (this.imageEditorRecordKey === this.imageRecordKey(record) ? this.imageCarouselTask : null);
       if (task) {
@@ -3950,11 +4179,24 @@ const app = createApp({
         return;
       }
       const mainId = String(record.main_id || "");
-      const task = this.imageCarouselTasksByMainId[mainId] || null;
+      const directTask = this.imageDirectTasksByMainId[mainId] || null;
+      const task = directTask ? null : this.imageCarouselTasksByMainId[mainId] || null;
       const sameSession = this.imageEditorRecordKey === this.imageRecordKey(record)
-        && Boolean(this.imageEditorBusy || this.imageEditorGeneratedUrl || this.imageCarouselTask);
+        && Boolean(this.imageEditorBusy || this.imageEditorGeneratedUrl || this.imageDirectTask || this.imageCarouselTask);
       this.selectedTemuMainId = record.main_id;
       this.selectBound1688ForTemu(record);
+      if (!sameSession && directTask) {
+        this.galleryEditRecordKey = this.imageRecordKey(record);
+        this.galleryEditSelection = directTask.source_type === "gallery" && Array.isArray(directTask.source_indices) ? directTask.source_indices.slice() : [];
+        this.imageEditorSourceType = directTask.source_type === "detail" ? "detail" : "gallery";
+        this.imageEditorSourceUrls = this.imageEditorSourceType === "detail" ? directTask.source_image_urls.slice() : [];
+        this.imageEditorDetailIndex = Number(directTask.detail_index === undefined ? -1 : directTask.detail_index);
+        this.imageEditorRecordKey = this.galleryEditRecordKey;
+        this.imageEditorPrompt = String(directTask.prompt || "");
+        this.imageCarouselCount = 1;
+        this.imageCarouselTask = null;
+        this.applyDirectImageTask(directTask);
+      }
       if (!sameSession && task) {
         this.galleryEditRecordKey = this.imageRecordKey(record);
         this.galleryEditSelection = Array.isArray(task.source_indices) ? task.source_indices.slice() : [];
@@ -3979,6 +4221,9 @@ const app = createApp({
       if (task) {
         this.loadCarouselTaskForProduct(record, task.source_image_urls || []);
       }
+      if (directTask && (directTask.status === "queued" || directTask.status === "generating")) {
+        this.pollDirectImageTask(directTask.id);
+      }
     },
 
     /** Open the AI image dialog for the selected one or two gallery images. */
@@ -3997,13 +4242,17 @@ const app = createApp({
       this.imageEditorPrompt = sources.length === 2 ? this.imageEditorFusionPrompt : this.imageEditorEditPrompt;
       this.imageEditorGeneratedUrl = "";
       this.imageEditorError = "";
+      this.imageDirectTask = null;
       this.imageEditorBackdropPressed = false;
       this.imageCarouselTask = null;
       this.imageCarouselPageIndex = 0;
       this.imageCarouselEstimatedTokens = 0;
       this.imageCarouselSourceMismatch = false;
       this.imageEditorOpen = true;
-      if (sources.length === 2) {
+      const retainedDirectTask = this.imageDirectTasksByMainId[String(record.main_id || "")];
+      const hasRetainedDirectTask = this.directImageTaskMatches(retainedDirectTask, record, sources);
+      this.loadDirectImageTaskForProduct(record, sources);
+      if (sources.length === 2 && !hasRetainedDirectTask) {
         this.loadCarouselTaskForProduct(record, sources);
       }
     },
@@ -4070,7 +4319,7 @@ const app = createApp({
       this.submitDirectGalleryImageEdit();
     },
 
-    /** Submit selected images through the unchanged single-result image API path. */
+    /** Submit selected images as one recoverable direct-image task. */
     submitDirectGalleryImageEdit: function submitDirectGalleryImageEdit() {
       const record = this.selectedTemuRecord;
       const sources = this.galleryImageEditorSources(record);
@@ -4078,45 +4327,68 @@ const app = createApp({
       if (!record || !prompt || (sources.length !== 1 && sources.length !== 2) || this.imageEditorBusy) {
         return;
       }
-      const endpoint = sources.length === 2 ? apiUrl("/images/fusion") : apiUrl("/images/edits");
-      this.imageEditorBusy = true;
-      this.imageEditorError = "";
-      this.imageEditorGeneratedUrl = "";
-      this.imageEditorRequestId += 1;
-      const requestId = this.imageEditorRequestId;
+      const taskId = "direct-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+      const sourceType = this.imageEditorSourceType === "detail" ? "detail" : "gallery";
+      const sourceIndices = sourceType === "gallery" ? this.galleryEditSelection.slice() : [];
+      const directTask = {
+        id: taskId,
+        temu_main_id: String(record.main_id || ""),
+        temu_platform_id: String(record.platform_id || ""),
+        mode: sources.length === 2 ? "fusion" : "edit",
+        source_image_urls: sources.slice(),
+        source_type: sourceType,
+        source_indices: sourceIndices,
+        detail_index: Number(this.imageEditorDetailIndex),
+        prompt: prompt,
+        size: this.imageEditSize,
+        status: "queued",
+        image_url: "",
+        error: "",
+        error_code: ""
+      };
+      this.applyDirectImageTask(directTask);
       const view = this;
-      fetch(endpoint, {
+      fetch(apiUrl("/images/direct-tasks"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_urls: sources, prompt: prompt, size: this.imageEditSize })
-      }).then(function handleGalleryEditResponse(response) {
-        return response.json().then(function handleGalleryEditPayload(payload) {
+        body: JSON.stringify({
+          client_task_id: taskId,
+          temu_main_id: directTask.temu_main_id,
+          temu_platform_id: directTask.temu_platform_id,
+          mode: directTask.mode,
+          image_urls: directTask.source_image_urls,
+          source_type: directTask.source_type,
+          source_indices: directTask.source_indices,
+          detail_index: directTask.detail_index,
+          prompt: directTask.prompt,
+          size: directTask.size
+        })
+      }).then(function handleDirectImageCreateResponse(response) {
+        return response.json().then(function handleDirectImageCreatePayload(payload) {
           if (!response.ok || !payload || !payload.ok) {
-            const apiError = payload && payload.error && typeof payload.error === "object" ? payload.error : {};
-            const error = new Error(getApiErrorMessage(payload, "图片生成失败。"));
-            error.code = String(apiError.code || response.status || "REQUEST_FAILED");
-            error.statusCode = Number(response.status || 500);
+            const error = new Error(getApiErrorMessage(payload, "单结果图片任务创建失败。"));
+            error.receivedResponse = true;
+            error.code = String(payload && payload.error && payload.error.code || response.status || "DIRECT_IMAGE_TASK_CREATE_FAILED");
             throw error;
           }
-          return readApiData(payload);
+          return payload.data && payload.data.task ? payload.data.task : null;
         });
-      }).then(function handleGalleryEditSuccess(payload) {
-        if (requestId !== view.imageEditorRequestId) {
+      }).then(function handleDirectImageCreated(task) {
+        if (!task || !view.imageDirectTask || String(view.imageDirectTask.id) !== taskId) {
           return;
         }
-        view.imageEditorGeneratedUrl = String(payload.image_url || "");
-        if (!view.imageEditorGeneratedUrl) {
-          throw new Error("图片服务没有返回生成结果。");
+        view.applyDirectImageTask(task);
+      }).catch(function keepPollingAfterDirectImageCreateFailure(error) {
+        if (!error || !error.receivedResponse || !view.imageDirectTask || String(view.imageDirectTask.id) !== taskId) {
+          return;
         }
-      }).catch(function handleGalleryEditError(error) {
-        if (requestId === view.imageEditorRequestId) {
-          view.imageEditorError = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "图片生成失败。");
-        }
-      }).finally(function handleGalleryEditFinished() {
-        if (requestId === view.imageEditorRequestId) {
-          view.imageEditorBusy = false;
-        }
+        const failedTask = view.imageDirectTask;
+        failedTask.status = "failed";
+        failedTask.error = String(error.message || "单结果图片任务创建失败。");
+        failedTask.error_code = String(error.code || "DIRECT_IMAGE_TASK_CREATE_FAILED");
+        view.applyDirectImageTask(failedTask);
       });
+      this.pollDirectImageTask(taskId);
     },
 
     /** Return whether two source arrays identify the same unordered image pair. */
@@ -4590,6 +4862,7 @@ const app = createApp({
         }
         detailList.splice(detailIndex, 1, generatedUrl);
         this.setStatus("已确认编辑并替换详情图。", "success");
+        this.deleteDirectImageTask();
         this.closeGalleryImageEditor(true);
         return;
       }
@@ -4609,6 +4882,7 @@ const app = createApp({
       this.selectedTemuGalleryIndex = insertIndex;
       this.selectedGalleryIndex = insertIndex;
       this.setStatus(indices.length === 2 ? "已确认溶图并替换两张原图。" : "已确认编辑并替换原图。", "success");
+      this.deleteDirectImageTask();
       this.closeGalleryImageEditor(true);
     },
 
@@ -4707,6 +4981,9 @@ const app = createApp({
     /** Close the image editor while retaining unfinished or unconfirmed image work for reopening. */
     closeGalleryImageEditor: function closeGalleryImageEditor(forceReset) {
       this.imageEditorOpen = false;
+      if (forceReset && this.imageDirectTask) {
+        this.deleteDirectImageTask();
+      }
       if (!forceReset && (this.imageEditorBusy || this.imageCarouselGenerationBusy || this.imageEditorGeneratedUrl || this.imageCarouselTask)) {
         if (this.imageCarouselPollTimer) {
           window.clearTimeout(this.imageCarouselPollTimer);
@@ -4718,6 +4995,7 @@ const app = createApp({
       this.imageEditorBusy = false;
       this.imageEditorGeneratedUrl = "";
       this.imageEditorError = "";
+      this.imageDirectTask = null;
       this.imageCarouselTask = null;
       this.imageCarouselPageIndex = 0;
       this.imageCarouselGenerationBusy = false;

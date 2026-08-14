@@ -15,6 +15,11 @@ function createProviderRouter(options) {
   router.post("/images/edits", validationModule.validate(schemaModule.imageEditSchema, "body"), providers.editImage.bind(providers));
   router.post("/images/fusion", validationModule.validate(schemaModule.imageEditSchema, "body"), providers.fuseImages.bind(providers));
   router.post("/images/fusion/undo", validationModule.validate(schemaModule.operationUndoSchema, "body"), providers.undoFusion.bind(providers));
+  router.post("/images/direct-tasks", validationModule.validate(schemaModule.directImageTaskSchema, "body"), providers.createDirectImageTask.bind(providers));
+  router.get("/images/direct-tasks", providers.getDirectImageTasks.bind(providers));
+  router.get("/images/direct-tasks/product/:temuMainId", providers.getDirectImageTaskForProduct.bind(providers));
+  router.get("/images/direct-tasks/:taskId", providers.getDirectImageTask.bind(providers));
+  router.delete("/images/direct-tasks/:taskId", providers.deleteDirectImageTask.bind(providers));
   router.get("/images/details", validationModule.validate(schemaModule.detailImagesQuerySchema, "query"), providers.getDetailImages.bind(providers));
 
   router.get("/workflow", workflow.getWorkflow.bind(workflow));
