@@ -344,12 +344,7 @@ function confirmUnifiedTemuBinding(record, button) {
       button.textContent = lastError ? lastError.message : response && response.error ? response.error : "绑定失败，请重试";
       return;
     }
-    button.textContent = "绑定成功，正在返回工作台";
-    window.setTimeout(function refreshUnifiedBindingAfterSuccess() {
-      closeUnifiedBindingModal();
-      initializeUnifiedBindingPanel();
-      initializeUnifiedCollectorButton();
-    }, 500);
+    button.textContent = "绑定成功，已返回工作台";
   });
 }
 

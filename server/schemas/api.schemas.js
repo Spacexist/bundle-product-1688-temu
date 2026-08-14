@@ -73,6 +73,12 @@ const listingMergeSchema = z.object({
 
 const operationUndoSchema = z.object({ undo_token: z.string().min(1) });
 
+const workbenchFocusSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]).transform(String),
+  temu_platform_id: z.union([z.string(), z.number()]).transform(String).optional(),
+  mode: z.literal("realtime").optional()
+});
+
 const imageEditSchema = z.object({
   image_urls: z.array(z.string().min(1)).min(1).max(2),
   prompt: z.string().optional(),
@@ -99,6 +105,7 @@ const carouselWorkflowPromptSchema = z.object({
   market_language: z.string().min(1).max(100),
   prompt: z.string().max(5000).optional(),
   advanced: z.boolean().optional(),
+  reasoning_enabled: z.boolean().optional(),
   size: z.string().optional()
 });
 
@@ -146,6 +153,7 @@ module.exports = {
   copyFirstSkuAttributeSchema: copyFirstSkuAttributeSchema,
   listingMergeSchema: listingMergeSchema,
   operationUndoSchema: operationUndoSchema,
+  workbenchFocusSchema: workbenchFocusSchema,
   imageEditSchema: imageEditSchema,
   workflowPromptSchema: workflowPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,

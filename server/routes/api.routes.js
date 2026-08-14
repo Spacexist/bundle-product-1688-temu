@@ -21,8 +21,25 @@ function createApiRouter(options) {
     settings.events.connect(request, response);
   }
 
+  /** Broadcast one extension-requested Workbench mode and product location. */
+  function focusWorkbench(request, response) {
+    const input = request.validatedBody;
+    const instruction = {
+      resource: "workbench",
+      action: "focus",
+      ids: ["temu", String(input.temu_main_id)],
+      mode: "realtime",
+      temu_main_id: String(input.temu_main_id),
+      temu_platform_id: String(input.temu_platform_id || ""),
+      version: Date.now()
+    };
+    settings.events.publish(instruction, request.requestId);
+    response.json({ ok: true, data: instruction, error: null, meta: { request_id: request.requestId } });
+  }
+
   router.get("/health", getHealth);
   router.get("/workbench", products.getWorkbench.bind(products));
+  router.post("/workbench/focus", validationModule.validate(schemaModule.workbenchFocusSchema, "body"), focusWorkbench);
   router.delete("/products", products.clearAll.bind(products));
   router.delete("/products/platform/:platform", products.clearPlatform.bind(products));
   router.delete("/products/:platform/:platformId", products.deleteOne.bind(products));

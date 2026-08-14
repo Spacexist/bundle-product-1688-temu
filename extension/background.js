@@ -2,6 +2,66 @@ importScripts("collector-temu.js", "collector-1688.js");
 
 var unifiedConfigPromise = null;
 var extensionCacheStorageKey = "autoPackingExtensionCache";
+var extensionCleanupAlarmName = "auto-packing-extension-cleanup";
+var extensionCleanupIntervalMinutes = 3 * 24 * 60;
+var unifiedWorkbenchUrl = "http://127.0.0.1:5173/?mode=realtime";
+
+/** Delete every Cache Storage entry owned by this extension. */
+async function clearExtensionCacheStorage() {
+  if (typeof caches === "undefined") {
+    return;
+  }
+  var cacheNames = await caches.keys();
+  for (var index = 0; index < cacheNames.length; index += 1) {
+    await caches.delete(cacheNames[index]);
+  }
+}
+
+/** Clear every chrome.storage.local entry owned by this extension. */
+function clearExtensionLocalStorage() {
+  return new Promise(function clearStoredExtensionData(resolve, reject) {
+    chrome.storage.local.clear(function handleExtensionLocalClear() {
+      var clearError = chrome.runtime.lastError;
+      if (clearError) {
+        reject(new Error(clearError.message));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+/** Run the complete three-day extension storage cleanup. */
+async function runExtensionAutomaticCleanup() {
+  await clearExtensionLocalStorage();
+  await clearExtensionCacheStorage();
+}
+
+/** Create the recurring three-day cleanup alarm when it is missing. */
+function ensureExtensionCleanupAlarm() {
+  chrome.alarms.get(extensionCleanupAlarmName, function handleCleanupAlarmRead(alarm) {
+    if (alarm) {
+      return;
+    }
+    chrome.alarms.create(extensionCleanupAlarmName, {
+      delayInMinutes: extensionCleanupIntervalMinutes,
+      periodInMinutes: extensionCleanupIntervalMinutes
+    });
+  });
+}
+
+/** Run cleanup only for the extension-owned recurring alarm. */
+function handleExtensionCleanupAlarm(alarm) {
+  if (!alarm || alarm.name !== extensionCleanupAlarmName) {
+    return;
+  }
+  runExtensionAutomaticCleanup().catch(ignoreUnifiedInjectionError);
+}
+
+/** Restore the recurring cleanup schedule after the browser starts. */
+function handleUnifiedExtensionStartup() {
+  ensureExtensionCleanupAlarm();
+}
 
 /** Ignore one unsupported page injection while refreshing other open product tabs. */
 function ignoreUnifiedInjectionError() {
@@ -29,7 +89,10 @@ function reinjectUnifiedContentScripts() {
 /** Refresh stale page controls whenever the extension is installed or reloaded. */
 chrome.runtime.onInstalled.addListener(function handleUnifiedExtensionInstalled() {
   reinjectUnifiedContentScripts();
+  ensureExtensionCleanupAlarm();
 });
+chrome.runtime.onStartup.addListener(handleUnifiedExtensionStartup);
+chrome.alarms.onAlarm.addListener(handleExtensionCleanupAlarm);
 
 /** Read extension API configuration once from the packaged config file. */
 function getUnifiedExtensionConfig() {
@@ -49,6 +112,96 @@ function getUnifiedApiUrl(pathname) {
   return getUnifiedExtensionConfig().then(function buildUnifiedApiUrl(config) {
     return String(config.apiBaseUrl || "http://127.0.0.1:3000/api/v1").replace(/\/$/, "") + pathname;
   });
+}
+
+/** Ask the backend to push a precise Workbench location through SSE. */
+function requestUnifiedWorkbenchFocus(temuMainId, temuPlatformId) {
+  return getUnifiedApiUrl("/workbench/focus").then(function postUnifiedWorkbenchFocus(endpoint) {
+    return fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "realtime",
+        temu_main_id: String(temuMainId || ""),
+        temu_platform_id: String(temuPlatformId || "")
+      })
+    });
+  }).then(function handleUnifiedWorkbenchFocusResponse(response) {
+    return response.json().then(function validateUnifiedWorkbenchFocusPayload(payload) {
+      if (!response.ok || !payload || !payload.ok) {
+        throw new Error(payload && payload.error && payload.error.message || "后台切换 Workbench 失败。");
+      }
+      return payload.data;
+    });
+  });
+}
+
+/** Focus the originating Workbench tab or create one when none is open. */
+function openUnifiedWorkbenchTab(preferredTabId, temuMainId) {
+  /** Locate and activate one matching local Workbench tab. */
+  function locateUnifiedWorkbenchTab(resolve, reject) {
+    /** Handle the Workbench tab lookup result. */
+    function handleUnifiedWorkbenchTabs(tabs) {
+      var queryError = chrome.runtime.lastError;
+      if (queryError) {
+        reject(new Error(queryError.message));
+        return;
+      }
+      var workbenchTab = null;
+      var preferredId = Number(preferredTabId || 0);
+      var candidates = Array.isArray(tabs) ? tabs : [];
+      for (var index = 0; index < candidates.length; index += 1) {
+        var candidate = candidates[index];
+        if (preferredId && Number(candidate && candidate.id || 0) === preferredId) {
+          workbenchTab = candidate;
+          break;
+        }
+        if (!workbenchTab || Number(candidate && candidate.lastAccessed || 0) > Number(workbenchTab.lastAccessed || 0)) {
+          workbenchTab = candidate;
+        }
+      }
+      if (workbenchTab && workbenchTab.id) {
+        /** Resolve only after Chrome confirms that the Workbench tab is active. */
+        function handleUnifiedWorkbenchActivated(updatedTab) {
+          var activateError = chrome.runtime.lastError;
+          if (activateError) {
+            reject(new Error(activateError.message));
+            return;
+          }
+          var windowId = Number(updatedTab && updatedTab.windowId || workbenchTab.windowId || 0);
+          if (!windowId) {
+            resolve({ tab_id: workbenchTab.id, reused: true });
+            return;
+          }
+          /** Resolve only after Chrome confirms that the Workbench window is focused. */
+          function handleUnifiedWorkbenchWindowFocused() {
+            var focusError = chrome.runtime.lastError;
+            if (focusError) {
+              reject(new Error(focusError.message));
+              return;
+            }
+            resolve({ tab_id: workbenchTab.id, reused: true });
+          }
+          chrome.windows.update(windowId, { focused: true }, handleUnifiedWorkbenchWindowFocused);
+        }
+        chrome.tabs.update(workbenchTab.id, { active: true }, handleUnifiedWorkbenchActivated);
+        return;
+      }
+      /** Return the newly created Workbench tab. */
+      function handleUnifiedWorkbenchCreated(createdTab) {
+        var createError = chrome.runtime.lastError;
+        if (createError) {
+          reject(new Error(createError.message));
+          return;
+        }
+        resolve({ tab_id: createdTab && createdTab.id || 0, reused: false });
+      }
+      var createUrl = unifiedWorkbenchUrl + "&temu_main_id=" + encodeURIComponent(String(temuMainId || ""));
+      chrome.tabs.create({ url: createUrl, active: true }, handleUnifiedWorkbenchCreated);
+    }
+    chrome.tabs.query({ url: ["http://127.0.0.1:5173/*", "http://localhost:5173/*"] }, handleUnifiedWorkbenchTabs);
+  }
+  return new Promise(locateUnifiedWorkbenchTab);
 }
 
 /** Handle collection requests from either platform page. */
@@ -96,6 +249,8 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
   var platform = sender.tab && sender.tab.url
     ? getUnifiedPlatform(sender.tab.url)
     : message.platform || "";
+  var preferredWorkbenchTabId = sender.tab && sender.tab.openerTabId ? sender.tab.openerTabId : 0;
+  var unifiedBindingCompleted = false;
   if (platform !== "temu" && platform !== "1688") {
     sendResponse({ ok: false, error: "无法识别当前平台。" });
     return false;
@@ -119,11 +274,28 @@ chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(mes
       return submitAndCacheUnifiedCollection(data, platform, "", "");
     });
   }).then(function handleUnifiedCollectionResult(result) {
+    var boundTemu = result && result.data && result.data.bound_temu ? result.data.bound_temu : null;
+    if (platform === "1688" && boundTemu) {
+      unifiedBindingCompleted = true;
+      var boundTemuMainId = String(boundTemu.main_id || message.targetTemuMainId || "");
+      var boundTemuPlatformId = String(boundTemu.platform_id || message.targetTemuPlatformId || "");
+      return requestUnifiedWorkbenchFocus(boundTemuMainId, boundTemuPlatformId).then(function handleBoundWorkbenchFocused() {
+        return openUnifiedWorkbenchTab(preferredWorkbenchTabId, boundTemuMainId);
+      }).then(function handleBoundWorkbenchOpened() {
+        notifyUnifiedCollectionStatus(tabId, "completed", "绑定完成，已返回工作台");
+        sendResponse(result);
+        return result;
+      });
+    }
     notifyUnifiedCollectionStatus(tabId, "completed", result && result.replaced ? "已完成，重复商品已更新" : "采集完成");
     sendResponse(result);
+    return result;
   }).catch(function handleUnifiedCollectionError(error) {
-    notifyUnifiedCollectionStatus(tabId, "failed", error.message || "采集失败");
-    sendResponse({ ok: false, error: error.message || "采集失败。" });
+    var failureMessage = unifiedBindingCompleted
+      ? "绑定已完成，但返回工作台失败：" + (error.message || "标签页切换失败")
+      : error.message || "采集失败。";
+    notifyUnifiedCollectionStatus(tabId, "failed", failureMessage);
+    sendResponse({ ok: false, binding_ok: unifiedBindingCompleted, error: failureMessage });
   });
   return true;
 });

@@ -137,6 +137,7 @@ class CarouselRuntimeService {
       market_language: String(source.market_language || "美国 / English"),
       requirement: String(source.prompt || ""),
       mode: source.advanced ? "advanced" : "basic",
+      reasoning_enabled: Boolean(source.reasoning_enabled),
       size: String(source.size || "1k"),
       status: "planning",
       estimated_tokens: 0,
@@ -237,7 +238,7 @@ class CarouselRuntimeService {
     return content;
   }
 
-  /** Ask Kimi in reasoning mode for a multi-page carousel plan. */
+  /** Ask Kimi in the selected thinking mode for a multi-page carousel plan. */
   async planTask(input, requestId, reportProgress) {
     const created = this.createTask(input);
     if (created.existing) {
@@ -259,11 +260,12 @@ class CarouselRuntimeService {
         const image = await this.readImageSource(task.source_image_urls[index], requestId);
         content.push({ type: "image_url", image_url: { url: "data:" + image.mimeType + ";base64," + image.buffer.toString("base64") } });
       }
+      const reasoningEnabled = Boolean(task.reasoning_enabled);
       const requestPayload = {
         model: String(kimi.model || "kimi-k2.6"),
         messages: [{ role: "system", content: systemPrompt }, { role: "user", content: content }],
-        thinking: { type: "enabled" },
-        temperature: 1,
+        thinking: { type: reasoningEnabled ? "enabled" : "disabled" },
+        temperature: reasoningEnabled ? 1 : 0.6,
         response_format: { type: "json_object" },
         stream: true
       };
