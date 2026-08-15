@@ -52,6 +52,7 @@ class DirectImageRuntimeService {
     if (!target || !target.id) {
       throw createDirectImageError("单结果图片任务缺少 ID。", 500, "DIRECT_IMAGE_TASK_INVALID");
     }
+    fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     target.updated_at = new Date().toISOString();
     const filePath = this.getTaskPath(target.id);
     const temporaryPath = filePath + "." + process.pid + "." + Date.now() + ".tmp";
