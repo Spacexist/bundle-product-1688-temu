@@ -308,6 +308,7 @@ button { cursor: pointer; }
 .image-editor-header > div { display: grid; gap: 3px; }
 .image-editor-header strong { color: #0f172a; font-size: 18px; }
 .image-editor-header span { color: #64748b; font-size: 11px; }
+.image-editor-header .image-editor-header-status { align-self: center; padding: 6px 10px; border: 1px solid rgba(234, 88, 12, .24); border-radius: 999px; background: rgba(255, 247, 237, .82); color: #c2410c; font-size: 12px; font-weight: 750; line-height: 1.2; letter-spacing: .01em; }
 .image-editor-header button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: #f1f5f9; color: #475569; cursor: pointer; font-size: 20px; line-height: 30px; }
 .image-editor-stage { position: relative; display: grid; min-height: 360px; max-height: 52vh; place-items: center; overflow: hidden; border: 1px solid rgba(255, 255, 255, .78); border-radius: 14px; background: rgba(255, 255, 255, .34); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .75); }
 .image-editor-stage.has-result { height: min(520px, 56vh); max-height: none; }
@@ -555,18 +556,28 @@ body::before {
 .task-status-indicator.is-blue:hover, .task-status-indicator.is-blue:focus-visible { border-top-color: #1d4ed8; border-bottom-color: #1d4ed8; border-left-color: #1d4ed8; border-right-color: transparent; }
 .task-status-indicator.is-yellow { border-color: #eab308; border-right-color: transparent; }
 .task-status-indicator.is-yellow:hover, .task-status-indicator.is-yellow:focus-visible { border-top-color: #a16207; border-bottom-color: #a16207; border-left-color: #a16207; border-right-color: transparent; }
+.task-status-indicator.is-violet { border-color: #8b5cf6; border-right-color: transparent; }
+.task-status-indicator.is-violet:hover, .task-status-indicator.is-violet:focus-visible { border-top-color: #6d28d9; border-bottom-color: #6d28d9; border-left-color: #6d28d9; border-right-color: transparent; }
 .task-status-indicator.is-complete { display: inline-grid; place-items: center; border-color: #22c55e; color: #15803d; animation: none; font-size: 11px; font-weight: 900; line-height: 1; }
 .task-status-indicator.is-complete:hover, .task-status-indicator.is-complete:focus-visible { border-color: #15803d; }
 .task-status-indicator.is-blue.is-complete { border-color: #3b82f6; color: #1d4ed8; }
 .task-status-indicator.is-blue.is-complete:hover, .task-status-indicator.is-blue.is-complete:focus-visible { border-color: #1d4ed8; }
 .task-status-indicator.is-yellow.is-complete { border-color: #eab308; color: #a16207; }
 .task-status-indicator.is-yellow.is-complete:hover, .task-status-indicator.is-yellow.is-complete:focus-visible { border-color: #a16207; }
+.task-status-indicator.is-violet.is-complete { border-color: #8b5cf6; color: #6d28d9; }
+.task-status-indicator.is-violet.is-complete:hover, .task-status-indicator.is-violet.is-complete:focus-visible { border-color: #6d28d9; }
 .task-status-indicator.is-error { display: inline-grid; place-items: center; border-color: #22c55e; color: #15803d; animation: none; font-size: 11px; font-weight: 900; line-height: 1; }
 .task-status-indicator.is-error:hover, .task-status-indicator.is-error:focus-visible { border-color: #15803d; }
 .task-status-indicator.is-blue.is-error { border-color: #3b82f6; color: #1d4ed8; }
 .task-status-indicator.is-blue.is-error:hover, .task-status-indicator.is-blue.is-error:focus-visible { border-color: #1d4ed8; }
 .task-status-indicator.is-yellow.is-error { border-color: #eab308; color: #a16207; }
 .task-status-indicator.is-yellow.is-error:hover, .task-status-indicator.is-yellow.is-error:focus-visible { border-color: #a16207; }
+.task-status-indicator.is-violet.is-error { border-color: #8b5cf6; color: #6d28d9; }
+.task-status-indicator.is-violet.is-error:hover, .task-status-indicator.is-violet.is-error:focus-visible { border-color: #6d28d9; }
+.task-status-indicator.is-green.is-pulse, .task-status-indicator.is-green.is-pulse.is-complete { position: relative; width: 15px; height: 15px; border: 2px solid rgba(34, 197, 94, .34); background: rgba(220, 252, 231, .72); color: transparent; animation: edit-task-breathe 1.45s ease-in-out infinite; }
+.task-status-indicator.is-green.is-pulse:not(.is-error)::after { position: absolute; top: 50%; left: 50%; width: 5px; height: 5px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 7px rgba(34, 197, 94, .72); content: ""; transform: translate(-50%, -50%); }
+.task-status-indicator.is-green.is-pulse.is-error { display: inline-grid; place-items: center; border-color: #ef4444; background: rgba(254, 226, 226, .78); color: #b91c1c; animation: none; }
+@keyframes edit-task-breathe { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .08); transform: scale(.92); } 50% { box-shadow: 0 0 0 5px rgba(34, 197, 94, .16); transform: scale(1.04); } }
 .listing-task-status-indicators { position: absolute; right: 7px; bottom: 7px; }
 .heading-task-status-indicators { margin-left: 8px; vertical-align: middle; }
 @keyframes image-task-spin { to { transform: rotate(360deg); } }

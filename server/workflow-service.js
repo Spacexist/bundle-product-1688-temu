@@ -127,6 +127,7 @@ class WorkflowService {
   constructor(options) {
     const settings = options || {};
     this.filePath = path.join(settings.cacheDirectory, "workflows.json");
+    this.stateFilePath = path.join(settings.cacheDirectory, "workflow-state.json");
     this.readConfig = settings.readConfig;
     this.getKimiEndpoint = settings.getKimiEndpoint;
     this.compactValue = settings.compactValue;
@@ -139,6 +140,7 @@ class WorkflowService {
     this.generationQueue = [];
     this.generationQueueActive = false;
     this.recoverInterruptedTasks();
+    this.reconcileTemporaryStates();
   }
 
   /** Return the default persistent workflow payload. */
@@ -169,6 +171,126 @@ class WorkflowService {
     } catch (error) {
       return this.createEmptyPayload();
     }
+  }
+
+  /** Return the default payload for refresh-safe temporary workflow phases. */
+  createEmptyTemporaryStatePayload() {
+    return {
+      version: "1.0",
+      updated_at: "",
+      tasks: {}
+    };
+  }
+
+  /** Read temporary workflow phases without exposing malformed state files. */
+  readTemporaryStatePayload() {
+    if (!fs.existsSync(this.stateFilePath)) {
+      return this.createEmptyTemporaryStatePayload();
+    }
+    try {
+      const content = fs.readFileSync(this.stateFilePath, "utf8");
+      const payload = JSON.parse(content);
+      if (!payload || typeof payload !== "object") {
+        return this.createEmptyTemporaryStatePayload();
+      }
+      if (!payload.tasks || typeof payload.tasks !== "object") {
+        payload.tasks = {};
+      }
+      return payload;
+    } catch (error) {
+      return this.createEmptyTemporaryStatePayload();
+    }
+  }
+
+  /** Atomically persist temporary workflow phases and notify connected workbenches. */
+  writeTemporaryStatePayload(payload, requestId) {
+    const state = payload && typeof payload === "object" ? payload : this.createEmptyTemporaryStatePayload();
+    state.updated_at = this.formatTime(new Date());
+    fs.mkdirSync(path.dirname(this.stateFilePath), { recursive: true });
+    const temporaryPath = this.stateFilePath + "." + process.pid + "." + Date.now() + ".tmp";
+    fs.writeFileSync(temporaryPath, JSON.stringify(state, null, 2), "utf8");
+    try {
+      fs.renameSync(temporaryPath, this.stateFilePath);
+    } catch (error) {
+      fs.copyFileSync(temporaryPath, this.stateFilePath);
+      fs.unlinkSync(temporaryPath);
+    }
+    if (typeof this.publishEvent === "function") {
+      this.publishEvent({
+        resource: "workflow",
+        action: "state_updated",
+        ids: [],
+        version: Date.now()
+      }, requestId);
+    }
+    return state;
+  }
+
+  /** Persist one product's temporary workflow phase independently from business results. */
+  setTemporaryState(temuMainId, status, error, errorCode, requestId) {
+    const key = String(temuMainId || "").trim();
+    if (!key) {
+      return null;
+    }
+    const payload = this.readTemporaryStatePayload();
+    payload.tasks[key] = {
+      temu_main_id: key,
+      status: String(status || "idle"),
+      error: String(error || ""),
+      error_code: String(errorCode || ""),
+      updated_at: this.formatTime(new Date())
+    };
+    this.writeTemporaryStatePayload(payload, requestId);
+    return payload.tasks[key];
+  }
+
+  /** Convert one durable workflow result into its matching non-busy UI phase. */
+  inferTemporaryStateStatus(task) {
+    const status = String(task && task.status || "idle");
+    if (status === "generating") {
+      return "generating";
+    }
+    if (status === "generation_error" || status === "search_error") {
+      return "error";
+    }
+    if (status === "prompts_ready") {
+      return "prompts_ready";
+    }
+    if (status === "images_ready" || status === "completed") {
+      return "ready";
+    }
+    return "idle";
+  }
+
+  /** Rebuild missing or interrupted temporary phases from durable workflow tasks at startup. */
+  reconcileTemporaryStates() {
+    const workflow = this.readPayload();
+    const workflowTasks = workflow && workflow.tasks && typeof workflow.tasks === "object" ? workflow.tasks : {};
+    const state = this.readTemporaryStatePayload();
+    const reconciledTasks = {};
+    const taskKeys = Object.keys(workflowTasks);
+    for (let index = 0; index < taskKeys.length; index += 1) {
+      const key = String(taskKeys[index]);
+      const task = workflowTasks[key] || {};
+      const status = this.inferTemporaryStateStatus(task);
+      reconciledTasks[key] = {
+        temu_main_id: key,
+        status: status,
+        error: status === "error" ? String(task.error || "") : "",
+        error_code: status === "error" ? String(task.error_code || "") : "",
+        updated_at: this.formatTime(new Date())
+      };
+    }
+    state.tasks = reconciledTasks;
+    this.writeTemporaryStatePayload(state, "");
+  }
+
+  /** Return durable workflow results together with their independent temporary phases. */
+  readWorkflowSnapshot() {
+    return {
+      workflow: this.readPayload(),
+      state: this.readTemporaryStatePayload()
+    };
   }
 
   /** Persist all tasks for direct HTTP responses and later GET requests. */
@@ -619,6 +741,19 @@ class WorkflowService {
         finalTask.error_status = hasGeneratedImage ? 0 : lastErrorStatus || 500;
       }
       this.writePayload(finalWorkflow, requestId);
+      let temporaryStatus = "ready";
+      if (finalTask.status === "generating") {
+        temporaryStatus = "generating";
+      } else if (finalTask.status === "generation_error") {
+        temporaryStatus = "error";
+      }
+      this.setTemporaryState(
+        temuMainId,
+        temporaryStatus,
+        finalTask.error,
+        finalTask.error_code,
+        requestId
+      );
       return { task: finalTask, results: results };
     } catch (error) {
       const failedWorkflow = this.readPayload();
@@ -629,6 +764,7 @@ class WorkflowService {
         failedTask.error_code = String(error.code || "WORKFLOW_GENERATION_ERROR");
         failedTask.error_status = Number(error.statusCode || 500);
         this.writePayload(failedWorkflow, requestId);
+        this.setTemporaryState(temuMainId, "error", failedTask.error, failedTask.error_code, requestId);
         return { task: failedTask, results: [] };
       }
       throw error;
@@ -684,6 +820,7 @@ class WorkflowService {
       promptSnapshot[index] = task.prompts[index].prompt;
     }
     this.writePayload(workflow, requestId);
+    this.setTemporaryState(temuMainId, "generating", "", "", requestId);
     return this.scheduleImageGeneration(temuMainId, requestedIndex, requestId, promptSnapshot);
   }
 
@@ -701,6 +838,7 @@ class WorkflowService {
     task.error = "";
     workflow.active_temu_main_id = "";
     this.writePayload(workflow, requestId);
+    this.setTemporaryState(temuMainId, "ready", "", "", requestId);
     return { ok: true, task: task };
   }
 }

@@ -254,6 +254,8 @@ Express 服务把数据写到 `D:\自动组货数据\cache\cache.json`，并通�
 
 `server/config.json` 的 `storage` 使用绝对路径。运行 `启动.bat` 时会先检查并创建外部缓存；首次升级会把旧项目目录中的 `cache` 合并复制到 D 盘，目标已有文件不会覆盖，旧目录也不会删除。迁移完成标记保存在 `D:\自动组货数据\.auto-bundle-cache-migrated-v1.json`，因此以后替换或删除项目目录不会影响缓存。
 
+智能组货的临时阶段单独保存在 `D:\\自动组货数据\\cache\\workflow-state.json`，刷新页面后会恢复“分析中”“生图中”和完成状态。
+
 扩展导出的原格式 JSON 可以提交到 `POST /api/v1/restore`。
 
 扩展弹窗的“清空扩展 cache”只清除 `chrome.storage.local`；前端工作台的“清空 Server cache”只清除 Server 的 `cache/cache.json`。扩展已有的“打开实时渲染”功能保持不变。

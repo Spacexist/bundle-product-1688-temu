@@ -16,7 +16,7 @@ class WorkflowController {
   /** Return the persisted intelligent-packing state. */
   getWorkflow(request, response, next) {
     try {
-      response.json({ ok: true, data: this.workflow.readPayload(), error: null, meta: { request_id: request.requestId } });
+      response.json({ ok: true, data: this.workflow.readWorkflowSnapshot(), error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
     }
@@ -46,10 +46,14 @@ class WorkflowController {
       await this.generateCarouselPrompts(request, response);
       return;
     }
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
     try {
+      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId);
       const result = await this.workflow.generatePrompts(request.validatedBody, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "prompts_ready", "", "", request.requestId);
       response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId);
       next(error);
     }
   }
@@ -184,6 +188,7 @@ class WorkflowController {
 
   /** Generate all or one intelligent-packing candidate image and wait for its result. */
   async generateImages(request, response, next) {
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
     try {
       if (request && typeof request.setTimeout === "function") {
         request.setTimeout(WORKFLOW_GENERATION_TIMEOUT_MS);
@@ -194,6 +199,7 @@ class WorkflowController {
       const result = await this.workflow.generateImages(request.validatedBody, request.requestId);
       response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId);
       next(error);
     }
   }

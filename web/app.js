@@ -292,12 +292,13 @@ function readWorkflowIndicatorAcknowledgements() {
 const TaskStatusIndicator = {
   props: {
     tone: { type: String, default: "green" },
+    pulse: { type: Boolean, default: false },
     complete: { type: Boolean, default: false },
     error: { type: Boolean, default: false },
     label: { type: String, default: "打开任务" }
   },
   emits: ["activate"],
-  template: `<span class="task-status-indicator" :class="['is-' + tone, { 'is-complete': complete && !error, 'is-error': error }]" role="button" tabindex="0" :title="label" :aria-label="label" @click.stop="$emit('activate')" @keydown.enter.stop="$emit('activate')">{{ error ? '!' : complete ? '✓' : '' }}</span>`
+  template: `<span class="task-status-indicator" :class="['is-' + tone, { 'is-pulse': pulse, 'is-complete': complete && !error, 'is-error': error }]" role="button" tabindex="0" :title="label" :aria-label="label" @click.stop="$emit('activate')" @keydown.enter.stop="$emit('activate')">{{ error ? '!' : pulse ? '' : complete ? '✓' : '' }}</span>`
 };
 
 const app = createApp({
@@ -332,13 +333,13 @@ const app = createApp({
               <span v-else class="listing-image-empty">—</span>
               <span class="listing-copy"><span>{{ record.product_name }}</span></span>
               <span class="listing-card-delete" role="button" tabindex="0" aria-label="删除此 Temu 商品" @click.stop="deleteSelectedTemuRecord(record)" @keydown.enter.stop="deleteSelectedTemuRecord(record)">×</span>
-              <span v-if="hasWorkflowTask(record) || hasOpenableImageTask(record) || hasSkuBlendTask(record) || hasCompletedSkuBlendTask(record) || hasSkuBlendError(record)" class="task-status-indicators listing-task-status-indicators"><task-status-indicator v-if="hasWorkflowTask(record)" tone="blue" :complete="isWorkflowTaskComplete(record)" :error="hasWorkflowTaskError(record)" :label="hasWorkflowTaskError(record) ? '打开失败的组货任务' : isWorkflowTaskComplete(record) ? '打开已完成的组货任务' : '打开进行中的组货任务'" @activate="openWorkflowTask(record)"></task-status-indicator><task-status-indicator v-if="hasOpenableImageTask(record)" tone="green" :complete="isImageTaskComplete(record)" :error="hasImageTaskError(record)" :label="hasImageTaskError(record) ? '打开失败的图片任务' : '打开图片任务'" @activate="openRetainedImageEditor(record)"></task-status-indicator><task-status-indicator v-if="hasSkuBlendTask(record) || hasCompletedSkuBlendTask(record) || hasSkuBlendError(record)" tone="yellow" :complete="hasCompletedSkuBlendTask(record)" :error="hasSkuBlendError(record)" :label="hasSkuBlendError(record) ? '打开失败的 SKU 溶图任务' : '打开 SKU 溶图任务'" @activate="openSkuBlendTask(record)"></task-status-indicator></span>
+              <span v-if="hasWorkflowTask(record) || hasOpenableDirectImageTask(record) || hasOpenableCarouselTask(record) || hasSkuBlendTask(record) || hasCompletedSkuBlendTask(record) || hasSkuBlendError(record)" class="task-status-indicators listing-task-status-indicators"><task-status-indicator v-if="hasWorkflowTask(record)" tone="blue" :complete="isWorkflowTaskComplete(record)" :error="hasWorkflowTaskError(record)" :label="hasWorkflowTaskError(record) ? '打开失败的组货任务' : isWorkflowTaskComplete(record) ? '打开已完成的组货任务' : '打开进行中的组货任务'" @activate="openWorkflowTask(record)"></task-status-indicator><task-status-indicator v-if="hasOpenableDirectImageTask(record)" tone="green" :pulse="true" :complete="isDirectImageTaskComplete(record)" :error="hasDirectImageTaskError(record)" :label="hasDirectImageTaskError(record) ? '打开失败的单图 Edits 任务' : '打开单图 Edits 任务'" @activate="openRetainedDirectImageEditor(record)"></task-status-indicator><task-status-indicator v-if="hasOpenableCarouselTask(record)" tone="violet" :complete="isCarouselTaskComplete(record)" :error="hasCarouselTaskError(record)" :label="hasCarouselTaskError(record) ? '打开失败的 Fusion 任务' : '打开 Fusion 任务'" @activate="openRetainedCarouselEditor(record)"></task-status-indicator><task-status-indicator v-if="hasSkuBlendTask(record) || hasCompletedSkuBlendTask(record) || hasSkuBlendError(record)" tone="yellow" :complete="hasCompletedSkuBlendTask(record)" :error="hasSkuBlendError(record)" :label="hasSkuBlendError(record) ? '打开失败的 SKU 溶图任务' : '打开 SKU 溶图任务'" @activate="openSkuBlendTask(record)"></task-status-indicator></span>
             </button>
             <div v-if="!temuRecords.length" class="muted">暂无 Temu 商品。</div>
           </aside>
 
           <section v-if="selectedTemuRecord" class="panel platform-render temu-render">
-            <div class="render-heading"><div><span class="platform-label temu-label">Temu</span><span v-if="hasWorkflowTask(selectedTemuRecord) || hasOpenableImageTask(selectedTemuRecord) || hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" class="task-status-indicators heading-task-status-indicators"><task-status-indicator v-if="hasWorkflowTask(selectedTemuRecord)" tone="blue" :complete="isWorkflowTaskComplete(selectedTemuRecord)" :error="hasWorkflowTaskError(selectedTemuRecord)" :label="hasWorkflowTaskError(selectedTemuRecord) ? '打开失败的组货任务' : isWorkflowTaskComplete(selectedTemuRecord) ? '打开已完成的组货任务' : '打开进行中的组货任务'" @activate="openWorkflowTask(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasOpenableImageTask(selectedTemuRecord)" tone="green" :complete="isImageTaskComplete(selectedTemuRecord)" :error="hasImageTaskError(selectedTemuRecord)" :label="hasImageTaskError(selectedTemuRecord) ? '打开失败的图片任务' : '打开图片任务'" @activate="openRetainedImageEditor(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" tone="yellow" :complete="hasCompletedSkuBlendTask(selectedTemuRecord)" :error="hasSkuBlendError(selectedTemuRecord)" :label="hasSkuBlendError(selectedTemuRecord) ? '打开失败的 SKU 溶图任务' : '打开 SKU 溶图任务'" @activate="openSkuBlendTask(selectedTemuRecord)"></task-status-indicator></span><div class="render-title-row"><button v-if="workspaceMode === 'realtime'" class="listing-merge-button listing-title-merge-button glass-action-button" :class="{ 'is-busy': listingMergeBusy }" type="button" :disabled="listingMergeBusy || !selected1688Record" title="这是AI合并标题" aria-label="这是AI合并标题" @click="mergeSelectedListings"><span class="listing-merge-triangle" aria-hidden="true"></span></button><input class="render-title-input" type="text" v-model="selectedTemuRecord.product_name" @change="saveProductModule(selectedTemuRecord, 'basic')" aria-label="Temu 商品名称"><button v-if="hasListingUndo(selectedTemuRecord)" class="operation-undo-button" type="button" :disabled="listingUndoBusy" @click="undoSelectedListing">{{ listingUndoBusy ? '返回中…' : '返回' }}</button><button v-if="hasCarouselUndo(selectedTemuRecord)" class="operation-undo-button" type="button" @click="undoCarouselReplacement(selectedTemuRecord)">恢复轮播替换</button></div><input class="render-category-input" type="text" v-model="selectedTemuRecord.product_category" @change="saveProductModule(selectedTemuRecord, 'basic')" placeholder="未提供商品分类" aria-label="Temu 商品分类"></div></div>
+            <div class="render-heading"><div><span class="platform-label temu-label">Temu</span><span v-if="hasWorkflowTask(selectedTemuRecord) || hasOpenableDirectImageTask(selectedTemuRecord) || hasOpenableCarouselTask(selectedTemuRecord) || hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" class="task-status-indicators heading-task-status-indicators"><task-status-indicator v-if="hasWorkflowTask(selectedTemuRecord)" tone="blue" :complete="isWorkflowTaskComplete(selectedTemuRecord)" :error="hasWorkflowTaskError(selectedTemuRecord)" :label="hasWorkflowTaskError(selectedTemuRecord) ? '打开失败的组货任务' : isWorkflowTaskComplete(selectedTemuRecord) ? '打开已完成的组货任务' : '打开进行中的组货任务'" @activate="openWorkflowTask(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasOpenableDirectImageTask(selectedTemuRecord)" tone="green" :pulse="true" :complete="isDirectImageTaskComplete(selectedTemuRecord)" :error="hasDirectImageTaskError(selectedTemuRecord)" :label="hasDirectImageTaskError(selectedTemuRecord) ? '打开失败的单图 Edits 任务' : '打开单图 Edits 任务'" @activate="openRetainedDirectImageEditor(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasOpenableCarouselTask(selectedTemuRecord)" tone="violet" :complete="isCarouselTaskComplete(selectedTemuRecord)" :error="hasCarouselTaskError(selectedTemuRecord)" :label="hasCarouselTaskError(selectedTemuRecord) ? '打开失败的 Fusion 任务' : '打开 Fusion 任务'" @activate="openRetainedCarouselEditor(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" tone="yellow" :complete="hasCompletedSkuBlendTask(selectedTemuRecord)" :error="hasSkuBlendError(selectedTemuRecord)" :label="hasSkuBlendError(selectedTemuRecord) ? '打开失败的 SKU 溶图任务' : '打开 SKU 溶图任务'" @activate="openSkuBlendTask(selectedTemuRecord)"></task-status-indicator></span><div class="render-title-row"><button v-if="workspaceMode === 'realtime'" class="listing-merge-button listing-title-merge-button glass-action-button" :class="{ 'is-busy': listingMergeBusy }" type="button" :disabled="listingMergeBusy || !selected1688Record" title="这是AI合并标题" aria-label="这是AI合并标题" @click="mergeSelectedListings"><span class="listing-merge-triangle" aria-hidden="true"></span></button><input class="render-title-input" type="text" v-model="selectedTemuRecord.product_name" @change="saveProductModule(selectedTemuRecord, 'basic')" aria-label="Temu 商品名称"><button v-if="hasListingUndo(selectedTemuRecord)" class="operation-undo-button" type="button" :disabled="listingUndoBusy" @click="undoSelectedListing">{{ listingUndoBusy ? '返回中…' : '返回' }}</button><button v-if="hasCarouselUndo(selectedTemuRecord)" class="operation-undo-button" type="button" @click="undoCarouselReplacement(selectedTemuRecord)">恢复轮播替换</button></div><input class="render-category-input" type="text" v-model="selectedTemuRecord.product_category" @change="saveProductModule(selectedTemuRecord, 'basic')" placeholder="未提供商品分类" aria-label="Temu 商品分类"></div></div>
             <div class="render-gallery">
                <div class="gallery-thumbs" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord)">
                 <div v-for="(image, imageIndex) in galleryImages(selectedTemuRecord)" :key="image" class="thumb-item" draggable="true" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', imageIndex), 'is-image-drop-target': isImageDropTarget('temu-gallery', imageIndex), 'is-ai-selected': isTemuGalleryEditSelected(selectedTemuRecord, imageIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, imageIndex)">
@@ -438,7 +439,7 @@ const app = createApp({
         </div>
         <div v-if="imageEditorOpen" class="image-editor-modal" @pointerdown.self="beginImageEditorBackdropPress" @pointerup="finishImageEditorBackdropPress" @pointercancel="cancelImageEditorBackdropPress">
           <section class="image-editor-dialog" role="dialog" aria-modal="true" aria-label="AI 图片编辑">
-            <header class="image-editor-header"><div><strong>{{ galleryEditSelection.length === 2 && imageCarouselCount > 1 ? '轮播修改模式' : galleryEditSelection.length === 2 ? '双图溶图' : '单图编辑' }}</strong><span>{{ galleryEditSelection.length === 2 && imageCarouselCount > 1 ? 'Kimi + Fusion API' : galleryEditSelection.length === 2 ? 'Fusion API' : 'Edits API' }}</span></div><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
+            <header class="image-editor-header"><div><strong>{{ galleryEditSelection.length === 2 && imageCarouselCount > 1 ? '轮播修改模式' : galleryEditSelection.length === 2 ? '双图溶图' : '单图编辑' }}</strong><span>{{ galleryEditSelection.length === 2 && imageCarouselCount > 1 ? 'Kimi + Fusion API' : galleryEditSelection.length === 2 ? 'Fusion API' : 'Edits API' }}</span></div><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
             <div class="image-editor-stage" :class="{ 'has-two-sources': galleryImageEditorSources(selectedTemuRecord).length === 2, 'has-result': imageEditorGeneratedUrl || imageCarouselTask }">
               <span class="image-editor-stage-label">{{ imageCarouselTask && imageCarouselTask.status === 'planning' ? '轮播规划中' : imageEditorBusy ? '处理中' : imageCarouselTask ? '轮播预览' : imageEditorGeneratedUrl ? '生成结果' : galleryImageEditorSources(selectedTemuRecord).length === 2 ? '待溶图片' : '待编辑图片' }}</span>
               <div v-if="imageEditorBusy || (imageCarouselTask && imageCarouselTask.status === 'planning')" class="image-editor-loading"><span></span><strong>{{ imageCarouselCount > 1 ? imageCarouselReasoningEnabled ? 'Kimi 推理规划中…' : 'Kimi 快速规划中…' : '图片生成中…' }}</strong><small v-if="imageCarouselCount > 1">已输出约 {{ imageCarouselEstimatedTokens }} tokens，页面没有卡住。</small><small v-else>完成后可确认替换当前图片。</small></div>
@@ -581,6 +582,7 @@ const app = createApp({
       imageApiKeyMasked: "",
       kimiApiKeyMasked: "",
       workflow: { active_temu_main_id: "", tasks: {} },
+      workflowTemporaryState: { updated_at: "", tasks: {} },
       workflowSelectedImageUrl: "",
       workflowSelectedResultIndex: -1,
       workflowPrompts: [],
@@ -1383,7 +1385,7 @@ const app = createApp({
           view.focusRealtimeWorkbench(message);
           return;
         }
-        if (message.resource === "workflow" && message.action === "candidate_updated") {
+        if (message.resource === "workflow" && (message.action === "candidate_updated" || message.action === "state_updated")) {
           view.realtimeLastEventId = Number(event && event.lastEventId) || view.realtimeLastEventId;
           view.loadWorkflowPayload();
           return;
@@ -1514,7 +1516,9 @@ const app = createApp({
     /** Apply one workflow state snapshot and refresh the selected task. */
     applyWorkflowPayload: function applyWorkflowPayload(payload) {
       const state = payload && payload.workflow ? payload.workflow : payload;
+      const temporaryState = payload && payload.state ? payload.state : { updated_at: "", tasks: {} };
       this.workflow = state && typeof state === "object" ? state : { active_temu_main_id: "", tasks: {} };
+      this.workflowTemporaryState = temporaryState && typeof temporaryState === "object" ? temporaryState : { updated_at: "", tasks: {} };
       this.resumePendingWorkflowGenerations();
       const task = this.selectedWorkflowTask;
       if (task && Array.isArray(task.prompts) && !this.workflowPromptBusy) {
@@ -1576,8 +1580,10 @@ const app = createApp({
       this.workflowPromptDrafts = {};
       this.workflowSearchBusyKeys = {};
       const selectedMainId = String(record && record.main_id || "");
-      this.workflowPromptBusy = Boolean(this.workflowPromptBusyKeys[selectedMainId]);
-      this.workflowGenerateBusy = Boolean(this.workflowGenerateBusyKeys[selectedMainId]);
+      const temporaryTasks = this.workflowTemporaryState && this.workflowTemporaryState.tasks ? this.workflowTemporaryState.tasks : {};
+      const temporaryTask = temporaryTasks[selectedMainId] || {};
+      this.workflowPromptBusy = Boolean(this.workflowPromptBusyKeys[selectedMainId]) || temporaryTask.status === "analyzing";
+      this.workflowGenerateBusy = Boolean(this.workflowGenerateBusyKeys[selectedMainId]) || temporaryTask.status === "generating";
       this.workflowSelectedImageUrl = task && task.selected_image_url ? task.selected_image_url : record && record.main_image_url ? record.main_image_url : images[0] || "";
       this.workflowSelectedResultIndex = task && Number.isFinite(Number(task.selected_result_index)) ? Number(task.selected_result_index) : -1;
       this.syncWorkflowPrompts(task);
@@ -4204,7 +4210,11 @@ const app = createApp({
           this.persistViewState();
           return;
         }
-        this.openRetainedImageEditor(record);
+        if (directTask) {
+          this.openRetainedDirectImageEditor(record);
+        } else {
+          this.openRetainedCarouselEditor(record);
+        }
       } finally {
         this.imageEditorRestoreInFlight = false;
       }
@@ -4351,8 +4361,8 @@ const app = createApp({
       this.persistViewState();
     },
 
-    /** Return whether one Temu product owns hidden image work that can be reopened. */
-    hasOpenableImageTask: function hasOpenableImageTask(record) {
+    /** Return whether one Temu product owns a retained single-image Edits task. */
+    hasOpenableDirectImageTask: function hasOpenableDirectImageTask(record) {
       if (!record || this.imageEditorOpen) {
         return false;
       }
@@ -4360,15 +4370,25 @@ const app = createApp({
       if (this.imageDirectTasksByMainId[mainId]) {
         return true;
       }
+      const sameRecord = this.imageEditorRecordKey === this.imageRecordKey(record);
+      return sameRecord && Boolean(this.imageDirectTask);
+    },
+
+    /** Return whether one Temu product owns a retained two-image Fusion task. */
+    hasOpenableCarouselTask: function hasOpenableCarouselTask(record) {
+      if (!record || this.imageEditorOpen) {
+        return false;
+      }
+      const mainId = String(record.main_id || "");
       if (this.imageCarouselTasksByMainId[mainId]) {
         return true;
       }
       const sameRecord = this.imageEditorRecordKey === this.imageRecordKey(record);
-      return sameRecord && Boolean(this.imageEditorBusy || this.imageEditorGeneratedUrl || this.imageCarouselTask || this.hasImageTaskError(record));
+      return sameRecord && Boolean(this.imageCarouselTask);
     },
 
-    /** Return whether a retained image task contains a service error code. */
-    hasImageTaskError: function hasImageTaskError(record) {
+    /** Return whether a retained single-image Edits task contains an error. */
+    hasDirectImageTaskError: function hasDirectImageTaskError(record) {
       if (!record) {
         return false;
       }
@@ -4378,6 +4398,16 @@ const app = createApp({
       if (directTask && (directTask.status === "failed" || directTask.status === "interrupted" || directTask.error_code)) {
         return true;
       }
+      const sameRecord = this.imageEditorRecordKey === this.imageRecordKey(record);
+      return sameRecord && Boolean(this.imageDirectTask) && /^\[[^\]]+\]/.test(String(this.imageEditorError || ""));
+    },
+
+    /** Return whether a retained two-image Fusion task contains an error. */
+    hasCarouselTaskError: function hasCarouselTaskError(record) {
+      if (!record) {
+        return false;
+      }
+      const mainId = String(record.main_id || "");
       const task = this.imageCarouselTasksByMainId[mainId]
         || (this.imageEditorRecordKey === this.imageRecordKey(record) ? this.imageCarouselTask : null);
       if (task) {
@@ -4392,15 +4422,15 @@ const app = createApp({
         }
       }
       const sameRecord = this.imageEditorRecordKey === this.imageRecordKey(record);
-      return sameRecord && /^\[[^\]]+\]/.test(String(this.imageEditorError || ""));
+      return sameRecord && Boolean(this.imageCarouselTask) && /^\[[^\]]+\]/.test(String(this.imageEditorError || ""));
     },
 
-    /** Return whether every image in one retained image task has generated successfully. */
-    isImageTaskComplete: function isImageTaskComplete(record) {
+    /** Return whether one retained single-image Edits task generated successfully. */
+    isDirectImageTaskComplete: function isDirectImageTaskComplete(record) {
       if (!record) {
         return false;
       }
-      if (this.hasImageTaskError(record)) {
+      if (this.hasDirectImageTaskError(record)) {
         return false;
       }
       const mainId = String(record.main_id || "");
@@ -4409,6 +4439,15 @@ const app = createApp({
       if (directTask) {
         return directTask.status === "succeeded" && Boolean(directTask.image_url);
       }
+      return false;
+    },
+
+    /** Return whether every page in one retained Fusion task generated successfully. */
+    isCarouselTaskComplete: function isCarouselTaskComplete(record) {
+      if (!record || this.hasCarouselTaskError(record)) {
+        return false;
+      }
+      const mainId = String(record.main_id || "");
       const task = this.imageCarouselTasksByMainId[mainId]
         || (this.imageEditorRecordKey === this.imageRecordKey(record) ? this.imageCarouselTask : null);
       if (task) {
@@ -4423,20 +4462,32 @@ const app = createApp({
         }
         return true;
       }
-      const sameRecord = this.imageEditorRecordKey === this.imageRecordKey(record);
-      return sameRecord && !this.imageEditorBusy && Boolean(this.imageEditorGeneratedUrl);
+      return false;
     },
 
-    /** Select the owning Temu product and reopen its retained image task. */
-    openRetainedImageEditor: function openRetainedImageEditor(record) {
+    /** Reopen only the retained single-image Edits task for one Temu product. */
+    openRetainedDirectImageEditor: function openRetainedDirectImageEditor(record) {
+      this.openRetainedImageEditor(record, "direct");
+    },
+
+    /** Reopen only the retained two-image Fusion task for one Temu product. */
+    openRetainedCarouselEditor: function openRetainedCarouselEditor(record) {
+      this.openRetainedImageEditor(record, "carousel");
+    },
+
+    /** Select the owning Temu product and reopen one explicitly requested image task type. */
+    openRetainedImageEditor: function openRetainedImageEditor(record, requestedType) {
       if (!record) {
         return;
       }
       const mainId = String(record.main_id || "");
-      const directTask = this.imageDirectTasksByMainId[mainId] || null;
-      const task = directTask ? null : this.imageCarouselTasksByMainId[mainId] || null;
+      const directTask = requestedType === "direct" ? this.imageDirectTasksByMainId[mainId] || null : null;
+      const task = requestedType === "carousel" ? this.imageCarouselTasksByMainId[mainId] || null : null;
+      if (!directTask && !task) {
+        return;
+      }
       const sameSession = this.imageEditorRecordKey === this.imageRecordKey(record)
-        && Boolean(this.imageEditorBusy || this.imageEditorGeneratedUrl || this.imageDirectTask || this.imageCarouselTask);
+        && Boolean(directTask ? this.imageDirectTask : this.imageCarouselTask);
       this.selectedTemuMainId = record.main_id;
       this.imageEditorRestoreMainId = mainId;
       this.selectBound1688ForTemu(record);
@@ -4688,9 +4739,6 @@ const app = createApp({
         this.imageEditorPrompt = String(task.requirement || this.imageEditorPrompt || "");
         this.imageCarouselEstimatedTokens = Number(task.estimated_tokens || 0);
         this.imageCarouselSourceMismatch = !this.hasSameCarouselSources(task.source_image_urls, sources);
-        if (this.imageCarouselSourceMismatch) {
-          this.imageEditorError = "该商品已有未完成任务，当前显示的是旧任务。";
-        }
         if (task.status === "planning" || task.status === "generating") {
           this.scheduleCarouselTaskPoll();
         } else if (task.status === "ready" && task.mode === "basic" && !this.imageCarouselSourceMismatch) {
