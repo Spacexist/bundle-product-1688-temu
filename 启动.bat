@@ -15,6 +15,11 @@ if not exist "%NPM_CMD%" goto :node_error
 if not exist "%~dp0package.json" goto :project_error
 set "PATH=%NODE_HOME%;%PATH%"
 
+rem Prepare the configured external cache before installing or starting this project version.
+echo [CACHE] Checking the external cache directory...
+"%NODE_EXE%" "%~dp0server\scripts\prepare-external-cache.js"
+if errorlevel 1 goto :cache_error
+
 rem Install dependencies only when the transferred folder does not contain them.
 if not exist "%~dp0node_modules\.package-lock.json" (
   echo [SETUP] Installing project dependencies...
@@ -67,6 +72,11 @@ goto :fatal_exit
 
 :project_error
 echo [ERROR] package.json is missing from the project directory.
+goto :fatal_exit
+
+:cache_error
+echo [ERROR] Failed to prepare the external cache configured in server\config.json.
+echo Confirm that drive D: is available and writable.
 goto :fatal_exit
 
 :install_error

@@ -88,11 +88,13 @@ function createApp() {
   });
   const directImages = new directImageRuntimeModule.DirectImageRuntimeService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
-    providers: providers
+    providers: providers,
+    images: images
   });
   const skuBlendTasks = new directImageRuntimeModule.DirectImageRuntimeService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     providers: providers,
+    images: images,
     runtimeName: "sku-blend",
     taskScope: "sku"
   });
@@ -136,7 +138,7 @@ function createApp() {
   const configController = new configControllerModule.ConfigController();
   const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
   const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel, directImages: directImages, skuBlendTasks: skuBlendTasks });
-  const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, products: products });
+  const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, directImages: directImages, products: products });
   const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics });
   const app = express();
   app.locals.diagnostics = diagnostics;

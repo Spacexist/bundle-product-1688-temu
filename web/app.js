@@ -466,7 +466,7 @@ const app = createApp({
               <div v-if="imageCarouselTask.status === 'awaiting_review'" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions"><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="imageCarouselTask" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="!imageCarouselTask || imageCarouselTask.status === 'awaiting_review'" class="image-editor-generate" type="button" :disabled="imageEditorBusy || imageCarouselGenerationBusy || !imageEditorPrompt.trim()" @click="submitGalleryImageEdit">{{ imageEditorBusy ? '规划中…' : imageCarouselTask ? '确认分镜并生成' : '开始生成' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status !== 'awaiting_review'" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy" @click="regenerateAllCarouselPages">{{ imageCarouselGenerationBusy ? '全部生成中…' : '全部重生' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status !== 'awaiting_review'" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !String(currentCarouselPage().prompt || '').trim()" @click="regenerateCurrentCarouselPage">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '单张生成中…' : '单独重生' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status === 'generated' && successfulCarouselPageCount(true) > 0" class="image-editor-main-apply" type="button" :disabled="imageCarouselGenerationBusy" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button class="image-editor-confirm" type="button" :disabled="imageEditorBusy || imageCarouselGenerationBusy || (imageCarouselTask ? successfulCarouselPageCount() < 1 : !imageEditorGeneratedUrl)" @click="confirmGalleryImageEdit">确认替换</button></footer>
+            <footer class="image-editor-actions"><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="imageCarouselTask" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="!imageCarouselTask || imageCarouselTask.status === 'awaiting_review' || imageCarouselTask.status === 'failed' || imageCarouselTask.status === 'interrupted'" class="image-editor-generate" type="button" :disabled="imageEditorBusy || (imageCarouselTask && imageCarouselGenerationBusy) || !imageEditorPrompt.trim()" @click="submitGalleryImageEdit">{{ imageEditorBusy ? '规划中…' : imageCarouselTask && (imageCarouselTask.status === 'failed' || imageCarouselTask.status === 'interrupted') ? '重新开始' : imageCarouselTask ? '确认分镜并生成' : '开始生成' }}</button><button v-if="imageCarouselTask && imageCarouselTask.pages && imageCarouselTask.pages.length && imageCarouselTask.status !== 'planning' && imageCarouselTask.status !== 'awaiting_review' && imageCarouselTask.status !== 'failed' && imageCarouselTask.status !== 'interrupted'" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy" @click="regenerateAllCarouselPages">{{ imageCarouselGenerationBusy ? '全部生成中…' : '全部重生' }}</button><button v-if="imageCarouselTask && imageCarouselTask.pages && imageCarouselTask.pages.length && imageCarouselTask.status !== 'planning' && imageCarouselTask.status !== 'awaiting_review' && imageCarouselTask.status !== 'failed' && imageCarouselTask.status !== 'interrupted'" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !String(currentCarouselPage().prompt || '').trim()" @click="regenerateCurrentCarouselPage">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '单张生成中…' : '单独重生' }}</button><button v-if="imageCarouselTask && imageCarouselTask.status === 'generated' && successfulCarouselPageCount(true) > 0" class="image-editor-main-apply" type="button" :disabled="imageCarouselGenerationBusy" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask && imageCarouselGenerationBusy) || (imageCarouselTask ? successfulCarouselPageCount() < 1 : !imageEditorGeneratedUrl)" @click="confirmGalleryImageEdit">确认替换</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -561,7 +561,7 @@ const app = createApp({
       specOptionDrafts: {},
       newSpecGroupName: "",
       detailImageRequests: {},
-      imageEditSize: "1k",
+      imageEditSize: "1024x1024",
       imageEditPrices: {},
       imageEditModel: "",
       imageEditBusyKeys: {},
@@ -1955,7 +1955,7 @@ const app = createApp({
       this.galleryEditRecordKey = "";
       this.galleryEditSelection = [];
       this.closeWorkflowPromptDialog();
-      this.closeGalleryImageEditor(true);
+      this.closeGalleryImageEditor();
       this.syncWorkflowSelection();
       this.persistViewState();
     },
@@ -3887,6 +3887,15 @@ const app = createApp({
       this.imageEditorError = "";
       this.imageEditorBusy = false;
       this.imageDirectTask = null;
+      this.imageCarouselTask = null;
+      this.imageCarouselGenerationBusy = false;
+      this.imageCarouselPageIndex = 0;
+      this.imageCarouselEstimatedTokens = 0;
+      this.imageCarouselSourceMismatch = false;
+      if (this.imageCarouselPollTimer) {
+        window.clearTimeout(this.imageCarouselPollTimer);
+        this.imageCarouselPollTimer = null;
+      }
       this.imageEditorOpen = true;
       this.loadDirectImageTaskForProduct(record, [source]);
     },
@@ -3950,6 +3959,15 @@ const app = createApp({
     applyDirectImageTask: function applyDirectImageTask(task) {
       if (!task || !task.id) {
         return;
+      }
+      this.imageCarouselTask = null;
+      this.imageCarouselGenerationBusy = false;
+      this.imageCarouselPageIndex = 0;
+      this.imageCarouselEstimatedTokens = 0;
+      this.imageCarouselSourceMismatch = false;
+      if (this.imageCarouselPollTimer) {
+        window.clearTimeout(this.imageCarouselPollTimer);
+        this.imageCarouselPollTimer = null;
       }
       this.storeDirectImageTask(task);
       this.imageDirectTask = task;
@@ -4488,11 +4506,14 @@ const app = createApp({
       this.imageCarouselPageIndex = 0;
       this.imageCarouselEstimatedTokens = 0;
       this.imageCarouselSourceMismatch = false;
+      if (this.imageCarouselPollTimer) {
+        window.clearTimeout(this.imageCarouselPollTimer);
+        this.imageCarouselPollTimer = null;
+      }
       this.imageEditorOpen = true;
-      const retainedDirectTask = this.imageDirectTasksByMainId[String(record.main_id || "")];
-      const hasRetainedDirectTask = this.directImageTaskMatches(retainedDirectTask, record, sources);
-      this.loadDirectImageTaskForProduct(record, sources);
-      if (sources.length === 2 && !hasRetainedDirectTask) {
+      if (sources.length === 1) {
+        this.loadDirectImageTaskForProduct(record, sources);
+      } else {
         this.loadCarouselTaskForProduct(record, sources);
       }
     },
@@ -4537,10 +4558,10 @@ const app = createApp({
       this.imageEditorBackdropPressed = false;
     },
 
-    /** Route one dialog submission through the original or carousel workflow. */
+    /** Route one image through Edits and every two-image Fusion count through one persisted workflow. */
     submitGalleryImageEdit: function submitGalleryImageEdit() {
       const sources = this.galleryImageEditorSources(this.selectedTemuRecord);
-      if (sources.length === 2 && Number(this.imageCarouselCount) > 1) {
+      if (sources.length === 2) {
         if (this.imageCarouselTask && this.imageCarouselTask.status === "awaiting_review") {
           this.saveAdvancedCarouselPlan();
           return;
@@ -4559,12 +4580,12 @@ const app = createApp({
       this.submitDirectGalleryImageEdit();
     },
 
-    /** Submit selected images as one recoverable direct-image task. */
+    /** Submit one selected image as one recoverable Edits task. */
     submitDirectGalleryImageEdit: function submitDirectGalleryImageEdit() {
       const record = this.selectedTemuRecord;
       const sources = this.galleryImageEditorSources(record);
       const prompt = String(this.imageEditorPrompt || "").trim();
-      if (!record || !prompt || (sources.length !== 1 && sources.length !== 2) || this.imageEditorBusy) {
+      if (!record || !prompt || sources.length !== 1 || this.imageEditorBusy) {
         return;
       }
       const taskId = "direct-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
@@ -4574,7 +4595,7 @@ const app = createApp({
         id: taskId,
         temu_main_id: String(record.main_id || ""),
         temu_platform_id: String(record.platform_id || ""),
-        mode: sources.length === 2 ? "fusion" : "edit",
+        mode: "edit",
         source_image_urls: sources.slice(),
         source_type: sourceType,
         source_indices: sourceIndices,
@@ -4740,11 +4761,11 @@ const app = createApp({
       return state.task;
     },
 
-    /** Submit one server-owned Kimi plus Fusion pipeline without holding the dialog open. */
+    /** Submit one server-owned Fusion pipeline and use Kimi planning only for multiple outputs. */
     async startCarouselPlan() {
       const record = this.selectedTemuRecord;
       const sources = this.galleryImageEditorSources(record);
-      const count = Math.max(2, Math.min(10, Number(this.imageCarouselCount || 2)));
+      const count = Math.max(1, Math.min(10, Number(this.imageCarouselCount || 1)));
       if (!record || sources.length !== 2 || this.imageEditorBusy) {
         return;
       }
@@ -4856,7 +4877,7 @@ const app = createApp({
     /** Submit every carousel page once and let the backend execute them concurrently. */
     async generateCarouselPages() {
       const task = this.imageCarouselTask;
-      if (!task || !Array.isArray(task.pages) || task.status === "generating") {
+      if (!task || !Array.isArray(task.pages) || !task.pages.length || task.status === "generating") {
         return;
       }
       const pageIndices = [];
@@ -5229,13 +5250,14 @@ const app = createApp({
 
     /** Close the image editor while retaining unfinished or unconfirmed image work for reopening. */
     closeGalleryImageEditor: function closeGalleryImageEditor(forceReset) {
+      const shouldForceReset = forceReset === true;
       this.imageEditorOpen = false;
       this.imageEditorRestoreMainId = "";
       this.persistViewState();
-      if (forceReset && this.imageDirectTask) {
+      if (shouldForceReset && this.imageDirectTask) {
         this.deleteDirectImageTask();
       }
-      if (!forceReset && (this.imageEditorBusy || this.imageCarouselGenerationBusy || this.imageEditorGeneratedUrl || this.imageCarouselTask)) {
+      if (!shouldForceReset && (this.imageEditorBusy || this.imageCarouselGenerationBusy || this.imageEditorGeneratedUrl || this.imageCarouselTask)) {
         if (this.imageCarouselPollTimer) {
           window.clearTimeout(this.imageCarouselPollTimer);
           this.imageCarouselPollTimer = null;

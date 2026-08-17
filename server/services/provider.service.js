@@ -462,14 +462,7 @@ class ProviderService {
 
   /** Normalize one image-edit size to the provider-supported values. */
   normalizeImageEditSize(rawSize) {
-    const requested = String(rawSize || "1k").trim().toLowerCase();
-    const sizes = ["1k", "2k", "4K"];
-    for (let index = 0; index < sizes.length; index += 1) {
-      if (sizes[index].toLowerCase() === requested) {
-        return sizes[index];
-      }
-    }
-    return "1k";
+    return "1024x1024";
   }
 
   /** Normalize image quality to a provider-supported level. */

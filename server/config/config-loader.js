@@ -19,9 +19,9 @@ function readServerConfig() {
       : ["http://127.0.0.1:5173", "http://localhost:5173", "chrome-extension://*"]
   };
   source.storage = {
-    cacheDirectory: String(storage.cacheDirectory || "../cache"),
-    imageDirectory: String(storage.imageDirectory || "../cache/image"),
-    historyDirectory: String(storage.historyDirectory || "../cache/history"),
+    cacheDirectory: String(storage.cacheDirectory || "D:/自动组货数据/cache"),
+    imageDirectory: String(storage.imageDirectory || "D:/自动组货数据/cache/image"),
+    historyDirectory: String(storage.historyDirectory || "D:/自动组货数据/cache/history"),
     historyLimit: Number(storage.historyLimit || 200)
   };
   return source;

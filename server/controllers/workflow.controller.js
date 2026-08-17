@@ -9,6 +9,7 @@ class WorkflowController {
     this.workflow = settings.workflow;
     this.binding = settings.binding;
     this.carousel = settings.carousel;
+    this.directImages = settings.directImages;
     this.products = settings.products;
   }
 
@@ -114,6 +115,9 @@ class WorkflowController {
   startCarouselPlan(request, response, next) {
     try {
       const task = this.carousel.startPlanning(request.validatedBody, request.requestId);
+      if (this.directImages) {
+        this.directImages.deleteTasksForProduct(request.validatedBody.temu_main_id, true);
+      }
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

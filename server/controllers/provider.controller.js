@@ -49,7 +49,7 @@ class ProviderController {
         const carouselTask = this.carousel.markPageGenerating(taskId, pageIndex);
         input.image_urls = carouselTask.source_image_urls.slice();
         input.prompt = String(carouselTask.pages[pageIndex].prompt || "");
-        input.size = String(carouselTask.size || "1k");
+        input.size = String(carouselTask.size || "1024x1024");
       }
       const result = await this.providers.editImages(input, "fusion", request.requestId);
       if (taskId && this.carousel) {
@@ -71,6 +71,12 @@ class ProviderController {
   createDirectImageTask(request, response, next) {
     try {
       const task = this.directImages.createAndStartTask(request.validatedBody, request.requestId);
+      const existingCarouselTask = this.carousel
+        ? this.carousel.findTaskByTemuMainId(request.validatedBody.temu_main_id)
+        : null;
+      if (existingCarouselTask) {
+        this.carousel.deleteTask(existingCarouselTask.id, true);
+      }
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

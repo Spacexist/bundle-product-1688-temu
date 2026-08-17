@@ -139,7 +139,7 @@ class CarouselRuntimeService {
       requirement: String(source.prompt || ""),
       mode: source.advanced ? "advanced" : "basic",
       reasoning_enabled: Boolean(source.reasoning_enabled),
-      size: String(source.size || "1k"),
+      size: String(source.size || "1024x1024"),
       status: "planning",
       estimated_tokens: 0,
       pages: [],
@@ -248,6 +248,27 @@ class CarouselRuntimeService {
     }
     const task = created.task;
     try {
+      if (task.count === 1) {
+        if (!task.requirement) {
+          throw createCarouselError("双图溶图提示词不能为空。", 400, "FUSION_PROMPT_EMPTY");
+        }
+        task.pages = [{
+          index: 0,
+          purpose: "双图溶图",
+          prompt: task.requirement,
+          status: "pending",
+          image_url: "",
+          selected: true,
+          error: "",
+          error_code: ""
+        }];
+        task.status = "ready";
+        task.error = "";
+        task.error_code = "";
+        this.writeTask(task);
+        reportProgress(task, "complete");
+        return task;
+      }
       const config = this.readConfig() || {};
       const kimi = config.kimi && typeof config.kimi === "object" ? config.kimi : {};
       const endpoint = this.getKimiEndpoint(config);
@@ -408,14 +429,18 @@ class CarouselRuntimeService {
     if (!task || !task.pages[index]) {
       return null;
     }
-    if (task.pages[index].image_url && task.pages[index].image_url !== imageUrl) {
-      this.deleteGeneratedImage(task.pages[index].image_url);
-    }
+    const previousImageUrl = task.pages[index].image_url && task.pages[index].image_url !== imageUrl
+      ? String(task.pages[index].image_url)
+      : "";
     task.pages[index].status = "succeeded";
     task.pages[index].image_url = String(imageUrl || "");
     task.pages[index].selected = true;
     this.refreshGenerationStatus(task);
-    return this.writeTask(task);
+    const savedTask = this.writeTask(task);
+    if (previousImageUrl) {
+      this.deleteGeneratedImage(previousImageUrl);
+    }
+    return savedTask;
   }
 
   /** Persist one failed Fusion page result and its stable error code. */
@@ -455,9 +480,13 @@ class CarouselRuntimeService {
       const result = await this.providers.editImages({
         image_urls: task.source_image_urls.slice(),
         prompt: String(page.prompt || ""),
-        size: String(task.size || "1k")
+        size: String(task.size || "1024x1024")
       }, "fusion", requestId);
-      return this.markPageSucceeded(task.id, pageIndex, result.image_url);
+      const completedTask = this.markPageSucceeded(task.id, pageIndex, result.image_url);
+      if (!completedTask) {
+        this.deleteGeneratedImage(result.image_url);
+      }
+      return completedTask;
     } catch (error) {
       return this.markPageFailed(task.id, pageIndex, error);
     }
@@ -497,17 +526,22 @@ class CarouselRuntimeService {
 
   /** Delete one local generated image owned by an abandoned runtime task. */
   deleteGeneratedImage(imageUrl) {
+    if (this.images && typeof this.images.deleteUnreferencedGeneratedImage === "function") {
+      return this.images.deleteUnreferencedGeneratedImage(imageUrl);
+    }
     const value = String(imageUrl || "");
     const prefix = this.images && this.images.publicPrefix ? this.images.publicPrefix : "/api/v1/cache/image";
     if (value.indexOf(prefix + "/transfer/generated/") !== 0) {
-      return;
+      return false;
     }
     const relativePath = value.slice(prefix.length).replace(/^[/\\]+/, "");
     const filePath = path.resolve(this.images.imageDirectory, relativePath);
     const generatedDirectory = path.resolve(this.images.imageDirectory, "transfer", "generated");
     if (filePath.indexOf(generatedDirectory + path.sep) === 0 && fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
+      return true;
     }
+    return false;
   }
 
   /** Delete one task and optionally remove its un-applied generated images. */
@@ -516,14 +550,14 @@ class CarouselRuntimeService {
     if (!task) {
       return null;
     }
+    const filePath = this.getTaskPath(task.id);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
     if (removeImages) {
       for (let index = 0; index < task.pages.length; index += 1) {
         this.deleteGeneratedImage(task.pages[index].image_url);
       }
-    }
-    const filePath = this.getTaskPath(task.id);
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
     }
     return task;
   }

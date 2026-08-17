@@ -329,7 +329,7 @@ class WorkflowService {
     const providerRequestPayload = {
       model: String(config.model || "gpt-image-2"),
       prompt: String(prompt || "").trim(),
-      size: String(config.generation_size || "1024x1024"),
+      size: "1024x1024",
       quality: normalizeWorkflowImageQuality(config.quality),
       n: 1
     };

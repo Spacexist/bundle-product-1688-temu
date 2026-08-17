@@ -5,9 +5,9 @@
     "corsOrigins": ["http://127.0.0.1:5173", "http://localhost:5173", "chrome-extension://*"]
   },
   "storage": {
-    "cacheDirectory": "../cache",
-    "imageDirectory": "../cache/image",
-    "historyDirectory": "../cache/history",
+    "cacheDirectory": "D:/自动组货数据/cache",
+    "imageDirectory": "D:/自动组货数据/cache/image",
+    "historyDirectory": "D:/自动组货数据/cache/history",
     "historyLimit": 200
   },
   "baseurl": "https://beeapi.ai",
@@ -43,7 +43,7 @@
       "SGD": 5.27
     }
   },
-  "price": { "1k": 0.02, "2k": 0.04, "4K": 0.08 },
+  "price": { "1024x1024": 0.02 },
   "apikey": "",
   "kimi": {
     "baseurl": "https://api.moonshot.cn",

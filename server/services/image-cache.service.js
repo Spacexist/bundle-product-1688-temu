@@ -205,6 +205,70 @@ class ImageCacheService {
     return value;
   }
 
+  /** Return whether any persisted business JSON still references one local image URL. */
+  isImageReferenced(localUrl) {
+    const value = String(localUrl || "");
+    if (!value || !fs.existsSync(this.cacheDirectory)) {
+      return false;
+    }
+    const pendingDirectories = [this.cacheDirectory];
+    while (pendingDirectories.length) {
+      const directory = pendingDirectories.pop();
+      const entries = fs.readdirSync(directory, { withFileTypes: true });
+      for (let index = 0; index < entries.length; index += 1) {
+        const entryPath = path.join(directory, entries[index].name);
+        if (entries[index].isDirectory()) {
+          pendingDirectories.push(entryPath);
+          continue;
+        }
+        if (path.extname(entries[index].name).toLowerCase() !== ".json"
+          || path.resolve(entryPath) === path.resolve(this.sourceIndexPath)) {
+          continue;
+        }
+        try {
+          if (fs.readFileSync(entryPath, "utf8").indexOf(value) >= 0) {
+            return true;
+          }
+        } catch (error) {
+          continue;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** Delete one generated image only after all persisted business references disappear. */
+  deleteUnreferencedGeneratedImage(localUrl) {
+    const value = String(localUrl || "");
+    const generatedPrefix = this.publicPrefix + "/transfer/generated/";
+    if (value.indexOf(generatedPrefix) !== 0 || this.isImageReferenced(value)) {
+      return false;
+    }
+    const relativePath = value.slice(this.publicPrefix.length).replace(/^[/\\]+/, "");
+    const filePath = path.resolve(this.imageDirectory, relativePath);
+    const generatedDirectory = path.resolve(this.imageDirectory, "transfer", "generated");
+    if (filePath.indexOf(generatedDirectory + path.sep) !== 0) {
+      return false;
+    }
+    let changed = false;
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      changed = true;
+    }
+    const sourceIndex = this.readSourceIndex();
+    const sourceKeys = Object.keys(sourceIndex);
+    for (let index = 0; index < sourceKeys.length; index += 1) {
+      if (String(sourceIndex[sourceKeys[index]] || "") === value) {
+        delete sourceIndex[sourceKeys[index]];
+        changed = true;
+      }
+    }
+    if (changed) {
+      fs.writeFileSync(this.sourceIndexPath, JSON.stringify(sourceIndex, null, 2), "utf8");
+    }
+    return changed;
+  }
+
   /** Cache every URL in one image list while retaining order and failed sources. */
   async cacheImageList(sources, platform, kind) {
     const input = Array.isArray(sources) ? sources : [];

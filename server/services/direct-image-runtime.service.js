@@ -18,6 +18,7 @@ class DirectImageRuntimeService {
     this.runtimeDirectory = path.join(settings.cacheDirectory, "runtime", runtimeName);
     this.taskScope = settings.taskScope === "sku" ? "sku" : "product";
     this.providers = settings.providers;
+    this.images = settings.images;
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     this.recoverInterruptedTasks();
   }
@@ -115,7 +116,6 @@ class DirectImageRuntimeService {
     if (!taskId || imageUrls.length !== expectedCount) {
       throw createDirectImageError(mode === "edit" ? "单图编辑必须提交一张图片。" : "双图溶图必须提交两张图片。", 400, "DIRECT_IMAGE_SOURCE_INVALID");
     }
-    this.deleteConflictingTasks(source);
     const task = {
       id: taskId,
       temu_main_id: String(source.temu_main_id || ""),
@@ -128,7 +128,7 @@ class DirectImageRuntimeService {
       sku_id: String(source.sku_id || ""),
       sku_index: Number(source.sku_index === undefined ? -1 : source.sku_index),
       prompt: String(source.prompt || ""),
-      size: String(source.size || "1k"),
+      size: String(source.size || "1024x1024"),
       status: "queued",
       image_url: "",
       undo_token: "",
@@ -138,6 +138,7 @@ class DirectImageRuntimeService {
       updated_at: new Date().toISOString()
     };
     this.writeTask(task);
+    this.deleteConflictingTasks(source, task.id);
     return { task: task, existing: false };
   }
 
@@ -159,6 +160,7 @@ class DirectImageRuntimeService {
       }, task.mode, requestId);
       const currentTask = this.readTask(task.id);
       if (!currentTask) {
+        this.deleteGeneratedImage(result.image_url);
         return null;
       }
       currentTask.status = "succeeded";
@@ -193,10 +195,10 @@ class DirectImageRuntimeService {
   }
 
   /** Delete only the retained task that conflicts with the incoming product or SKU target. */
-  deleteConflictingTasks(source) {
+  deleteConflictingTasks(source, retainedTaskId) {
     const input = source && typeof source === "object" ? source : {};
     if (this.taskScope !== "sku") {
-      this.deleteTasksForProduct(input.temu_main_id);
+      this.deleteTasksForProduct(input.temu_main_id, true, retainedTaskId);
       return;
     }
     const mainId = String(input.temu_main_id || "");
@@ -209,31 +211,43 @@ class DirectImageRuntimeService {
       const sameSku = skuId
         ? String(task.sku_id || "") === skuId
         : Number(task.sku_index === undefined ? -1 : task.sku_index) === skuIndex;
-      if (sameProduct && sameSku) {
-        this.deleteTask(task.id);
+      if (sameProduct && sameSku && String(task.id || "") !== String(retainedTaskId || "")) {
+        this.deleteTask(task.id, true);
       }
     }
   }
 
   /** Delete every retained task for one Temu product before starting a replacement. */
-  deleteTasksForProduct(temuMainId) {
+  deleteTasksForProduct(temuMainId, removeImages, retainedTaskId) {
     const key = String(temuMainId || "");
     const tasks = this.readTasks();
     for (let index = 0; index < tasks.length; index += 1) {
-      if (String(tasks[index].temu_main_id || "") === key) {
-        this.deleteTask(tasks[index].id);
+      if (String(tasks[index].temu_main_id || "") === key
+        && String(tasks[index].id || "") !== String(retainedTaskId || "")) {
+        this.deleteTask(tasks[index].id, removeImages);
       }
     }
   }
 
-  /** Delete one retained task record without deleting its cached generated image. */
-  deleteTask(taskId) {
+  /** Delete one retained task and optionally remove its unreferenced generated image. */
+  deleteTask(taskId, removeImage) {
     const task = this.readTask(taskId);
     const filePath = this.getTaskPath(taskId);
     if (task && fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
+    if (task && removeImage) {
+      this.deleteGeneratedImage(task.image_url);
+    }
     return task;
+  }
+
+  /** Delete one generated image only after persisted business references disappear. */
+  deleteGeneratedImage(imageUrl) {
+    if (this.images && typeof this.images.deleteUnreferencedGeneratedImage === "function") {
+      return this.images.deleteUnreferencedGeneratedImage(imageUrl);
+    }
+    return false;
   }
 
   /** Mark tasks interrupted by a previous server process as failed and retryable. */
