@@ -73,16 +73,17 @@ npm run dev
 
 ```json
 {
-  "quality": "medium"
+  "quality": "low"
 }
 ```
 
 | 值 | 说明 |
 | --- | --- |
-| `medium` | 默认质量，兼顾生成速度与效果 |
+| `low` | 项目默认质量，优先生成速度 |
+| `medium` | 中等质量，兼顾生成速度与效果 |
 | `high` | 高质量模式，通常需要更长生成时间 |
 
-只有明确填写 `high` 才会启用高质量；缺失、空值或其他值都会回退到 `medium`。配置会统一传给 BeeAPI generations 和 Fusion/edits 请求。
+`low`、`medium` 和 `high` 会原样传给 BeeAPI；缺失、空值或其他值回退到 `medium`。配置会统一用于 BeeAPI generations 和 Fusion/edits 请求。
 
 ## 项目结构
 
@@ -102,7 +103,7 @@ npm run dev
 - `extension/`：采集原始页面数据并提交 `/api/v1/products/collect`，同时把原始批次保存到 `chrome.storage.local` 的 extension cache。
 - `cache/`：由后端独占读写 Server cache；`cache/history/` 保存可跨重启使用的操作快照。
 
-所有后端接口只使用 `/api/v1` 前缀，JSON 接口统一返回 `{ ok, data, error, meta }`；生图和提示词接口通过 HTTP 请求等待结果，商品刷新、日志和队列继续使用 SSE。旧的 `/api/*`、`/v1/api/*` 和 Legacy Adapter 已移除，前端和扩展不得再拼接旧路径。
+所有后端接口只使用 `/api/v1` 前缀，JSON 接口统一返回 `{ ok, data, error, meta }`；生图接口通过 HTTP 请求等待最终结果，并在每张候选图完成时通过 SSE 立即刷新对应卡片。商品刷新、日志和队列同样使用 SSE。旧的 `/api/*`、`/v1/api/*` 和 Legacy Adapter 已移除，前端和扩展不得再拼接旧路径。
 
 运行 `npm run dev` 会同时启动前后端。服务器 Network 风格日志页面为 `http://127.0.0.1:5173/server/logs`。
 

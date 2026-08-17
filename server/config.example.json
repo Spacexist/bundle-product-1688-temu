@@ -14,7 +14,7 @@
   "endpoint": "/v1/images/edits",
   "generation_endpoint": "/v1/images/generations",
   "generation_size": "1024x1024",
-  "quality": "medium",
+  "quality": "low",
   "model": "gpt-image-2",
   "edit_prompt": "",
   "fusion_prompt": "",

@@ -52,6 +52,7 @@ function createApp() {
   const config = configModule.readServerConfig();
   const repository = new cacheModule.CacheRepository(config.storage);
   const diagnostics = new diagnosticsModule.DiagnosticsService();
+  const events = new eventModule.EventHub({ writeLog: diagnostics.write.bind(diagnostics) });
   /** Read the current image queue concurrency from the private server config. */
   function getImageTaskConcurrency() {
     const currentConfig = configModule.readServerConfig();
@@ -107,13 +108,13 @@ function createApp() {
     },
     imageTaskQueue: imageTaskQueue,
     writeLog: diagnostics.write.bind(diagnostics),
-    formatTime: diagnostics.formatTime.bind(diagnostics)
+    formatTime: diagnostics.formatTime.bind(diagnostics),
+    publishEvent: events.publish.bind(events)
   });
   const binding = bindingServiceModule.createBindingService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     formatTime: diagnostics.formatTime.bind(diagnostics)
   });
-  const events = new eventModule.EventHub({ writeLog: diagnostics.write.bind(diagnostics) });
   const viewModels = new viewModelModule.ViewModelService();
   const imageSearch = new imageSearchModule.ImageSearchService({ images: images });
   const products = new productModule.ProductService({ repository: repository, viewModels: viewModels, events: events, images: images });

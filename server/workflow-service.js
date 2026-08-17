@@ -59,9 +59,13 @@ function readWorkflowProviderCode(payload, fallback) {
   return String(providerError.code || source.code || providerError.type || fallback || "UPSTREAM_ERROR");
 }
 
-/** Normalize image quality to medium unless the server explicitly requests high. */
+/** Normalize workflow image quality to a provider-supported value. */
 function normalizeWorkflowImageQuality(rawQuality) {
-  return String(rawQuality || "medium").trim().toLowerCase() === "high" ? "high" : "medium";
+  const quality = String(rawQuality || "medium").trim().toLowerCase();
+  if (quality === "low" || quality === "high") {
+    return quality;
+  }
+  return "medium";
 }
 
 /** Parse exactly four structured product suggestions from a Kimi response. */
@@ -131,6 +135,7 @@ class WorkflowService {
     this.imageTaskQueue = settings.imageTaskQueue;
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
+    this.publishEvent = settings.publishEvent;
     this.generationQueue = [];
     this.generationQueueActive = false;
     this.recoverInterruptedTasks();
@@ -497,6 +502,14 @@ class WorkflowService {
       item[keys[keyIndex]] = patch[keys[keyIndex]];
     }
     this.writePayload(workflow, requestId);
+    if (typeof this.publishEvent === "function") {
+      this.publishEvent({
+        resource: "workflow",
+        action: "candidate_updated",
+        ids: [String(temuMainId || ""), String(index)],
+        version: Date.now()
+      }, requestId);
+    }
     return item;
   }
 

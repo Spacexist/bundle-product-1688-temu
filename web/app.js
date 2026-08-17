@@ -1383,6 +1383,11 @@ const app = createApp({
           view.focusRealtimeWorkbench(message);
           return;
         }
+        if (message.resource === "workflow" && message.action === "candidate_updated") {
+          view.realtimeLastEventId = Number(event && event.lastEventId) || view.realtimeLastEventId;
+          view.loadWorkflowPayload();
+          return;
+        }
         if (view.consumePendingCacheEvent(message)) {
           return;
         }

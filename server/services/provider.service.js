@@ -472,9 +472,13 @@ class ProviderService {
     return "1k";
   }
 
-  /** Normalize image quality to the two configured provider-supported levels. */
+  /** Normalize image quality to a provider-supported level. */
   normalizeImageQuality(rawQuality) {
-    return String(rawQuality || "medium").trim().toLowerCase() === "high" ? "high" : "medium";
+    const quality = String(rawQuality || "medium").trim().toLowerCase();
+    if (quality === "low" || quality === "high") {
+      return quality;
+    }
+    return "medium";
   }
 
   /** Extract one generated image URL or data URL from an OpenAI-compatible response. */
