@@ -1,8 +1,12 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 /** Keep one synchronous image generation request bounded by local config. */
 const DEFAULT_IMAGE_TIMEOUT_MS = 300000;
+
+/** Keep manual CLIP keyword translation from delaying the user's search too long. */
+const CLIP_KEYWORD_TRANSLATE_TIMEOUT_MS = 3500;
 
 /** Create one workflow error carrying its HTTP status and stable error code. */
 function createWorkflowError(message, statusCode, code) {
@@ -10,6 +14,113 @@ function createWorkflowError(message, statusCode, code) {
   error.statusCode = Number(statusCode || 500);
   error.code = String(code || "WORKFLOW_ERROR");
   return error;
+}
+
+/** Return whether a manual keyword contains Chinese text that benefits from EN CLIP search. */
+function containsChineseText(value) {
+  return /[\u3400-\u9fff]/.test(String(value || ""));
+}
+
+/** Extract one translated text string from the googletrans-compatible response shape. */
+function readGoogletransText(payload) {
+  if (!Array.isArray(payload) || !Array.isArray(payload[0])) {
+    return "";
+  }
+  const chunks = [];
+  for (let index = 0; index < payload[0].length; index += 1) {
+    const item = payload[0][index];
+    if (Array.isArray(item) && item[0]) {
+      chunks.push(String(item[0]));
+    }
+  }
+  return chunks.join("").trim();
+}
+
+/** Extract one translated text string from the Baidu translate response shape. */
+function readBaiduTranslateText(payload) {
+  const results = payload && Array.isArray(payload.trans_result) ? payload.trans_result : [];
+  const chunks = [];
+  for (let index = 0; index < results.length; index += 1) {
+    const item = results[index] || {};
+    if (item.dst) {
+      chunks.push(String(item.dst));
+    }
+  }
+  return chunks.join(" ").trim();
+}
+
+/** Create one MD5 signature required by Baidu translate API. */
+function createBaiduTranslateSign(appid, text, salt, secretKey) {
+  return crypto.createHash("md5").update(String(appid) + String(text) + String(salt) + String(secretKey), "utf8").digest("hex");
+}
+
+/** Translate one manual CLIP keyword to English through Baidu translate API. */
+async function translateKeywordWithBaidu(keyword, settings) {
+  const text = String(keyword || "").trim();
+  const appid = String(settings && (settings.baidu_appid || settings.appid) || process.env.BAIDU_TRANSLATE_APPID || "").trim();
+  const secretKey = String(settings && (settings.baidu_secret_key || settings.secret_key) || process.env.BAIDU_TRANSLATE_SECRET_KEY || "").trim();
+  if (!text || !appid || !secretKey || typeof fetch !== "function") {
+    return "";
+  }
+  const timeoutMs = Math.max(800, Number(settings && settings.timeout_ms || 1500));
+  const controller = new AbortController();
+  const timer = setTimeout(function abortBaiduTranslateKeywordRequest() {
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const salt = String(Date.now());
+    const body = new URLSearchParams({
+      q: text,
+      from: "auto",
+      to: "en",
+      appid: appid,
+      salt: salt,
+      sign: createBaiduTranslateSign(appid, text, salt, secretKey)
+    });
+    const response = await fetch("https://fanyi-api.baidu.com/api/trans/vip/translate", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+    if (!response.ok) {
+      return "";
+    }
+    const payload = await response.json();
+    if (payload && payload.error_code) {
+      return "";
+    }
+    return readBaiduTranslateText(payload);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Translate one manual CLIP keyword to English through Google's googletrans endpoint. */
+async function translateKeywordWithGoogletrans(keyword, timeoutMs) {
+  const text = String(keyword || "").trim();
+  if (!text || typeof fetch !== "function") {
+    return "";
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(function abortGoogletransKeywordRequest() {
+    controller.abort();
+  }, Math.max(1000, Number(timeoutMs || CLIP_KEYWORD_TRANSLATE_TIMEOUT_MS)));
+  try {
+    const url = "https://translate.googleapis.com/translate_a/single"
+      + "?client=gtx&sl=auto&tl=en&dt=t&q=" + encodeURIComponent(text);
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { "User-Agent": "Mozilla/5.0 AutoBundle/1.0" }
+    });
+    if (!response.ok) {
+      return "";
+    }
+    return readGoogletransText(await response.json());
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Read one generated image from common OpenAI-compatible response fields. */
@@ -471,12 +582,13 @@ class WorkflowService {
   }
 
   /** Convert one CLIP product result into the existing workflow candidate shape. */
-  normalizeClipCandidate(product, index, manualKeyword) {
+  normalizeClipCandidate(product, index, manualKeyword, manualQuery) {
     const source = product && typeof product === "object" ? product : {};
     const title = String(source.title || source.listing_text || source.title_en || source.search_prompt || "CLIP 候选商品").trim();
     const keyword = String(manualKeyword || "").trim();
-    const promptText = String(source.search_prompt || keyword || title).trim();
-    const promptTextEn = String(source.search_prompt_en || keyword).trim();
+    const query = String(manualQuery || "").trim();
+    const promptText = String(source.search_prompt || query || keyword || title).trim();
+    const promptTextEn = String(source.search_prompt_en || query || keyword).trim();
     const rawPrice = source.price_usd === undefined || source.price_usd === null ? source.price : source.price_usd;
     const numericPrice = Number(rawPrice);
     const priceLabel = rawPrice === undefined || rawPrice === null || rawPrice === ""
@@ -506,7 +618,7 @@ class WorkflowService {
   }
 
   /** Convert a CLIP assemble payload into the candidate list shown by the workbench. */
-  normalizeClipCandidates(payload, limit, manualKeyword) {
+  normalizeClipCandidates(payload, limit, manualKeyword, manualQuery) {
     const candidates = [];
     const seenKeys = {};
     const results = payload && Array.isArray(payload.results) ? payload.results : [];
@@ -515,7 +627,7 @@ class WorkflowService {
         break;
       }
       const result = results[index];
-      const candidate = this.normalizeClipCandidate(result, candidates.length, manualKeyword);
+      const candidate = this.normalizeClipCandidate(result, candidates.length, manualKeyword, manualQuery);
       if (!candidate.image_url) {
         continue;
       }
@@ -525,6 +637,100 @@ class WorkflowService {
       candidates.push(candidate);
     }
     return candidates;
+  }
+
+  /** Resolve translation provider settings used by manual CLIP keyword search. */
+  getClipTranslationSettings(config) {
+    const workflow = config && config.workflow && typeof config.workflow === "object" ? config.workflow : {};
+    const source = workflow.clip_translation && typeof workflow.clip_translation === "object" ? workflow.clip_translation : {};
+    const provider = String(source.provider || "baidu").trim().toLowerCase();
+    return {
+      provider: provider === "google" ? "google" : "baidu",
+      baidu_appid: String(source.baidu_appid || source.appid || process.env.BAIDU_TRANSLATE_APPID || "").trim(),
+      baidu_secret_key: String(source.baidu_secret_key || source.secret_key || process.env.BAIDU_TRANSLATE_SECRET_KEY || "").trim(),
+      timeout_ms: Math.max(800, Number(source.timeout_ms || 1500)),
+      google_timeout_ms: Math.max(1000, Number(source.google_timeout_ms || CLIP_KEYWORD_TRANSLATE_TIMEOUT_MS))
+    };
+  }
+
+  /** Translate one manual CLIP keyword with the configured provider. */
+  async translateManualClipKeyword(keyword, settings, requestId) {
+    const provider = settings && settings.provider === "google" ? "google" : "baidu";
+    if (provider === "google") {
+      return {
+        provider: "google",
+        text: await translateKeywordWithGoogletrans(keyword, settings.google_timeout_ms)
+      };
+    }
+    if (!settings.baidu_appid || !settings.baidu_secret_key) {
+      this.writeLog("UPSTREAM", "Baidu keyword translation skipped", {
+        reason: "missing_baidu_translate_credentials"
+      }, requestId);
+      return { provider: "baidu", text: "" };
+    }
+    return {
+      provider: "baidu",
+      text: await translateKeywordWithBaidu(keyword, settings)
+    };
+  }
+
+  /** Resolve the actual CLIP query for one manual keyword, translating Chinese to English when possible. */
+  async resolveManualClipQuery(keyword, requestId, config) {
+    const originalKeyword = String(keyword || "").trim();
+    if (!containsChineseText(originalKeyword)) {
+      return {
+        original_keyword: originalKeyword,
+        query: originalKeyword,
+        translated_keyword: "",
+        translation_status: "skipped",
+        translation_provider: "none"
+      };
+    }
+    const settings = this.getClipTranslationSettings(config);
+    try {
+      const result = await this.translateManualClipKeyword(originalKeyword, settings, requestId);
+      const translated = String(result.text || "").trim();
+      if (!translated || containsChineseText(translated)) {
+        this.writeLog("UPSTREAM", "CLIP keyword translation fallback", {
+          provider: result.provider,
+          keyword: originalKeyword,
+          translated_keyword: translated,
+          reason: translated ? "translated_text_still_chinese" : "empty_translation"
+        }, requestId);
+        return {
+          original_keyword: originalKeyword,
+          query: originalKeyword,
+          translated_keyword: "",
+          translation_status: "empty_fallback",
+          translation_provider: result.provider
+        };
+      }
+      this.writeLog("UPSTREAM", "CLIP keyword translation success", {
+        provider: result.provider,
+        keyword: originalKeyword,
+        translated_keyword: translated
+      }, requestId);
+      return {
+        original_keyword: originalKeyword,
+        query: translated,
+        translated_keyword: translated,
+        translation_status: "translated",
+        translation_provider: result.provider
+      };
+    } catch (error) {
+      this.writeLog("UPSTREAM", "CLIP keyword translation fallback", {
+        provider: settings.provider,
+        keyword: originalKeyword,
+        error: error && error.message ? error.message : String(error || "")
+      }, requestId);
+      return {
+        original_keyword: originalKeyword,
+        query: originalKeyword,
+        translated_keyword: "",
+        translation_status: "error_fallback",
+        translation_provider: settings.provider
+      };
+    }
   }
 
   /** Ask the local CLIP service to generate and search real listing candidates. */
@@ -562,19 +768,34 @@ class WorkflowService {
 
   /** Search the local CLIP listing index with one manual keyword. */
   async requestClipTextSearch(input, requestId) {
+    const config = this.readConfig();
     const keyword = String(input.keyword || "").trim();
-    this.writeLog("OUTBOUND", "CLIP workflow text search worker", { query: keyword, top_k: 10 }, requestId);
+    const queryInfo = await this.resolveManualClipQuery(keyword, requestId, config);
+    this.writeLog("OUTBOUND", "CLIP workflow text search worker", {
+      keyword: keyword,
+      query: queryInfo.query,
+      translated_keyword: queryInfo.translated_keyword,
+      translation_status: queryInfo.translation_status,
+      translation_provider: queryInfo.translation_provider,
+      top_k: 10
+    }, requestId);
     if (!this.clipWorker) {
       throw createWorkflowError("CLIP worker 未初始化。", 500, "CLIP_WORKER_MISSING");
     }
     try {
-      return await this.clipWorker.searchText({
+      const payload = await this.clipWorker.searchText({
         request_id: requestId,
-        query: keyword,
+        query: queryInfo.query,
         top_k: 10,
         min_price: input.min_price,
         max_price: input.max_price
       });
+      payload.manual_keyword = keyword;
+      payload.manual_keyword_en = queryInfo.translated_keyword || "";
+      payload.clip_query = queryInfo.query;
+      payload.translation_status = queryInfo.translation_status;
+      payload.translation_provider = queryInfo.translation_provider;
+      return payload;
     } catch (error) {
       throw createWorkflowError("CLIP 手动匹配 worker 失败：" + (error.message || "未知错误。"), 502, "CLIP_SEARCH_WORKER_ERROR");
     }
@@ -619,7 +840,8 @@ class WorkflowService {
       throw createWorkflowError("请输入手动匹配 keyword。", 400);
     }
     const payload = await this.requestClipTextSearch(input, requestId);
-    const candidates = this.normalizeClipCandidates(payload, 2, keyword);
+    const clipQuery = String(payload.clip_query || keyword);
+    const candidates = this.normalizeClipCandidates(payload, 2, keyword, clipQuery);
     if (!candidates.length) {
       throw createWorkflowError("CLIP 未返回可展示的手动匹配商品。", 502, "CLIP_SEARCH_EMPTY_RESULTS");
     }
@@ -630,6 +852,10 @@ class WorkflowService {
     task.selected_image_url = String(input.image_url || task.selected_image_url || "");
     task.custom_prompt = keyword;
     task.manual_keyword = keyword;
+    task.manual_keyword_en = String(payload.manual_keyword_en || "");
+    task.clip_search_query = clipQuery;
+    task.clip_translation_status = String(payload.translation_status || "skipped");
+    task.clip_translation_provider = String(payload.translation_provider || "");
     task.prompts = candidates;
     task.selected_result_index = -1;
     task.search_url = "";

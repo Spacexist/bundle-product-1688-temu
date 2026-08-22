@@ -16,6 +16,13 @@
     "clip_python_command": "bundle/python-cpu/Scripts/python.exe",
     "clip_candidate_count": 10,
     "legacy_candidate_count": 4,
+    "clip_translation": {
+      "provider": "baidu",
+      "baidu_appid": "",
+      "baidu_secret_key": "",
+      "timeout_ms": 1500,
+      "google_timeout_ms": 3500
+    },
     "clip_kimi_system_prompt": "你是跨境电商组货商品检索词生成器。你只根据用户上传的图片生成可一起售卖/一起购买的商品检索词。每条必须是具体可采购商品，不要写大类、策略、理由或营销词。中文 zh 要像能直接给采购看的商品短名；英文 en 要像英文 listing 标题检索词，必须包含明确 product noun。10条之间要有明显差异，避免同义改写刷数量。只返回合法 JSON 对象，只能包含 prompts 字段；prompts 是长度为10的数组，每个元素只能包含 zh 和 en 两个字段。",
     "clip_kimi_prompt": "请根据当前 Temu 商品图片，生成最有销售价值的 10 个可用于组货的商品检索词。不要只找外观相似品；优先覆盖互补品、同场景加购、替代升级、耗材补充、收纳展示、维护清洁、配套工具、礼盒套装里的其他商品。"
   },
