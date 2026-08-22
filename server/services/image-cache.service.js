@@ -2,13 +2,13 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
-/** Persist product images as content-addressed files under the project cache. */
+/** Persist product images as content-addressed files under the external cache. */
 class ImageCacheService {
   /** Resolve storage paths and create the supported image cache directories. */
   constructor(options) {
     const settings = options || {};
-    this.cacheDirectory = path.resolve(__dirname, "..", settings.cacheDirectory || "../../cache");
-    this.imageDirectory = path.resolve(__dirname, "..", settings.imageDirectory || "../../cache/image");
+    this.cacheDirectory = path.resolve(__dirname, "..", settings.cacheDirectory || "D:/自动组货/cache");
+    this.imageDirectory = path.resolve(__dirname, "..", settings.imageDirectory || "D:/自动组货/cache/image");
     this.publicPrefix = "/api/v1/cache/image";
     this.sourceIndexPath = path.join(this.imageDirectory, "source-index.json");
     this.ensureDirectories();

@@ -20,6 +20,7 @@ const imageCacheModule = require("./services/image-cache.service");
 const miaoshouExportModule = require("./services/miaoshou-export.service");
 const imageSearchModule = require("./services/image-search.service");
 const currencyModule = require("./services/currency.service");
+const clipWorkerModule = require("./services/clip-worker.service");
 const configControllerModule = require("./controllers/config.controller");
 const currencyControllerModule = require("./controllers/currency.controller");
 const providerControllerModule = require("./controllers/provider.controller");
@@ -98,6 +99,26 @@ function createApp() {
     runtimeName: "sku-blend",
     taskScope: "sku"
   });
+  const clipWorker = new clipWorkerModule.ClipWorkerService({
+    readConfig: configModule.readServerConfig,
+    writeLog: diagnostics.write.bind(diagnostics),
+    appRoot: path.resolve(__dirname, "..")
+  });
+  /** Start the CLIP worker during backend startup so the first UI click is not the boot path. */
+  function prewarmClipWorker() {
+    clipWorker.indexStatus()
+      .then(function handleClipWarmup(status) {
+        diagnostics.write("CLIP", "CLIP worker warmup ready", {
+          vectors: status.vectors || 0,
+          products: status.products || 0,
+          load_error: status.load_error || ""
+        }, "");
+      })
+      .catch(function handleClipWarmupError(error) {
+        diagnostics.write("CLIP", "CLIP worker warmup failed: " + error.message, null, "");
+      });
+  }
+  setTimeout(prewarmClipWorker, 500);
   const workflow = workflowServiceModule.createWorkflowService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     readConfig: configModule.readServerConfig,
@@ -109,6 +130,7 @@ function createApp() {
       return images.cacheGeneratedImage(source);
     },
     imageTaskQueue: imageTaskQueue,
+    clipWorker: clipWorker,
     writeLog: diagnostics.write.bind(diagnostics),
     formatTime: diagnostics.formatTime.bind(diagnostics),
     publishEvent: events.publish.bind(events)

@@ -73,7 +73,8 @@ npm run dev
 
 ```json
 {
-  "quality": "low"
+  "quality": "low",
+  "image_timeout_ms": 300000
 }
 ```
 
@@ -84,6 +85,8 @@ npm run dev
 | `high` | 高质量模式，通常需要更长生成时间 |
 
 `low`、`medium` 和 `high` 会原样传给 BeeAPI；缺失、空值或其他值回退到 `medium`。配置会统一用于 BeeAPI generations 和 Fusion/edits 请求。
+
+`image_timeout_ms` 统一控制 BeeAPI generations、edits 和 Fusion 请求的超时时间，默认 300000 毫秒（5 分钟）。
 
 ## 项目结构
 
@@ -100,7 +103,7 @@ npm run dev
 - `web/`：独立 Vue/Vite 前端，默认端口 5173，只消费后端 ViewModel、维护界面交互状态并提交模块草稿。
 - `server/`：独立 Express API，默认端口 3000，统一使用 `/api/v1`，负责标准化、校验、业务计算、持久化、版本冲突、历史返回和第三方调用。
 - `extension/`：采集原始页面数据并提交 `/api/v1/products/collect`，同时把原始批次保存到 `chrome.storage.local` 的 extension cache。
-- `D:\自动组货数据\cache`：独立于项目版本的 Server cache；`history/` 保存可跨重启使用的操作快照，`runtime/` 保存后台图片任务。
+- `D:\自动组货\cache`：独立于项目版本的 Server cache；`history/` 保存可跨重启使用的操作快照，`runtime/` 保存后台图片任务。
 
 所有后端接口只使用 `/api/v1` 前缀，JSON 接口统一返回 `{ ok, data, error, meta }`；生图接口通过 HTTP 请求等待最终结果，并在每张候选图完成时通过 SSE 立即刷新对应卡片。商品刷新、日志和队列同样使用 SSE。旧的 `/api/*`、`/v1/api/*` 和 Legacy Adapter 已移除，前端和扩展不得再拼接旧路径。
 
@@ -248,13 +251,13 @@ POST http://127.0.0.1:3000/api/v1/products/collect
 SSE  http://127.0.0.1:3000/api/v1/events
 ```
 
-Express 服务把数据写到 `D:\自动组货数据\cache\cache.json`，并通过 `/api/v1/events` 发送轻量刷新通知。前端收到通知后重新获取 `/api/v1/workbench`，不会直接读取缓存文件。
+Express 服务把数据写到 `D:\自动组货\cache\cache.json`，并通过 `/api/v1/events` 发送轻量刷新通知。前端收到通知后重新获取 `/api/v1/workbench`，不会直接读取缓存文件。
 
-图片由后端统一保存到 `D:\自动组货数据\cache\image\temu`、`image\1688` 和 `image\transfer`。文件名使用内容 SHA-256，JSON 只保存 `/api/v1/cache/image/...` 地址；`image\source-index.json` 用远程源 URL 的 SHA-256 命中已有文件，命中时不会再次请求 CDN。运行 `npm run cache:images` 可以迁移已有缓存图片。
+图片由后端统一保存到 `D:\自动组货\cache\image\temu`、`image\1688` 和 `image\transfer`。文件名使用内容 SHA-256，JSON 只保存 `/api/v1/cache/image/...` 地址；`image\source-index.json` 用远程源 URL 的 SHA-256 命中已有文件，命中时不会再次请求 CDN。运行 `npm run cache:images` 可以迁移已有缓存图片。
 
-`server/config.json` 的 `storage` 使用绝对路径。运行 `启动.bat` 时会先检查并创建外部缓存；首次升级会把旧项目目录中的 `cache` 合并复制到 D 盘，目标已有文件不会覆盖，旧目录也不会删除。迁移完成标记保存在 `D:\自动组货数据\.auto-bundle-cache-migrated-v1.json`，因此以后替换或删除项目目录不会影响缓存。
+`server/config.json` 的 `storage` 使用绝对路径。运行 `启动.bat` 时会先检查并创建外部缓存；首次升级会把旧项目目录中的 `cache` 合并复制到 D 盘，目标已有文件不会覆盖，旧目录也不会删除。迁移完成标记保存在 `D:\自动组货\.auto-bundle-cache-migrated-v1.json`，因此以后替换或删除项目目录不会影响缓存。
 
-智能组货的临时阶段单独保存在 `D:\\自动组货数据\\cache\\workflow-state.json`，刷新页面后会恢复“分析中”“生图中”和完成状态。
+智能组货的临时阶段单独保存在 `D:\\自动组货\\cache\\workflow-state.json`，刷新页面后会恢复“分析中”“生图中”和完成状态。
 
 扩展导出的原格式 JSON 可以提交到 `POST /api/v1/restore`。
 
@@ -264,7 +267,7 @@ Express 服务把数据写到 `D:\自动组货数据\cache\cache.json`，并通�
 
 - `GET /api/v1/images/details?url=1688详情描述地址`：由后端读取 1688 详情描述并返回详情图 URL。
 
-`D:\自动组货数据\cache\cache.json` 仍然只由后端维护，扩展 cache 不会被前端清空操作删除。
+`D:\自动组货\cache\cache.json` 仍然只由后端维护，扩展 cache 不会被前端清空操作删除。
 
 工作台有两种模式：
 

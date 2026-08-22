@@ -35,8 +35,8 @@ const imageCacheSchema = z.object({
 });
 
 const imageSearchSchema = z.union([
-  z.object({ image_url: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional() }),
-  z.object({ source: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional() })
+  z.object({ image_url: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional(), source_mode: z.enum(["clip", "legacy"]).optional() }),
+  z.object({ source: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional(), source_mode: z.enum(["clip", "legacy"]).optional() })
 ]);
 
 const replaceSkuSchema = z.object({
@@ -118,6 +118,23 @@ const packingWorkflowPromptSchema = z.object({
   product: z.record(z.string(), z.unknown())
 });
 
+const clipWorkflowAssembleSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]),
+  image_url: z.string().min(1),
+  custom_prompt: z.string().trim().max(10000).optional(),
+  product: z.record(z.string(), z.unknown()).optional(),
+  min_price: z.union([z.string(), z.number()]).optional(),
+  max_price: z.union([z.string(), z.number()]).optional()
+});
+
+const clipWorkflowSearchSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]),
+  image_url: z.string().optional(),
+  keyword: z.string().trim().min(1).max(500),
+  min_price: z.union([z.string(), z.number()]).optional(),
+  max_price: z.union([z.string(), z.number()]).optional()
+});
+
 const carouselWorkflowPromptSchema = z.object({
   mode: z.literal("carousel"),
   temu_main_id: z.union([z.string(), z.number()]),
@@ -162,6 +179,7 @@ const workflowGenerateSchema = z.object({
 const workflowCompleteSchema = z.object({
   temu_main_id: z.union([z.string(), z.number()]).optional(),
   temu_platform_id: z.union([z.string(), z.number()]).optional(),
+  source_mode: z.enum(["clip", "legacy"]).optional(),
   ali_main_id: z.union([z.string(), z.number()]),
   ali_platform_id: z.union([z.string(), z.number()]).optional()
 });
@@ -186,6 +204,8 @@ module.exports = {
   directImageTaskSchema: directImageTaskSchema,
   skuBlendTaskSchema: skuBlendTaskSchema,
   workflowPromptSchema: workflowPromptSchema,
+  clipWorkflowAssembleSchema: clipWorkflowAssembleSchema,
+  clipWorkflowSearchSchema: clipWorkflowSearchSchema,
   carouselWorkflowPromptSchema: carouselWorkflowPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
   carouselPageUpdateSchema: carouselPageUpdateSchema,

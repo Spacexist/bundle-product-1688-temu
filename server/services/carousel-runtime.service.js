@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 
+const DEFAULT_IMAGE_TIMEOUT_MS = 300000;
+
 /** Create one carousel error with an HTTP status and stable code. */
 function createCarouselError(message, statusCode, code, details) {
   const error = new Error(String(message || "轮播任务处理失败。"));
@@ -44,10 +46,49 @@ class CarouselRuntimeService {
       return null;
     }
     try {
-      return JSON.parse(fs.readFileSync(filePath, "utf8"));
+      return this.recoverStaleGeneratingPages(JSON.parse(fs.readFileSync(filePath, "utf8")));
     } catch (error) {
       return null;
     }
+  }
+
+  /** Return the configured image timeout used to release stale carousel pages. */
+  getImageTimeoutMs() {
+    const config = this.readConfig ? this.readConfig() || {} : {};
+    const image = config.image && typeof config.image === "object" ? config.image : config;
+    const timeoutMs = Number(image.image_timeout_ms || image.timeout_ms || DEFAULT_IMAGE_TIMEOUT_MS);
+    return Math.max(10000, Math.min(timeoutMs, 900000));
+  }
+
+  /** Mark pages that have been generating too long as failed before the UI reads them. */
+  recoverStaleGeneratingPages(task) {
+    const target = task && typeof task === "object" ? task : null;
+    if (!target || !Array.isArray(target.pages)) {
+      return target;
+    }
+    const now = Date.now();
+    const staleMs = this.getImageTimeoutMs();
+    let changed = false;
+    for (let index = 0; index < target.pages.length; index += 1) {
+      const page = target.pages[index];
+      if (!page || page.status !== "generating") {
+        continue;
+      }
+      const startedAt = Date.parse(page.generation_started_at || target.updated_at || target.created_at || 0);
+      if (!Number.isFinite(startedAt) || now - startedAt < staleMs) {
+        continue;
+      }
+      page.status = "failed";
+      page.error = "图片生成超过配置超时时间未完成，已自动释放任务锁。";
+      page.error_code = "IMAGE_GENERATION_STALE";
+      page.generation_id = "";
+      changed = true;
+    }
+    if (changed) {
+      this.refreshGenerationStatus(target);
+      return this.writeTask(target);
+    }
+    return target;
   }
 
   /** Atomically persist one runtime task through a temporary file. */
@@ -92,16 +133,61 @@ class CarouselRuntimeService {
     return tasks;
   }
 
-  /** Find the single active task for one Temu product. */
+  /** Return whether one carousel task should still block a new task for the same product. */
+  isActiveTask(task) {
+    const status = String(task && task.status || "");
+    return status === "planning" || status === "awaiting_review" || status === "ready" || status === "generating";
+  }
+
+  /** Return the newest task from a list using persisted update timestamps. */
+  newestTask(tasks) {
+    const candidates = Array.isArray(tasks) ? tasks : [];
+    let newest = null;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const task = candidates[index];
+      if (!newest || Date.parse(task.updated_at || task.created_at || 0) >= Date.parse(newest.updated_at || newest.created_at || 0)) {
+        newest = task;
+      }
+    }
+    return newest;
+  }
+
+  /** Find the newest retained task for one Temu product. */
   findTaskByTemuMainId(temuMainId) {
     const key = String(temuMainId || "");
     const tasks = this.readTasks();
+    const matches = [];
     for (let index = 0; index < tasks.length; index += 1) {
       if (String(tasks[index].temu_main_id || "") === key) {
-        return tasks[index];
+        matches.push(tasks[index]);
       }
     }
-    return null;
+    return this.newestTask(matches);
+  }
+
+  /** Find the newest still-active task for one Temu product. */
+  findActiveTaskByTemuMainId(temuMainId) {
+    const key = String(temuMainId || "");
+    const tasks = this.readTasks();
+    const matches = [];
+    for (let index = 0; index < tasks.length; index += 1) {
+      if (String(tasks[index].temu_main_id || "") === key && this.isActiveTask(tasks[index])) {
+        matches.push(tasks[index]);
+      }
+    }
+    return this.newestTask(matches);
+  }
+
+  /** Normalize saved carousel sizes into values accepted by the image provider. */
+  normalizeCarouselImageSize(size) {
+    const value = String(size || "1024x1024").trim().toLowerCase();
+    if (value === "auto") {
+      return "auto";
+    }
+    if (value === "1k" || value === "1024" || value === "1024*1024") {
+      return "1024x1024";
+    }
+    return /^\d+x\d+$/.test(value) ? value : "1024x1024";
   }
 
   /** Compare two source-image sets without considering selection order. */
@@ -119,7 +205,7 @@ class CarouselRuntimeService {
     if (Number(source.source_indices[0]) === Number(source.source_indices[1])) {
       throw createCarouselError("轮播任务必须选择两个不同图片位置。", 400, "CAROUSEL_SOURCE_INDEX_INVALID");
     }
-    const existing = this.findTaskByTemuMainId(source.temu_main_id);
+    const existing = this.findActiveTaskByTemuMainId(source.temu_main_id);
     if (existing) {
       if (this.hasSameSources(existing.source_image_urls, source.image_urls)) {
         return { task: existing, existing: true };
@@ -139,7 +225,7 @@ class CarouselRuntimeService {
       requirement: String(source.prompt || ""),
       mode: source.advanced ? "advanced" : "basic",
       reasoning_enabled: Boolean(source.reasoning_enabled),
-      size: String(source.size || "1024x1024"),
+      size: this.normalizeCarouselImageSize(source.size),
       status: "planning",
       estimated_tokens: 0,
       pages: [],
@@ -409,7 +495,7 @@ class CarouselRuntimeService {
   }
 
   /** Mark one page as running before its shared Fusion request starts. */
-  markPageGenerating(taskId, pageIndex) {
+  markPageGenerating(taskId, pageIndex, generationId) {
     const task = this.readTask(taskId);
     const index = Number(pageIndex);
     if (!task || !task.pages[index]) {
@@ -417,16 +503,21 @@ class CarouselRuntimeService {
     }
     task.status = "generating";
     task.pages[index].status = "generating";
+    task.pages[index].generation_id = String(generationId || "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8));
+    task.pages[index].generation_started_at = new Date().toISOString();
     task.pages[index].error = "";
     task.pages[index].error_code = "";
     return this.writeTask(task);
   }
 
   /** Persist one successful Fusion page result. */
-  markPageSucceeded(taskId, pageIndex, imageUrl) {
+  markPageSucceeded(taskId, pageIndex, imageUrl, generationId) {
     const task = this.readTask(taskId);
     const index = Number(pageIndex);
     if (!task || !task.pages[index]) {
+      return null;
+    }
+    if (generationId && task.pages[index].generation_id && String(task.pages[index].generation_id) !== String(generationId)) {
       return null;
     }
     const previousImageUrl = task.pages[index].image_url && task.pages[index].image_url !== imageUrl
@@ -435,6 +526,8 @@ class CarouselRuntimeService {
     task.pages[index].status = "succeeded";
     task.pages[index].image_url = String(imageUrl || "");
     task.pages[index].selected = true;
+    task.pages[index].generation_id = "";
+    task.pages[index].generation_started_at = "";
     this.refreshGenerationStatus(task);
     const savedTask = this.writeTask(task);
     if (previousImageUrl) {
@@ -444,15 +537,20 @@ class CarouselRuntimeService {
   }
 
   /** Persist one failed Fusion page result and its stable error code. */
-  markPageFailed(taskId, pageIndex, error) {
+  markPageFailed(taskId, pageIndex, error, generationId) {
     const task = this.readTask(taskId);
     const index = Number(pageIndex);
     if (!task || !task.pages[index]) {
       return null;
     }
+    if (generationId && task.pages[index].generation_id && String(task.pages[index].generation_id) !== String(generationId)) {
+      return task;
+    }
     task.pages[index].status = "failed";
     task.pages[index].error = String(error && error.message || "图片生成失败。");
     task.pages[index].error_code = String(error && error.code || "IMAGE_GENERATION_FAILED");
+    task.pages[index].generation_id = "";
+    task.pages[index].generation_started_at = "";
     this.refreshGenerationStatus(task);
     return this.writeTask(task);
   }
@@ -474,21 +572,23 @@ class CarouselRuntimeService {
 
   /** Generate one persisted carousel page independently from its initiating browser request. */
   async generatePage(taskId, pageIndex, requestId) {
-    const task = this.markPageGenerating(taskId, pageIndex);
+    const generationId = "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    const task = this.markPageGenerating(taskId, pageIndex, generationId);
     const page = task.pages[Number(pageIndex)];
     try {
+      const normalizedSize = this.normalizeCarouselImageSize(task.size);
       const result = await this.providers.editImages({
         image_urls: task.source_image_urls.slice(),
         prompt: String(page.prompt || ""),
-        size: String(task.size || "1024x1024")
+        size: normalizedSize
       }, "fusion", requestId);
-      const completedTask = this.markPageSucceeded(task.id, pageIndex, result.image_url);
+      const completedTask = this.markPageSucceeded(task.id, pageIndex, result.image_url, generationId);
       if (!completedTask) {
         this.deleteGeneratedImage(result.image_url);
       }
       return completedTask;
     } catch (error) {
-      return this.markPageFailed(task.id, pageIndex, error);
+      return this.markPageFailed(task.id, pageIndex, error, generationId);
     }
   }
 
@@ -576,6 +676,7 @@ class CarouselRuntimeService {
             task.pages[pageIndex].status = "failed";
             task.pages[pageIndex].error = task.error;
             task.pages[pageIndex].error_code = task.error_code;
+            task.pages[pageIndex].generation_started_at = "";
           }
         }
         this.writeTask(task);

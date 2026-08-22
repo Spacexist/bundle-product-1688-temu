@@ -1,0 +1,9 @@
+{
+  "kimi": {
+    "api_key": "",
+    "endpoint": "https://api.moonshot.cn/v1/chat/completions",
+    "model": "kimi-k2.6",
+    "temperature": 0.6,
+    "max_completion_tokens": 1200
+  }
+}

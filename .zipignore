@@ -1,0 +1,56 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Node
+npm-debug.log*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Temp
+tmp/
+temp/
+*.tmp
+*.zip
+*.7z
+*.rar
+test_*.py
+build/
+
+# Local data and private config
+cache/
+server/config.json
+bundle/clip/config.json
+bundle/python/
+bundle/_delete_pending_python_gpu/
+
+# Large runtime files (keep models and data but exclude huge node_modules)
+runtime/node/node_modules/
+
+# Test outputs
+test_output/

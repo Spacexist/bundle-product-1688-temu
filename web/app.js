@@ -34,6 +34,18 @@ function getApiErrorMessage(payload, fallbackMessage) {
   return String(fallbackMessage || "请求失败。");
 }
 
+/** Return one stable code from the shared API error envelope. */
+function getApiErrorCode(payload, fallbackCode) {
+  const error = payload && payload.error;
+  if (error && typeof error === "object" && error.code) {
+    return String(error.code);
+  }
+  if (payload && payload.statusCode) {
+    return String(payload.statusCode);
+  }
+  return String(fallbackCode || "REQUEST_FAILED");
+}
+
 /** Return one stable error code from a failed workflow request. */
 function getWorkflowErrorCode(error) {
   return String(error && (error.code || error.statusCode) || "REQUEST_FAILED");
@@ -254,6 +266,7 @@ function requestWorkflowJson(url, options) {
 const VIEW_STATE_STORAGE_KEY = "pod-auto-build.view-state";
 const CAROUSEL_UNDO_STORAGE_KEY = "pod-auto-build.carousel-undo";
 const WORKFLOW_INDICATOR_ACK_STORAGE_KEY = "pod-auto-build.workflow-indicator-ack";
+const SKU_BLEND_INDICATOR_ACK_STORAGE_KEY = "pod-auto-build.sku-blend-indicator-ack";
 
 /** Read the last workbench selection without breaking startup when browser storage is unavailable. */
 function readPersistedViewState() {
@@ -281,6 +294,17 @@ function readCarouselUndoTokens() {
 function readWorkflowIndicatorAcknowledgements() {
   try {
     const raw = window.localStorage.getItem(WORKFLOW_INDICATOR_ACK_STORAGE_KEY);
+    const acknowledgements = raw ? JSON.parse(raw) : {};
+    return acknowledgements && typeof acknowledgements === "object" ? acknowledgements : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+/** Read durable SKU blend indicator acknowledgements retained by this browser. */
+function readSkuBlendIndicatorAcknowledgements() {
+  try {
+    const raw = window.localStorage.getItem(SKU_BLEND_INDICATOR_ACK_STORAGE_KEY);
     const acknowledgements = raw ? JSON.parse(raw) : {};
     return acknowledgements && typeof acknowledgements === "object" ? acknowledgements : {};
   } catch (error) {
@@ -366,7 +390,7 @@ const app = createApp({
                  <table class="sku-table sku-spec-table"><thead><tr><th>#</th><th>预览图</th><th v-for="group in skuSpecGroups(selectedTemuRecord)" :key="group.name" :class="{ 'is-drop-target': isAliDropTarget('group', group.name) }" @dragenter.prevent.stop="setAliDropTarget('group', group.name)" @dragover.prevent.stop="setAliDropTarget('group', group.name)" @drop.prevent.stop="dropAliSkuToTemuGroup($event, selectedTemuRecord, group.name)">{{ group.name }}</th><th><span class="sku-copy-first-heading">价格<button class="sku-copy-first-button" type="button" title="用 SKU1 的价格覆盖全部 SKU" aria-label="用 SKU1 的价格覆盖全部 SKU" :disabled="isCopyFirstSkuAttributeBusy(selectedTemuRecord, 'price')" @click.stop="copyFirstSkuAttribute(selectedTemuRecord, 'price')"></button></span></th><th><span class="sku-copy-first-heading">库存<button class="sku-copy-first-button" type="button" title="用 SKU1 的库存覆盖全部 SKU" aria-label="用 SKU1 的库存覆盖全部 SKU" :disabled="isCopyFirstSkuAttributeBusy(selectedTemuRecord, 'stock')" @click.stop="copyFirstSkuAttribute(selectedTemuRecord, 'stock')"></button></span></th><th class="sku-dimensions-column"><span class="sku-copy-first-heading">长宽高<button class="sku-copy-first-button" type="button" title="用 SKU1 的长宽高覆盖全部 SKU" aria-label="用 SKU1 的长宽高覆盖全部 SKU" :disabled="isCopyFirstSkuAttributeBusy(selectedTemuRecord, 'dimensions')" @click.stop="copyFirstSkuAttribute(selectedTemuRecord, 'dimensions')"></button></span></th></tr></thead><tbody>
                  <tr v-for="(sku, skuIndex) in selectedTemuRecord.sku" :key="getSkuKey(selectedTemuRecord, sku, skuIndex)">
                    <td>{{ skuIndex + 1 }}</td>
-                  <td class="sku-image-cell" :class="{ 'is-image-drop-target': isImageDropTarget('temu-sku', skuIndex) }" @dragenter.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @dragover.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @drop.prevent.stop="dropAliImageToTemuSku($event, selectedTemuRecord, sku, skuIndex)"><div class="sku-images-editor"><div v-for="(image, imageIndex) in skuImageUrls(sku)" :key="imageIndex" class="sku-image-item"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="SKU 图片" draggable="true" title="拖到上方主图列表" @dragstart.stop="startSkuImageDrag($event, selectedTemuRecord, image, skuIndex, imageIndex)" @dragend="endAliImageDrag" @click.stop="openImagePreview(image)"><button class="image-delete-button" type="button" aria-label="删除 SKU 图片" @click="removeSkuImageAt(selectedTemuRecord, sku, imageIndex)">×</button></div><label v-if="!skuImageUrls(sku).length" class="sku-image-empty-upload" title="点击上传本地图片，悬停选择主图" @mouseenter="openSkuImagePicker($event, selectedTemuRecord, sku, skuIndex)" @mouseleave="scheduleSkuImagePickerClose">+<input type="file" accept="image/*" @change.stop="handleSkuImageUpload($event, selectedTemuRecord, sku)"></label><div v-if="skuImageUrls(sku).length === 2 || hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-image-actions"><button v-if="skuImageUrls(sku).length === 2" class="sku-blend-button" type="button" :disabled="isSkuBlendBusy(selectedTemuRecord, sku, skuIndex)" title="将当前 SKU 的两张图片发送到 BeeAPI 并替换为返回图片" @click.stop="blendSkuImages(selectedTemuRecord, sku, skuIndex)">{{ isSkuBlendBusy(selectedTemuRecord, sku, skuIndex) ? '生成中…' : '溶图' }}</button><button v-if="hasSkuFusionUndo(selectedTemuRecord, sku, skuIndex)" class="sku-fusion-undo-button" type="button" :disabled="isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex)" @click.stop="undoSkuImageFusion(selectedTemuRecord, sku, skuIndex)">{{ isSkuFusionUndoBusy(selectedTemuRecord, sku, skuIndex) ? '恢复中…' : '恢复原图' }}</button></div></div></td>
+                  <td class="sku-image-cell" :class="{ 'is-image-drop-target': isImageDropTarget('temu-sku', skuIndex) }" @dragenter.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @dragover.prevent.stop="setImageDropTarget('temu-sku', skuIndex)" @drop.prevent.stop="dropAliImageToTemuSku($event, selectedTemuRecord, sku, skuIndex)"><div class="sku-images-editor"><div v-for="(image, imageIndex) in skuImageUrls(sku)" :key="imageIndex" class="sku-image-item"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="SKU 图片" draggable="true" title="拖到上方主图列表" @dragstart.stop="startSkuImageDrag($event, selectedTemuRecord, image, skuIndex, imageIndex)" @dragend="endAliImageDrag" @click.stop="openImagePreview(image)"><button class="image-delete-button" type="button" aria-label="删除 SKU 图片" @click="removeSkuImageAt(selectedTemuRecord, sku, imageIndex)">×</button></div><label v-if="!skuImageUrls(sku).length" class="sku-image-empty-upload" title="点击上传本地图片，悬停选择主图" @mouseenter="openSkuImagePicker($event, selectedTemuRecord, sku, skuIndex)" @mouseleave="scheduleSkuImagePickerClose">+<input type="file" accept="image/*" @change.stop="handleSkuImageUpload($event, selectedTemuRecord, sku)"></label><div v-if="shouldShowSkuBlendAction(selectedTemuRecord, sku, skuIndex)" class="sku-image-actions sku-image-state-actions"><button class="sku-fusion-state-button" :class="skuBlendActionClass(selectedTemuRecord, sku, skuIndex)" type="button" :disabled="isSkuBlendActionBusy(selectedTemuRecord, sku, skuIndex)" :aria-label="skuBlendActionTitle(selectedTemuRecord, sku, skuIndex)" :data-error-code="skuBlendErrorCode(selectedTemuRecord, sku, skuIndex)" @click.stop="handleSkuBlendAction(selectedTemuRecord, sku, skuIndex)"><span v-if="isSkuBlendActionBusy(selectedTemuRecord, sku, skuIndex)" class="sku-fusion-state-spinner" aria-hidden="true"></span><span v-else aria-hidden="true">{{ skuBlendActionIcon(selectedTemuRecord, sku, skuIndex) }}</span></button></div></div></td>
                     <td v-for="(group, groupIndex) in skuSpecGroups(selectedTemuRecord)" :key="group.name" class="sku-spec-cell" :class="{ 'is-drop-target': isTemuSkuCellDropTarget(skuIndex, group.name) }" @dragenter.prevent.stop="setTemuSkuCellDropTarget(skuIndex, group.name)" @dragover.prevent.stop="setTemuSkuCellDropTarget(skuIndex, group.name)" @drop.prevent.stop="dropAliSkuToTemuSkuCell($event, selectedTemuRecord, sku, skuIndex, group.name)"><input class="sku-edit-input" type="text" :value="skuSpecValue(sku, groupIndex)" @input="updateSkuSpecValue(sku, groupIndex, $event.target.value)" :aria-label="group.name"></td>
                     <td><input class="sku-edit-input" type="text" inputmode="decimal" v-model="sku.sku_price" aria-label="SKU 价格"></td><td><input class="sku-edit-input" type="text" inputmode="numeric" v-model="sku.sku_stock" aria-label="SKU 库存"></td><td class="sku-dimensions-cell"><div class="sku-dimension-bubbles" aria-label="SKU 尺寸"><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_length" aria-label="SKU 长度"><span class="sku-dimension-separator">:</span><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_width" aria-label="SKU 宽度"><span class="sku-dimension-separator">:</span><input class="sku-edit-input sku-dimension-input" type="text" inputmode="decimal" v-model="sku.sku_height" aria-label="SKU 高度"></div></td>
                  </tr>
@@ -380,17 +404,33 @@ const app = createApp({
           <section v-if="workspaceMode === 'smart'" class="panel platform-render smart-workflow-render">
             <div class="smart-workflow-heading">
               <div><span class="platform-label ali-label">智能组货</span></div>
-              <button class="workflow-direction-button smart-workflow-direction-button" :class="{ 'is-analyzing': workflowPromptBusy, 'is-generating': workflowGenerateBusy, 'is-ready': workflowPrompts.length && !workflowPromptBusy && !workflowGenerateBusy }" type="button" :disabled="workflowPromptBusy || workflowGenerateBusy || !workflowSelectedImageUrl" @click="generateWorkflowPrompts">
-                <span v-if="workflowPromptBusy || workflowGenerateBusy" class="workflow-direction-spinner" aria-hidden="true"></span>
-                <span>{{ workflowPromptBusy ? '分析中' : workflowGenerateBusy ? '生图中' : workflowPrompts.length ? '重新组货' : '生成组货方向' }}</span>
-              </button>
+              <div class="smart-workflow-heading-actions">
+                <div v-if="workflowMode === 'clip'" class="smart-workflow-price-filter" aria-label="CLIP 价格过滤">
+                  <input type="number" min="0" step="0.01" inputmode="decimal" v-model="workflowClipMinPrice" placeholder="最低价">
+                  <span>—</span>
+                  <input type="number" min="0" step="0.01" inputmode="decimal" v-model="workflowClipMaxPrice" placeholder="最高价">
+                </div>
+                <div v-if="workflowMode === 'clip'" class="smart-workflow-manual-match" aria-label="手动 CLIP 匹配">
+                  <input type="text" v-model="workflowClipKeyword" placeholder="手动 keyword" @keyup.enter="searchClipWorkflowCandidates">
+                  <button type="button" :disabled="workflowPromptBusy || workflowGenerateBusy || !selectedTemuRecord || !workflowClipKeyword.trim()" @click="searchClipWorkflowCandidates">匹配2个</button>
+                </div>
+                <div class="smart-workflow-mode-switch" role="group" aria-label="组货模式">
+                  <button type="button" :class="{ active: workflowMode === 'clip' }" @click="setWorkflowMode('clip')">新版CLIP</button>
+                  <button type="button" :class="{ active: workflowMode === 'legacy' }" @click="setWorkflowMode('legacy')">旧版生图</button>
+                </div>
+                <button class="workflow-direction-button smart-workflow-direction-button" :class="{ 'is-analyzing': workflowPromptBusy, 'is-generating': workflowGenerateBusy, 'is-ready': workflowPrompts.length && !workflowPromptBusy && !workflowGenerateBusy }" type="button" :disabled="workflowPromptBusy || workflowGenerateBusy || !workflowSelectedImageUrl" @click="startWorkflowAction">
+                  <span v-if="workflowPromptBusy || workflowGenerateBusy" class="workflow-direction-spinner" aria-hidden="true"></span>
+                  <span v-else class="workflow-direction-icon" aria-hidden="true">↻</span>
+                  <span>{{ workflowPromptBusy ? '分析中' : workflowGenerateBusy ? '生图中' : workflowPrompts.length ? '重新组货' : workflowMode === 'clip' ? '生成CLIP组货' : '生成组货方向' }}</span>
+                </button>
+              </div>
             </div>
             <section v-if="workflowPrompts.length" class="smart-workflow-step">
-              <header><span>01</span><div><strong>组货建议</strong><small>四个候选方向会自动生成图片，生成完成后可直接搜图。</small></div></header>
+              <header><span>01</span><div><strong>组货建议</strong><small>{{ workflowMode === 'clip' ? '新版 CLIP 返回真实候选商品，点击搜索按钮走 1688 搜图。' : '四个候选方向会自动生成图片，生成完成后可直接搜图。' }}</small></div></header>
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
-                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url" :src="imageSource(item.image_url)" alt="AI 组货候选图"><span v-else>{{ item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="workflowSelectedResultIndex === index">已选择</i></button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张生成图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张生成图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
-                  <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span>{{ item.product_intro }}</span></div>
+                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url" :src="imageSource(item.image_url)" alt="AI 组货候选图"><span v-else>{{ item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+                  <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.product_intro }}</span><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
                 </article>
               </div>
               <div v-if="selectedWorkflowTask && selectedWorkflowTask.search_url" class="smart-search-ready"><span>搜款页已生成，进入满意商品详情后选择 Temu，并点击扩展确认绑定。</span><a :href="selectedWorkflowTask.search_url" target="_blank">重新打开搜款页</a></div>
@@ -430,18 +470,18 @@ const app = createApp({
           <div v-if="!gallerySkuPickerImages('temu').length && !gallerySkuPickerImages('1688').length" class="sku-image-picker-empty">当前 Temu 和 1688 商品暂无 SKU 图片。</div>
         </aside>
         <div v-if="workflowPromptDialogOpen" class="image-editor-modal">
-          <section class="image-editor-dialog workflow-prompt-dialog" role="dialog" aria-modal="true" aria-label="自定义组货方向提示词">
-            <header class="image-editor-header"><div><strong>自定义组货方向</strong><span>Kimi 将按照本次要求推荐 4 个商品</span></div><button type="button" aria-label="关闭组货提示词" @click="closeWorkflowPromptDialog">×</button></header>
-            <label class="image-editor-prompt"><span>组货提示词</span><textarea v-model="workflowCustomPromptDraft" rows="7" placeholder="请输入本次组货方向要求" aria-label="自定义组货方向提示词"></textarea></label>
+          <section class="image-editor-dialog workflow-prompt-dialog" role="dialog" aria-modal="true" aria-label="自定义组货提示词">
+            <header class="image-editor-header"><div><strong>{{ workflowPromptDialogMode === 'clip' ? '自定义新版 CLIP 组货' : '自定义组货方向' }}</strong><span>{{ workflowPromptDialogMode === 'clip' ? 'Kimi 将按照本次要求生成 CLIP 检索词' : 'Kimi 将按照本次要求推荐 4 个商品' }}</span></div><button type="button" aria-label="关闭组货提示词" @click="closeWorkflowPromptDialog">×</button></header>
+            <label class="image-editor-prompt"><span>{{ workflowPromptDialogMode === 'clip' ? '用户提示词' : '组货提示词' }}</span><textarea v-model="workflowCustomPromptDraft" rows="7" :placeholder="workflowPromptDialogMode === 'clip' ? '请输入本次 CLIP 用户要求；系统提示词已隐藏并从 config 读取' : '请输入本次组货方向要求'" aria-label="自定义组货提示词"></textarea></label>
             <div v-if="workflowPromptDialogError" class="image-editor-error">{{ workflowPromptDialogError }}</div>
-            <footer class="image-editor-actions"><button class="image-editor-cancel" type="button" @click="closeWorkflowPromptDialog">取消</button><button class="image-editor-confirm" type="button" :disabled="workflowPromptBusy" @click="submitWorkflowPrompts">{{ workflowPromptBusy ? '分析中…' : '开始分析' }}</button></footer>
+            <footer class="image-editor-actions"><button class="image-editor-cancel" type="button" @click="closeWorkflowPromptDialog">取消</button><button class="image-editor-confirm" type="button" :disabled="workflowPromptBusy" @click="submitWorkflowPrompts">{{ workflowPromptBusy ? workflowPromptDialogMode === 'clip' ? '检索中…' : '分析中…' : workflowPromptDialogMode === 'clip' ? '开始CLIP组货' : '开始分析' }}</button></footer>
           </section>
         </div>
         <div v-if="imageEditorOpen" class="image-editor-modal" @pointerdown.self="beginImageEditorBackdropPress" @pointerup="finishImageEditorBackdropPress" @pointercancel="cancelImageEditorBackdropPress">
           <section class="image-editor-dialog" role="dialog" aria-modal="true" aria-label="AI 图片编辑">
             <header class="image-editor-header"><div><strong>{{ galleryEditSelection.length === 2 && imageCarouselCount > 1 ? '轮播修改模式' : galleryEditSelection.length === 2 ? '双图溶图' : '单图编辑' }}</strong><span>{{ galleryEditSelection.length === 2 && imageCarouselCount > 1 ? 'Kimi + Fusion API' : galleryEditSelection.length === 2 ? 'Fusion API' : 'Edits API' }}</span></div><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
             <div class="image-editor-stage" :class="{ 'has-two-sources': galleryImageEditorSources(selectedTemuRecord).length === 2, 'has-result': imageEditorGeneratedUrl || imageCarouselTask }">
-              <span class="image-editor-stage-label">{{ imageCarouselTask && imageCarouselTask.status === 'planning' ? '轮播规划中' : imageEditorBusy ? '处理中' : imageCarouselTask ? '轮播预览' : imageEditorGeneratedUrl ? '生成结果' : galleryImageEditorSources(selectedTemuRecord).length === 2 ? '待溶图片' : '待编辑图片' }}</span>
+              <span v-if="!imageCarouselTask" class="image-editor-stage-label">{{ imageEditorBusy ? '处理中' : imageEditorGeneratedUrl ? '生成结果' : galleryImageEditorSources(selectedTemuRecord).length === 2 ? '待溶图片' : '待编辑图片' }}</span>
               <div v-if="imageEditorBusy || (imageCarouselTask && imageCarouselTask.status === 'planning')" class="image-editor-loading"><span></span><strong>{{ imageCarouselCount > 1 ? imageCarouselReasoningEnabled ? 'Kimi 推理规划中…' : 'Kimi 快速规划中…' : '图片生成中…' }}</strong><small v-if="imageCarouselCount > 1">已输出约 {{ imageCarouselEstimatedTokens }} tokens，页面没有卡住。</small><small v-else>完成后可确认替换当前图片。</small></div>
               <div v-else-if="imageCarouselTask && imageCarouselTask.pages && imageCarouselTask.pages.length" class="carousel-slide-viewer">
                 <button class="carousel-slide-arrow previous" type="button" :disabled="imageCarouselPageIndex <= 0" aria-label="上一张轮播图" @click="changeCarouselPage(-1)">‹</button>
@@ -450,7 +490,7 @@ const app = createApp({
                   <div v-else class="carousel-result-placeholder"><span>{{ currentCarouselPage().status === 'generating' ? '生成中…' : currentCarouselPage().status === 'failed' ? '[' + currentCarouselPage().error_code + '] ' + currentCarouselPage().error : '等待生成' }}</span><button v-if="currentCarouselPage().status === 'failed'" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex)" @click="retryCarouselPage(imageCarouselPageIndex)">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '重试中…' : '重试' }}</button></div>
                 </article>
                 <button class="carousel-slide-arrow next" type="button" :disabled="imageCarouselPageIndex >= imageCarouselTask.pages.length - 1" aria-label="下一张轮播图" @click="changeCarouselPage(1)">›</button>
-                <div class="carousel-slide-meta"><span class="carousel-slide-counter">{{ imageCarouselPageIndex + 1 }} / {{ imageCarouselTask.pages.length }}</span><label v-if="currentCarouselPage().status === 'succeeded'" class="carousel-result-select"><input type="checkbox" v-model="currentCarouselPage().selected">选用当前图</label></div>
+                <div class="carousel-slide-meta"><span class="carousel-slide-counter">{{ imageCarouselPageIndex + 1 }} / {{ imageCarouselTask.pages.length }}</span><label v-if="currentCarouselPage().status === 'succeeded'" class="carousel-result-select" :class="{ 'is-selected': currentCarouselPage().selected !== false }"><input type="checkbox" v-model="currentCarouselPage().selected"><span>{{ currentCarouselPage().selected === false ? '点击选用' : '已选用' }}</span></label></div>
               </div>
               <img v-else-if="imageEditorGeneratedUrl" class="image-editor-generated-image" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果">
               <div v-else class="image-editor-source-canvas"><img v-for="(image, sourceIndex) in galleryImageEditorSources(selectedTemuRecord)" :key="sourceIndex" :src="imageSource(image)" alt="待编辑图片"></div>
@@ -570,6 +610,7 @@ const app = createApp({
       imageFusionUndoBusyKeys: {},
       imageFusionUndoTokens: {},
       skuBlendTasksByKey: {},
+      skuBlendIndicatorAcknowledgements: readSkuBlendIndicatorAcknowledgements(),
       skuBlendIndicatorTimer: null,
       listingMergeBusy: false,
       listingUndoBusy: false,
@@ -581,18 +622,28 @@ const app = createApp({
       kimiApiKeyDraft: "",
       imageApiKeyMasked: "",
       kimiApiKeyMasked: "",
-      workflow: { active_temu_main_id: "", tasks: {} },
+      workflow: { active_temu_main_id: "", active_source_mode: "", tasks: {} },
       workflowTemporaryState: { updated_at: "", tasks: {} },
+      workflowMode: "clip",
+      workflowDefaultMode: "clip",
+      workflowClipCandidateCount: 10,
+      workflowLegacyCandidateCount: 4,
+      workflowClipMinPrice: "",
+      workflowClipMaxPrice: "",
+      workflowClipKeyword: "",
       workflowSelectedImageUrl: "",
       workflowSelectedResultIndex: -1,
       workflowPrompts: [],
       workflowPromptDrafts: {},
       workflowPromptDialogOpen: false,
+      workflowPromptDialogMode: "legacy",
       workflowCustomPromptDefault: "请结合当前 Temu 商品信息和图片，按照你认为最有销售价值的方向推荐 4 个可用于组货的商品。不要使用固定分类，候选方向由当前商品特征决定。",
+      workflowClipPromptDefault: "",
       workflowCustomPromptDraft: "",
       workflowPromptDialogError: "",
       workflowPromptBusy: false,
       workflowPromptBusyKeys: {},
+      workflowPendingModeKeys: {},
       workflowTaskErrorKeys: {},
       workflowIndicatorAcknowledgements: readWorkflowIndicatorAcknowledgements(),
       workflowGenerateBusy: false,
@@ -727,8 +778,7 @@ const app = createApp({
 
     /** Return the persisted intelligent-packing task for the selected Temu product. */
     selectedWorkflowTask: function getSelectedWorkflowTask() {
-      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
-      return tasks[String(this.selectedTemuMainId)] || null;
+      return this.workflowTaskForMode(this.selectedTemuMainId, this.workflowMode);
     },
 
     /** Return the available source images for the selected Temu product. */
@@ -1513,11 +1563,92 @@ const app = createApp({
       this.workflowStatusType = type || "normal";
     },
 
+    /** Switch the intelligent-packing result source without changing the surrounding UI. */
+    setWorkflowMode: function setWorkflowMode(mode) {
+      this.workflowMode = mode === "legacy" ? "legacy" : "clip";
+      this.syncWorkflowSelection();
+    },
+
+    /** Normalize one workflow mode name for separated old/new cache lookup. */
+    normalizeWorkflowMode: function normalizeWorkflowMode(mode) {
+      return mode === "legacy" ? "legacy" : "clip";
+    },
+
+    /** Build the cache key used for one Temu product under one workflow mode. */
+    workflowTaskKey: function workflowTaskKey(temuMainId, mode) {
+      const mainId = String(temuMainId || "").trim();
+      return mainId ? mainId + "::" + this.normalizeWorkflowMode(mode) : "";
+    },
+
+    /** Return whether one cached workflow task belongs to the requested separated mode. */
+    isWorkflowTaskForMode: function isWorkflowTaskForMode(task, mode) {
+      if (!task || typeof task !== "object") {
+        return false;
+      }
+      const sourceMode = this.normalizeWorkflowMode(mode);
+      const taskMode = task.source_mode ? this.normalizeWorkflowMode(task.source_mode) : "legacy";
+      return taskMode === sourceMode;
+    },
+
+    /** Return the mode-specific workflow task while honoring old naked keys by source mode. */
+    workflowTaskForMode: function workflowTaskForMode(temuMainId, mode) {
+      const mainId = String(temuMainId || "").trim();
+      const sourceMode = this.normalizeWorkflowMode(mode);
+      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
+      if (!mainId) {
+        return null;
+      }
+      const separatedTask = tasks[this.workflowTaskKey(mainId, sourceMode)];
+      if (separatedTask && typeof separatedTask === "object") {
+        separatedTask.source_mode = sourceMode;
+        return separatedTask;
+      }
+      const nakedTask = tasks[mainId];
+      return this.isWorkflowTaskForMode(nakedTask, sourceMode) ? nakedTask : null;
+    },
+
+    /** Return every separated workflow task retained for one Temu product. */
+    workflowTasksForProduct: function workflowTasksForProduct(temuMainId) {
+      const mainId = String(temuMainId || "").trim();
+      const tasks = [];
+      const clipTask = this.workflowTaskForMode(mainId, "clip");
+      const legacyTask = this.workflowTaskForMode(mainId, "legacy");
+      if (clipTask) {
+        tasks.push(clipTask);
+      }
+      if (legacyTask && legacyTask !== clipTask) {
+        tasks.push(legacyTask);
+      }
+      return tasks;
+    },
+
+    /** Return the temporary refresh-safe task state for the chosen workflow mode. */
+    workflowTemporaryTaskForMode: function workflowTemporaryTaskForMode(temuMainId, mode) {
+      const mainId = String(temuMainId || "").trim();
+      const sourceMode = this.normalizeWorkflowMode(mode);
+      const tasks = this.workflowTemporaryState && this.workflowTemporaryState.tasks ? this.workflowTemporaryState.tasks : {};
+      if (!mainId) {
+        return {};
+      }
+      const separatedTask = tasks[this.workflowTaskKey(mainId, sourceMode)];
+      if (separatedTask && typeof separatedTask === "object") {
+        separatedTask.source_mode = sourceMode;
+        return separatedTask;
+      }
+      const nakedTask = tasks[mainId];
+      return this.isWorkflowTaskForMode(nakedTask, sourceMode) ? nakedTask : {};
+    },
+
+    /** Start the selected workflow mode after letting the user confirm its prompt. */
+    startWorkflowAction: function startWorkflowAction() {
+      this.openWorkflowPromptDialog(this.workflowMode);
+    },
+
     /** Apply one workflow state snapshot and refresh the selected task. */
     applyWorkflowPayload: function applyWorkflowPayload(payload) {
       const state = payload && payload.workflow ? payload.workflow : payload;
       const temporaryState = payload && payload.state ? payload.state : { updated_at: "", tasks: {} };
-      this.workflow = state && typeof state === "object" ? state : { active_temu_main_id: "", tasks: {} };
+      this.workflow = state && typeof state === "object" ? state : { active_temu_main_id: "", active_source_mode: "", tasks: {} };
       this.workflowTemporaryState = temporaryState && typeof temporaryState === "object" ? temporaryState : { updated_at: "", tasks: {} };
       this.resumePendingWorkflowGenerations();
       const task = this.selectedWorkflowTask;
@@ -1525,7 +1656,7 @@ const app = createApp({
         this.syncWorkflowPrompts(task);
       }
       if (task && !this.workflowPromptBusy) {
-        const statusType = task.status === "completed" || task.status === "images_ready"
+        const statusType = task.status === "completed" || task.status === "images_ready" || task.status === "clip_ready"
           ? "success"
           : task.status === "generation_error" || task.status === "search_error" ? "error" : "normal";
         this.setWorkflowStatus(this.workflowTaskStatusText(this.selectedTemuMainId), statusType);
@@ -1537,8 +1668,12 @@ const app = createApp({
       const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
       const taskIds = Object.keys(tasks);
       for (let index = 0; index < taskIds.length; index += 1) {
-        const mainId = String(taskIds[index]);
-        const task = tasks[mainId];
+        const taskKey = String(taskIds[index]);
+        const task = tasks[taskKey];
+        const mainId = String(task && task.temu_main_id || taskKey).split("::")[0];
+        if (task && task.source_mode === "clip") {
+          continue;
+        }
         if (task && task.status === "prompts_ready" && Array.isArray(task.prompts) && task.prompts.length === 4 && !this.workflowGenerateBusyKeys[mainId]) {
           this.generateWorkflowImages(undefined, mainId, task.prompts);
         }
@@ -1564,28 +1699,79 @@ const app = createApp({
         return;
       }
       if (!this.workflow || typeof this.workflow !== "object") {
-        this.workflow = { active_temu_main_id: "", tasks: {} };
+        this.workflow = { active_temu_main_id: "", active_source_mode: "", tasks: {} };
       }
       if (!this.workflow.tasks || typeof this.workflow.tasks !== "object") {
         this.workflow.tasks = {};
       }
-      this.workflow.tasks[String(temuMainId || "")] = task;
+      const sourceMode = this.normalizeWorkflowMode(task.source_mode || this.workflowMode);
+      task.temu_main_id = String(temuMainId || task.temu_main_id || "");
+      task.source_mode = sourceMode;
+      this.workflow.tasks[this.workflowTaskKey(task.temu_main_id, sourceMode)] = task;
+    },
+
+    /** Normalize one CLIP candidate identity fragment for duplicate filtering. */
+    normalizeWorkflowClipDuplicateValue: function normalizeWorkflowClipDuplicateValue(value) {
+      return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+    },
+
+    /** Build duplicate keys for one cached CLIP candidate. */
+    buildWorkflowClipDuplicateKeys: function buildWorkflowClipDuplicateKeys(item) {
+      const source = item && typeof item === "object" ? item : {};
+      const product = source.clip_product && typeof source.clip_product === "object" ? source.clip_product : {};
+      const keys = [];
+      const productId = this.normalizeWorkflowClipDuplicateValue(product.id || product.product_id || product.offer_id || product.item_id);
+      const imageUrl = this.normalizeWorkflowClipDuplicateValue(source.image_url || product.img_url || product.image_url || product.MAINIMAGE || product.local_img);
+      const familyKey = this.normalizeWorkflowClipDuplicateValue(product.family_key || product.listing_key);
+      const title = this.normalizeWorkflowClipDuplicateValue(source.product_name || product.title || product.listing_text || product.title_en);
+      if (productId) {
+        keys.push("id:" + productId);
+      }
+      if (imageUrl) {
+        keys.push("image:" + imageUrl);
+      }
+      if (familyKey) {
+        keys.push("family:" + familyKey);
+      }
+      if (title) {
+        keys.push("title:" + title);
+      }
+      return keys;
+    },
+
+    /** Return whether one cached CLIP candidate should be skipped as a duplicate. */
+    isDuplicateWorkflowClipCandidate: function isDuplicateWorkflowClipCandidate(item, seenKeys) {
+      const keys = this.buildWorkflowClipDuplicateKeys(item);
+      for (let index = 0; index < keys.length; index += 1) {
+        if (seenKeys[keys[index]]) {
+          return true;
+        }
+      }
+      for (let index = 0; index < keys.length; index += 1) {
+        seenKeys[keys[index]] = true;
+      }
+      return false;
     },
 
     /** Restore the inline workflow controls for the selected Temu record. */
     syncWorkflowSelection: function syncWorkflowSelection() {
       const record = this.selectedTemuRecord;
-      const task = this.selectedWorkflowTask;
       const images = this.workflowSourceImages;
       this.workflowPromptDrafts = {};
       this.workflowSearchBusyKeys = {};
       const selectedMainId = String(record && record.main_id || "");
-      const temporaryTasks = this.workflowTemporaryState && this.workflowTemporaryState.tasks ? this.workflowTemporaryState.tasks : {};
-      const temporaryTask = temporaryTasks[selectedMainId] || {};
+      if (this.workflowPendingModeKeys[selectedMainId]) {
+        this.workflowMode = this.workflowPendingModeKeys[selectedMainId];
+      }
+      const task = this.workflowTaskForMode(selectedMainId, this.workflowMode);
+      const temporaryTask = this.workflowTemporaryTaskForMode(selectedMainId, this.workflowMode);
       this.workflowPromptBusy = Boolean(this.workflowPromptBusyKeys[selectedMainId]) || temporaryTask.status === "analyzing";
       this.workflowGenerateBusy = Boolean(this.workflowGenerateBusyKeys[selectedMainId]) || temporaryTask.status === "generating";
       this.workflowSelectedImageUrl = task && task.selected_image_url ? task.selected_image_url : record && record.main_image_url ? record.main_image_url : images[0] || "";
       this.workflowSelectedResultIndex = task && Number.isFinite(Number(task.selected_result_index)) ? Number(task.selected_result_index) : -1;
+      if (!selectedMainId) {
+        this.workflowMode = this.workflowDefaultMode;
+      }
       this.syncWorkflowPrompts(task);
       this.setWorkflowStatus(this.workflowPromptBusy ? "Kimi 正在后台分析当前商品…" : task && task.status !== "idle" ? this.workflowTaskStatusText(this.selectedTemuMainId) : record ? "已选择 Temu 商品，请确认分析主图。" : "等待选择 Temu 商品。", "normal");
       if (task && task.status === "prompts_ready" && Array.isArray(task.prompts) && task.prompts.length === 4 && !this.workflowPromptBusy && !this.workflowGenerateBusy) {
@@ -1595,24 +1781,54 @@ const app = createApp({
 
     /** Copy persisted workflow prompts into editable page-local objects. */
     syncWorkflowPrompts: function syncWorkflowPrompts(task) {
+      const visibleMode = this.normalizeWorkflowMode(this.workflowMode);
+      const taskMode = task && task.source_mode ? this.normalizeWorkflowMode(task.source_mode) : "legacy";
+      if (task && taskMode !== visibleMode) {
+        this.workflowPrompts = [];
+        return;
+      }
       const source = task && Array.isArray(task.prompts) ? task.prompts : [];
       const prompts = [];
+      const seenClipKeys = {};
       for (let index = 0; index < source.length; index += 1) {
         const promptKey = String(index);
         const hasDraft = Object.prototype.hasOwnProperty.call(this.workflowPromptDrafts, promptKey);
+        const sourceItem = source[index] || {};
+        const itemMode = sourceItem.source_mode ? this.normalizeWorkflowMode(sourceItem.source_mode) : taskMode;
+        if (itemMode !== visibleMode) {
+          continue;
+        }
+        if (itemMode === "clip" && this.isDuplicateWorkflowClipCandidate(sourceItem, seenClipKeys)) {
+          continue;
+        }
+        const clipProduct = sourceItem.clip_product && typeof sourceItem.clip_product === "object" ? sourceItem.clip_product : {};
+        const clipPrompt = String(clipProduct.search_prompt || "");
+        const rawPrice = sourceItem.price_label || clipProduct.price_usd || clipProduct.price || "";
+        const numericPrice = Number(rawPrice);
+        const priceLabel = sourceItem.price_label
+          ? String(sourceItem.price_label)
+          : rawPrice === "" ? "" : Number.isFinite(numericPrice) ? "$" + numericPrice.toFixed(2) : String(rawPrice);
+        const rawSales = sourceItem.sales_label || (clipProduct.sales_total === undefined || clipProduct.sales_total === null ? clipProduct.sales : clipProduct.sales_total);
+        const salesLabel = sourceItem.sales_label
+          ? String(sourceItem.sales_label)
+          : rawSales === undefined || rawSales === null || rawSales === "" ? "" : "销量 " + String(rawSales);
         prompts.push({
-          relation: String(source[index].relation || ""),
-          product_name: String(source[index].product_name || ""),
-          product_intro: String(source[index].product_intro || source[index].product_name || ""),
-          prompt: hasDraft ? this.workflowPromptDrafts[promptKey] : String(source[index].prompt || ""),
-          image_url: String(source[index].image_url || ""),
-          status: String(source[index].status || ""),
-          error: String(source[index].error || ""),
-          error_code: String(source[index].error_code || ""),
-          error_status: Number(source[index].error_status || 0),
-          search_url: String(source[index].search_url || ""),
-          search_status: this.workflowSearchBusyKeys[promptKey] ? "searching" : String(source[index].search_status || ""),
-          search_error: String(source[index].search_error || "")
+          relation: String(sourceItem.relation || ""),
+          product_name: String(sourceItem.product_name || ""),
+          product_intro: String(itemMode === "clip" && clipPrompt ? clipPrompt : sourceItem.product_intro || sourceItem.product_name || ""),
+          prompt: hasDraft ? this.workflowPromptDrafts[promptKey] : String(sourceItem.prompt || ""),
+          clip_prompt_en: String(sourceItem.clip_prompt_en || clipProduct.search_prompt_en || ""),
+          source_mode: itemMode,
+          price_label: priceLabel,
+          sales_label: salesLabel,
+          image_url: String(sourceItem.image_url || ""),
+          status: String(sourceItem.status || ""),
+          error: String(sourceItem.error || ""),
+          error_code: String(sourceItem.error_code || ""),
+          error_status: Number(sourceItem.error_status || 0),
+          search_url: String(sourceItem.search_url || ""),
+          search_status: this.workflowSearchBusyKeys[promptKey] ? "searching" : String(sourceItem.search_status || ""),
+          search_error: String(sourceItem.search_error || "")
         });
       }
       this.workflowPrompts = prompts;
@@ -1649,22 +1865,142 @@ const app = createApp({
       }
     },
 
-    /** Open the custom direction prompt stored for the selected Temu product. */
-    generateWorkflowPrompts: function generateWorkflowPrompts() {
+    /** Open the custom prompt dialog for the requested old or new workflow mode. */
+    openWorkflowPromptDialog: function openWorkflowPromptDialog(mode) {
       if (!this.selectedTemuRecord || !this.workflowSelectedImageUrl || this.workflowPromptBusy) {
         return;
       }
-      const task = this.selectedWorkflowTask;
-      const savedPrompt = task ? String(task.custom_prompt || "").trim() : "";
-      this.workflowCustomPromptDraft = savedPrompt || this.workflowCustomPromptDefault;
+      const sourceMode = this.normalizeWorkflowMode(mode);
+      const task = this.workflowTaskForMode(this.selectedTemuRecord.main_id, sourceMode);
+      const rawSavedPrompt = task ? String(task.custom_prompt || "").trim() : "";
+      const savedPrompt = sourceMode === "clip" ? this.cleanClipUserPrompt(rawSavedPrompt) : rawSavedPrompt;
+      const defaultPrompt = sourceMode === "clip" ? this.workflowClipPromptDefault : this.workflowCustomPromptDefault;
+      this.workflowPromptDialogMode = sourceMode;
+      this.workflowCustomPromptDraft = savedPrompt || defaultPrompt;
       this.workflowPromptDialogError = "";
       this.workflowPromptDialogOpen = true;
+    },
+
+    /** Remove legacy CLIP system prompts from the user-editable prompt box. */
+    cleanClipUserPrompt: function cleanClipUserPrompt(prompt) {
+      const text = String(prompt || "").trim();
+      if (!text) {
+        return "";
+      }
+      const looksLikeSystemPrompt = text.indexOf("你是跨境电商组货商品检索词生成器") >= 0
+        || (text.indexOf("只返回合法 JSON 对象") >= 0 && text.indexOf("prompts") >= 0);
+      return looksLikeSystemPrompt ? "" : text;
+    },
+
+    /** Open the retained legacy custom direction prompt for compatibility callers. */
+    generateWorkflowPrompts: function generateWorkflowPrompts() {
+      this.openWorkflowPromptDialog("legacy");
     },
 
     /** Close the custom direction prompt without starting a Kimi request. */
     closeWorkflowPromptDialog: function closeWorkflowPromptDialog() {
       this.workflowPromptDialogOpen = false;
       this.workflowPromptDialogError = "";
+    },
+
+    /** Request real-product CLIP candidates through the unified 3000 backend API. */
+    generateClipWorkflowCandidates: function generateClipWorkflowCandidates(customPrompt) {
+      if (!this.selectedTemuRecord || !this.workflowSelectedImageUrl || this.workflowPromptBusy) {
+        return;
+      }
+      const kimiPrompt = String(customPrompt || this.workflowClipPromptDefault || "").trim();
+      this.workflowPromptBusy = true;
+      const requestedTemuMainId = String(this.selectedTemuRecord.main_id);
+      this.workflowPromptBusyKeys[requestedTemuMainId] = true;
+      this.workflowPendingModeKeys[requestedTemuMainId] = "clip";
+      this.workflowMode = "clip";
+      delete this.workflowTaskErrorKeys[requestedTemuMainId];
+      this.workflowPromptDrafts = {};
+      this.setWorkflowStatus("CLIP 正在分析商品并检索真实候选…", "normal");
+      const view = this;
+      requestWorkflowJson(workflowApiUrl("/workflow/clip/assemble"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          temu_main_id: this.selectedTemuRecord.main_id,
+          image_url: this.workflowSelectedImageUrl,
+          custom_prompt: kimiPrompt,
+          min_price: this.workflowClipMinPrice,
+          max_price: this.workflowClipMaxPrice,
+          product: {
+            title: this.selectedTemuRecord.product_name,
+            category: this.selectedTemuRecord.product_category,
+            attributes: this.selectedTemuRecord.attributes_json,
+            price_reference: getWorkflowPriceReference(this.selectedTemuRecord)
+          }
+        })
+      }).then(function handleClipWorkflowSuccess(payload) {
+        view.storeWorkflowTask(requestedTemuMainId, payload.task);
+        delete view.workflowTaskErrorKeys[requestedTemuMainId];
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.workflowSelectedResultIndex = -1;
+          view.syncWorkflowPrompts(payload.task);
+          view.setWorkflowStatus("CLIP 已返回 " + view.workflowPrompts.length + " 个真实候选，点击搜索按钮走 1688 搜图。", "success");
+        }
+      }).catch(function handleClipWorkflowError(error) {
+        view.workflowTaskErrorKeys[requestedTemuMainId] = true;
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.setWorkflowStatus("CLIP 组货失败：" + error.message, "error");
+        }
+      }).finally(function finishClipWorkflowRequest() {
+        delete view.workflowPromptBusyKeys[requestedTemuMainId];
+        delete view.workflowPendingModeKeys[requestedTemuMainId];
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.workflowPromptBusy = false;
+        }
+      });
+    },
+
+    /** Request two manually matched CLIP candidates from one user-entered keyword. */
+    searchClipWorkflowCandidates: function searchClipWorkflowCandidates() {
+      const keyword = String(this.workflowClipKeyword || "").trim();
+      if (!this.selectedTemuRecord || !keyword || this.workflowPromptBusy) {
+        return;
+      }
+      this.workflowPromptBusy = true;
+      const requestedTemuMainId = String(this.selectedTemuRecord.main_id);
+      this.workflowPromptBusyKeys[requestedTemuMainId] = true;
+      this.workflowPendingModeKeys[requestedTemuMainId] = "clip";
+      this.workflowMode = "clip";
+      delete this.workflowTaskErrorKeys[requestedTemuMainId];
+      this.workflowPromptDrafts = {};
+      this.setWorkflowStatus("CLIP 正在按 keyword 手动匹配 2 个候选…", "normal");
+      const view = this;
+      requestWorkflowJson(workflowApiUrl("/workflow/clip/search"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          temu_main_id: this.selectedTemuRecord.main_id,
+          image_url: this.workflowSelectedImageUrl,
+          keyword: keyword,
+          min_price: this.workflowClipMinPrice,
+          max_price: this.workflowClipMaxPrice
+        })
+      }).then(function handleClipManualSearchSuccess(payload) {
+        view.storeWorkflowTask(requestedTemuMainId, payload.task);
+        delete view.workflowTaskErrorKeys[requestedTemuMainId];
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.workflowSelectedResultIndex = -1;
+          view.syncWorkflowPrompts(payload.task);
+          view.setWorkflowStatus("手动 CLIP 已返回 " + view.workflowPrompts.length + " 个真实候选。", "success");
+        }
+      }).catch(function handleClipManualSearchError(error) {
+        view.workflowTaskErrorKeys[requestedTemuMainId] = true;
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.setWorkflowStatus("手动 CLIP 匹配失败：" + error.message, "error");
+        }
+      }).finally(function finishClipManualSearchRequest() {
+        delete view.workflowPromptBusyKeys[requestedTemuMainId];
+        delete view.workflowPendingModeKeys[requestedTemuMainId];
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.workflowPromptBusy = false;
+        }
+      });
     },
 
     /** Request four custom intelligent-packing directions for the selected Temu product. */
@@ -1677,9 +2013,17 @@ const app = createApp({
         this.workflowPromptDialogError = "请输入组货提示词。";
         return;
       }
+      if (this.normalizeWorkflowMode(this.workflowPromptDialogMode) === "clip") {
+        this.workflowPromptDialogOpen = false;
+        this.workflowPromptDialogError = "";
+        this.generateClipWorkflowCandidates(customPrompt);
+        return;
+      }
       this.workflowPromptBusy = true;
       const requestedTemuMainId = String(this.selectedTemuRecord.main_id);
       this.workflowPromptBusyKeys[requestedTemuMainId] = true;
+      this.workflowPendingModeKeys[requestedTemuMainId] = "legacy";
+      this.workflowMode = "legacy";
       delete this.workflowTaskErrorKeys[requestedTemuMainId];
       this.workflowPromptDialogOpen = false;
       this.workflowPromptDialogError = "";
@@ -1718,6 +2062,7 @@ const app = createApp({
         view.setWorkflowStatus("Kimi 提词失败：" + error.message, "error");
       }).finally(function finishWorkflowPromptRequest() {
         delete view.workflowPromptBusyKeys[requestedTemuMainId];
+        delete view.workflowPendingModeKeys[requestedTemuMainId];
         if (String(view.selectedTemuMainId) === requestedTemuMainId) {
           view.workflowPromptBusy = false;
         }
@@ -1755,7 +2100,9 @@ const app = createApp({
           const payload = await requestWorkflowJson(workflowApiUrl("/workflow"), { cache: "no-store" });
           const state = payload && payload.workflow ? payload.workflow : payload;
           const tasks = state && state.tasks && typeof state.tasks === "object" ? state.tasks : {};
-          const task = tasks[requestedTemuMainId];
+          const separatedTask = tasks[this.workflowTaskKey(requestedTemuMainId, "legacy")];
+          const nakedTask = tasks[requestedTemuMainId];
+          const task = separatedTask || (this.isWorkflowTaskForMode(nakedTask, "legacy") ? nakedTask : null);
           if (task) {
             this.storeWorkflowTask(requestedTemuMainId, task);
             if (String(this.selectedTemuMainId) === requestedTemuMainId) {
@@ -1856,9 +2203,9 @@ const app = createApp({
       this.workflowSearchBusyKeys[resultKey] = true;
       result.search_status = "searching";
       result.search_error = "";
-      this.setWorkflowStatus("正在提交第 " + (resultIndex + 1) + " 张图片到 search-1688…", "normal");
+      this.setWorkflowStatus("正在提交第 " + (resultIndex + 1) + " 张候选图到 search-1688…", "normal");
       const view = this;
-      this.request1688ImageSearch(result.image_url, requestedTemuMainId).then(function handleWorkflowSearchSuccess(payload) {
+      this.request1688ImageSearch(result.image_url, requestedTemuMainId, this.workflowMode).then(function handleWorkflowSearchSuccess(payload) {
         delete view.workflowTaskErrorKeys[requestedTemuMainId];
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
           return;
@@ -1887,7 +2234,7 @@ const app = createApp({
           view.setWorkflowStatus("搜图完成，但浏览器阻止了新窗口，请点击下方“重新打开搜款页”。", "normal");
           return;
         }
-        view.setWorkflowStatus("第 " + (resultIndex + 1) + " 张图片已打开 1688 搜款页。", "success");
+        view.setWorkflowStatus("第 " + (resultIndex + 1) + " 张候选图已打开 1688 搜款页。", "success");
       }).catch(function handleWorkflowSearchError(error) {
         view.workflowTaskErrorKeys[requestedTemuMainId] = true;
         if (String(view.selectedTemuMainId) !== requestedTemuMainId) {
@@ -1908,11 +2255,11 @@ const app = createApp({
 
     /** Return readable workflow status text for one Temu product. */
     workflowTaskStatusText: function workflowTaskStatusText(temuMainId) {
-      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
-      const task = tasks[String(temuMainId)];
+      const task = this.workflowTaskForMode(temuMainId, this.workflowMode);
       const statuses = {
         idle: "等待开始",
         prompts_ready: "提示词已就绪",
+        clip_ready: "CLIP 候选已就绪",
         generating: "图片生成中",
         images_ready: "图片已就绪",
         waiting_1688_confirmation: "等待确认 1688",
@@ -1940,6 +2287,12 @@ const app = createApp({
         const kimiConfig = payload && payload.data && payload.data.kimi ? payload.data.kimi : {};
         view.workflowCustomPromptDefault = String(kimiConfig.workflow_prompt || view.workflowCustomPromptDefault);
         view.imageEditorCarouselPrompt = String(kimiConfig.carousel_default_requirement || "");
+        const workflowConfig = payload && payload.data && payload.data.workflow ? payload.data.workflow : {};
+        view.workflowDefaultMode = workflowConfig.default_mode === "legacy" ? "legacy" : "clip";
+        view.workflowMode = view.workflowDefaultMode;
+        view.workflowClipCandidateCount = Math.max(1, Number(workflowConfig.clip_candidate_count || 10));
+        view.workflowLegacyCandidateCount = Math.max(1, Number(workflowConfig.legacy_candidate_count || 4));
+        view.workflowClipPromptDefault = String(workflowConfig.clip_kimi_prompt || view.workflowClipPromptDefault);
       }).catch(function handleImageEditConfigError() {
         view.imageEditPrices = {};
       });
@@ -2053,14 +2406,18 @@ const app = createApp({
     },
 
     /** Upload one image to 1688 and return the search identifier and result URL. */
-    request1688ImageSearch: function request1688ImageSearch(imageUrl, temuMainId) {
+    request1688ImageSearch: function request1688ImageSearch(imageUrl, temuMainId, sourceMode) {
+      const body = {
+        image_url: String(imageUrl || ""),
+        temu_main_id: String(temuMainId || "")
+      };
+      if (sourceMode) {
+        body.source_mode = this.normalizeWorkflowMode(sourceMode);
+      }
       return requestWorkflowJson(apiUrl("/images/search-1688"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_url: String(imageUrl || ""),
-          temu_main_id: String(temuMainId || "")
-        })
+        body: JSON.stringify(body)
       });
     },
 
@@ -2350,8 +2707,62 @@ const app = createApp({
       return false;
     },
 
+    /** Build one stable signature for settled SKU blend indicators under one product. */
+    skuBlendIndicatorSignature: function skuBlendIndicatorSignature(record) {
+      const rows = record && Array.isArray(record.sku) ? record.sku : [];
+      const parts = [];
+      for (let index = 0; index < rows.length; index += 1) {
+        const key = this.getSkuBlendKey(record, rows[index], index);
+        const task = this.skuBlendTasksByKey[key] || {};
+        const undoToken = String(this.imageFusionUndoTokens[key] || "");
+        const errorText = String(this.imageEditErrorKeys[key] || "");
+        if (!undoToken && !errorText && !task.id) {
+          continue;
+        }
+        parts.push(key);
+        parts.push(String(task.id || ""));
+        parts.push(String(task.status || ""));
+        parts.push(String(task.image_url || ""));
+        parts.push(String(task.error_code || ""));
+        parts.push(undoToken);
+        parts.push(errorText);
+      }
+      return parts.join("|");
+    },
+
+    /** Return whether the current settled SKU blend indicator was already opened. */
+    isSkuBlendIndicatorAcknowledged: function isSkuBlendIndicatorAcknowledged(record) {
+      if (!record || this.hasSkuBlendTask(record)) {
+        return false;
+      }
+      const mainId = String(record.main_id || "");
+      const signature = this.skuBlendIndicatorSignature(record);
+      return Boolean(signature && this.skuBlendIndicatorAcknowledgements[mainId] === signature);
+    },
+
+    /** Record that the user opened the current settled SKU blend indicator. */
+    acknowledgeSkuBlendIndicator: function acknowledgeSkuBlendIndicator(record) {
+      if (!record || this.hasSkuBlendTask(record)) {
+        return;
+      }
+      const mainId = String(record.main_id || "");
+      const signature = this.skuBlendIndicatorSignature(record);
+      if (!signature) {
+        return;
+      }
+      this.skuBlendIndicatorAcknowledgements[mainId] = signature;
+      try {
+        window.localStorage.setItem(SKU_BLEND_INDICATOR_ACK_STORAGE_KEY, JSON.stringify(this.skuBlendIndicatorAcknowledgements));
+      } catch (error) {
+        return;
+      }
+    },
+
     /** Return whether any SKU under one product has a retained image-service error. */
     hasSkuBlendError: function hasSkuBlendError(record) {
+      if (this.isSkuBlendIndicatorAcknowledged(record)) {
+        return false;
+      }
       const rows = record && Array.isArray(record.sku) ? record.sku : [];
       for (let index = 0; index < rows.length; index += 1) {
         const key = this.getSkuBlendKey(record, rows[index], index);
@@ -2365,6 +2776,9 @@ const app = createApp({
     /** Return whether completed SKU fusion results remain available for one Temu product. */
     hasCompletedSkuBlendTask: function hasCompletedSkuBlendTask(record) {
       if (this.hasSkuBlendTask(record)) {
+        return false;
+      }
+      if (this.isSkuBlendIndicatorAcknowledged(record)) {
         return false;
       }
       const rows = record && Array.isArray(record.sku) ? record.sku : [];
@@ -2384,6 +2798,7 @@ const app = createApp({
       }
       this.selectedTemuMainId = record.main_id;
       this.selectBound1688ForTemu(record);
+      this.acknowledgeSkuBlendIndicator(record);
       this.persistViewState();
       /** Scroll the newly rendered Temu SKU panel into view after selection updates. */
       function revealSkuPanel() {
@@ -2405,6 +2820,103 @@ const app = createApp({
     isSkuFusionUndoBusy: function isSkuFusionUndoBusy(record, sku, index) {
       const key = this.getSkuBlendKey(record, sku, index);
       return Boolean(this.imageFusionUndoBusyKeys[key]);
+    },
+
+    /** Return the compact error code shown by one SKU fusion failure button. */
+    skuBlendErrorCode: function skuBlendErrorCode(record, sku, index) {
+      const key = this.getSkuBlendKey(record, sku, index);
+      const rawText = String(this.imageEditErrorKeys[key] || "");
+      const bracketMatch = rawText.match(/^\[([^\]]+)\]/);
+      const rawCode = bracketMatch ? bracketMatch[1] : rawText;
+      return this.skuBlendErrorCodeFromValue(rawCode || rawText);
+    },
+
+    /** Normalize one raw SKU fusion error value into the shortest useful code. */
+    skuBlendErrorCodeFromValue: function skuBlendErrorCodeFromValue(value) {
+      const rawText = String(value || "").trim();
+      const statusMatch = rawText.match(/([1-5]\d{2})(?!\d)/);
+      if (statusMatch) {
+        return statusMatch[1];
+      }
+      return rawText || "ERR";
+    },
+
+    /** Return whether one SKU fusion state button is waiting for any server response. */
+    isSkuBlendActionBusy: function isSkuBlendActionBusy(record, sku, index) {
+      return this.isSkuBlendBusy(record, sku, index) || this.isSkuFusionUndoBusy(record, sku, index);
+    },
+
+    /** Return whether one SKU should expose the compact fusion state button. */
+    shouldShowSkuBlendAction: function shouldShowSkuBlendAction(record, sku, index) {
+      const key = this.getSkuBlendKey(record, sku, index);
+      return this.skuImageUrls(sku).length === 2
+        || Boolean(this.imageEditBusyKeys[key])
+        || Boolean(this.imageEditErrorKeys[key])
+        || this.hasSkuFusionUndo(record, sku, index)
+        || this.isSkuFusionUndoBusy(record, sku, index);
+    },
+
+    /** Return the visual state class for one compact SKU fusion button. */
+    skuBlendActionClass: function skuBlendActionClass(record, sku, index) {
+      const key = this.getSkuBlendKey(record, sku, index);
+      if (this.isSkuBlendActionBusy(record, sku, index)) {
+        return "is-busy";
+      }
+      if (this.imageEditErrorKeys[key]) {
+        return "is-error";
+      }
+      if (this.hasSkuFusionUndo(record, sku, index)) {
+        return "is-restore";
+      }
+      return "is-ready";
+    },
+
+    /** Return the wordless icon for one compact SKU fusion button. */
+    skuBlendActionIcon: function skuBlendActionIcon(record, sku, index) {
+      const key = this.getSkuBlendKey(record, sku, index);
+      if (this.imageEditErrorKeys[key]) {
+        return "!";
+      }
+      if (this.hasSkuFusionUndo(record, sku, index)) {
+        return "↺";
+      }
+      return "✦";
+    },
+
+    /** Return the hover text for one compact SKU fusion button. */
+    skuBlendActionTitle: function skuBlendActionTitle(record, sku, index) {
+      const key = this.getSkuBlendKey(record, sku, index);
+      if (this.imageEditErrorKeys[key]) {
+        return this.skuBlendErrorCode(record, sku, index);
+      }
+      if (this.isSkuBlendBusy(record, sku, index)) {
+        return "生成中";
+      }
+      if (this.isSkuFusionUndoBusy(record, sku, index)) {
+        return "恢复中";
+      }
+      if (this.hasSkuFusionUndo(record, sku, index)) {
+        return "恢复原图";
+      }
+      return "溶图";
+    },
+
+    /** Route one compact SKU fusion button click by its current state. */
+    handleSkuBlendAction: function handleSkuBlendAction(record, sku, index) {
+      const key = this.getSkuBlendKey(record, sku, index);
+      if (this.isSkuBlendActionBusy(record, sku, index)) {
+        return;
+      }
+      if (this.imageEditErrorKeys[key]) {
+        delete this.imageEditErrorKeys[key];
+        this.blendSkuImages(record, sku, index);
+        return;
+      }
+      if (this.hasSkuFusionUndo(record, sku, index)) {
+        this.undoSkuImageFusion(record, sku, index);
+        return;
+      }
+      this.blendSkuImages(record, sku, index);
     },
 
     /** Replace the two source SKU images with the single BeeAPI result. */
@@ -2576,16 +3088,19 @@ const app = createApp({
         });
         const payload = await response.json();
         if (!response.ok || !payload || !payload.ok) {
-          throw new Error(getApiErrorMessage(payload, "溶图任务创建失败。"));
+          const requestError = new Error(getApiErrorMessage(payload, "溶图任务创建失败。"));
+          requestError.code = getApiErrorCode(payload, response.status || "SKU_BLEND_FAILED");
+          requestError.statusCode = response.status;
+          throw requestError;
         }
         const task = payload.data && payload.data.task ? payload.data.task : localTask;
         this.applySkuBlendTask(task);
         await this.refreshSkuBlendTaskIndicators();
       } catch (error) {
-        const errorMessage = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "请求失败。");
+        const errorCode = this.skuBlendErrorCodeFromValue(getWorkflowErrorCode(error));
         this.imageEditBusyKeys[busyKey] = false;
-        this.imageEditErrorKeys[busyKey] = errorMessage;
-        this.setStatus("溶图失败：" + errorMessage, "error");
+        this.imageEditErrorKeys[busyKey] = "[" + errorCode + "]";
+        this.setStatus("溶图失败：" + errorCode, "error");
       }
     },
 
@@ -3928,7 +4443,12 @@ const app = createApp({
       const item = task && typeof task === "object" ? task : null;
       const key = item ? String(item.temu_main_id || "") : "";
       if (key) {
-        this.imageCarouselTasksByMainId[key] = item;
+        const retained = this.imageCarouselTasksByMainId[key] || null;
+        const itemTime = Date.parse(item.updated_at || item.created_at || 0);
+        const retainedTime = Date.parse(retained && (retained.updated_at || retained.created_at) || 0);
+        if (!retained || itemTime >= retainedTime) {
+          this.imageCarouselTasksByMainId[key] = item;
+        }
       }
     },
 
@@ -3959,6 +4479,29 @@ const app = createApp({
         }
       }
       return true;
+    },
+
+    /** Resolve the gallery index owned by one retained direct-image task. */
+    directImageTaskGallerySelection: function directImageTaskGallerySelection(record, task) {
+      if (!record || !task || String(task.source_type || "gallery") !== "gallery") {
+        return [];
+      }
+      const images = this.galleryImages(record);
+      const sourceIndices = Array.isArray(task.source_indices) ? task.source_indices : [];
+      if (sourceIndices.length) {
+        const imageIndex = Number(sourceIndices[0]);
+        if (imageIndex >= 0 && imageIndex < images.length) {
+          return [imageIndex];
+        }
+      }
+      const sourceUrls = Array.isArray(task.source_image_urls) ? task.source_image_urls : [];
+      const sourceUrl = String(sourceUrls[0] || "");
+      for (let index = 0; index < images.length; index += 1) {
+        if (String(images[index]) === sourceUrl) {
+          return [index];
+        }
+      }
+      return [];
     },
 
     /** Apply one persisted direct-image task to the currently retained editor session. */
@@ -4117,7 +4660,12 @@ const app = createApp({
         for (let index = 0; index < tasks.length; index += 1) {
           const key = String(tasks[index] && tasks[index].temu_main_id || "");
           if (key) {
-            taskLookup[key] = tasks[index];
+            const retained = taskLookup[key] || null;
+            const taskTime = Date.parse(tasks[index].updated_at || tasks[index].created_at || 0);
+            const retainedTime = Date.parse(retained && (retained.updated_at || retained.created_at) || 0);
+            if (!retained || taskTime >= retainedTime) {
+              taskLookup[key] = tasks[index];
+            }
           }
           if (tasks[index] && (tasks[index].status === "queued" || tasks[index].status === "generating")) {
             hasActiveTask = true;
@@ -4229,9 +4777,15 @@ const app = createApp({
       if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
         return true;
       }
-      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
-      const task = tasks[mainId];
-      if (!this.workflowTaskErrorKeys[mainId] && (!task || !Array.isArray(task.prompts) || !task.prompts.length)) {
+      const retainedTasks = this.workflowTasksForProduct(mainId);
+      let hasPrompts = false;
+      for (let index = 0; index < retainedTasks.length; index += 1) {
+        if (Array.isArray(retainedTasks[index].prompts) && retainedTasks[index].prompts.length) {
+          hasPrompts = true;
+          break;
+        }
+      }
+      if (!this.workflowTaskErrorKeys[mainId] && !hasPrompts) {
         return false;
       }
       return !this.isWorkflowTaskIndicatorAcknowledged(record);
@@ -4243,14 +4797,20 @@ const app = createApp({
         return "";
       }
       const mainId = String(record.main_id || "");
-      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
-      const task = tasks[mainId] || {};
-      const signatureParts = [String(task.status || ""), String(task.selected_image_url || ""), String(task.custom_prompt || "")];
-      const prompts = Array.isArray(task.prompts) ? task.prompts : [];
-      for (let index = 0; index < prompts.length; index += 1) {
-        signatureParts.push(String(prompts[index].status || ""));
-        signatureParts.push(String(prompts[index].image_url || ""));
-        signatureParts.push(String(prompts[index].error_code || ""));
+      const retainedTasks = this.workflowTasksForProduct(mainId);
+      const signatureParts = [];
+      for (let taskIndex = 0; taskIndex < retainedTasks.length; taskIndex += 1) {
+        const task = retainedTasks[taskIndex] || {};
+        signatureParts.push(String(task.source_mode || ""));
+        signatureParts.push(String(task.status || ""));
+        signatureParts.push(String(task.selected_image_url || ""));
+        signatureParts.push(String(task.custom_prompt || ""));
+        const prompts = Array.isArray(task.prompts) ? task.prompts : [];
+        for (let index = 0; index < prompts.length; index += 1) {
+          signatureParts.push(String(prompts[index].status || ""));
+          signatureParts.push(String(prompts[index].image_url || ""));
+          signatureParts.push(String(prompts[index].error_code || ""));
+        }
       }
       if (this.workflowTaskErrorKeys[mainId]) {
         signatureParts.push("client-error");
@@ -4303,6 +4863,25 @@ const app = createApp({
       return true;
     },
 
+    /** Return whether one CLIP intelligent-packing task already has terminal real candidates. */
+    workflowTaskHasReadyClipCandidates: function workflowTaskHasReadyClipCandidates(task) {
+      if (!task || task.source_mode !== "clip") {
+        return false;
+      }
+      const status = String(task.status || "");
+      const terminal = status === "clip_ready" || status === "waiting_1688_confirmation" || status === "completed";
+      const prompts = Array.isArray(task.prompts) ? task.prompts : [];
+      if (!terminal || !prompts.length) {
+        return false;
+      }
+      for (let index = 0; index < prompts.length; index += 1) {
+        if (prompts[index].status === "generated" && prompts[index].image_url) {
+          return true;
+        }
+      }
+      return false;
+    },
+
     /** Return whether one intelligent-packing task contains any image-generation failure. */
     workflowTaskHasGenerationError: function workflowTaskHasGenerationError(task) {
       if (!task) {
@@ -4329,9 +4908,13 @@ const app = createApp({
       if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
         return false;
       }
-      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
-      const task = tasks[mainId];
-      return this.workflowTaskHasGeneratedAllImages(task);
+      const retainedTasks = this.workflowTasksForProduct(mainId);
+      for (let index = 0; index < retainedTasks.length; index += 1) {
+        if (this.workflowTaskHasReadyClipCandidates(retainedTasks[index]) || this.workflowTaskHasGeneratedAllImages(retainedTasks[index])) {
+          return true;
+        }
+      }
+      return false;
     },
 
     /** Return whether one intelligent-packing task retained a generation or search failure. */
@@ -4339,13 +4922,17 @@ const app = createApp({
       if (!record) {
         return false;
       }
-      const tasks = this.workflow && this.workflow.tasks ? this.workflow.tasks : {};
       const mainId = String(record.main_id || "");
       if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
         return false;
       }
-      const task = tasks[mainId];
-      return Boolean(this.workflowTaskErrorKeys[mainId] || this.workflowTaskHasGenerationError(task));
+      const retainedTasks = this.workflowTasksForProduct(mainId);
+      for (let index = 0; index < retainedTasks.length; index += 1) {
+        if (this.workflowTaskHasGenerationError(retainedTasks[index])) {
+          return true;
+        }
+      }
+      return Boolean(this.workflowTaskErrorKeys[mainId]);
     },
 
     /** Select one Temu product and open its intelligent-packing workspace. */
@@ -4357,6 +4944,13 @@ const app = createApp({
       this.selectedTemuMainId = record.main_id;
       this.selectBound1688ForTemu(record);
       this.workspaceMode = "smart";
+      if (!this.workflowTaskForMode(record.main_id, this.workflowMode)) {
+        if (this.workflowTaskForMode(record.main_id, "clip")) {
+          this.workflowMode = "clip";
+        } else if (this.workflowTaskForMode(record.main_id, "legacy")) {
+          this.workflowMode = "legacy";
+        }
+      }
       this.syncWorkflowSelection();
       this.persistViewState();
     },
@@ -4493,8 +5087,8 @@ const app = createApp({
       this.selectBound1688ForTemu(record);
       if (!sameSession && directTask) {
         this.galleryEditRecordKey = this.imageRecordKey(record);
-        this.galleryEditSelection = directTask.source_type === "gallery" && Array.isArray(directTask.source_indices) ? directTask.source_indices.slice() : [];
         this.imageEditorSourceType = directTask.source_type === "detail" ? "detail" : "gallery";
+        this.galleryEditSelection = this.imageEditorSourceType === "gallery" ? this.directImageTaskGallerySelection(record, directTask) : [];
         this.imageEditorSourceUrls = this.imageEditorSourceType === "detail" ? directTask.source_image_urls.slice() : [];
         this.imageEditorDetailIndex = Number(directTask.detail_index === undefined ? -1 : directTask.detail_index);
         this.imageEditorRecordKey = this.galleryEditRecordKey;
@@ -5184,10 +5778,16 @@ const app = createApp({
         return;
       }
       const list = this.imageListForType(record, "gallery");
-      const indices = this.galleryEditSelection.slice().sort(function sortImageIndices(first, second) {
+      let indices = this.galleryEditSelection.slice();
+      if (!indices.length && this.imageDirectTask) {
+        indices = this.directImageTaskGallerySelection(record, this.imageDirectTask);
+        this.galleryEditSelection = indices.slice();
+      }
+      indices = indices.sort(function sortImageIndices(first, second) {
         return first - second;
       });
       if (!indices.length) {
+        this.imageEditorError = "[DIRECT_IMAGE_SOURCE_MISSING] 找不到要替换的原图位置，请重新打开原图再生成。";
         return;
       }
       const insertIndex = indices[0];

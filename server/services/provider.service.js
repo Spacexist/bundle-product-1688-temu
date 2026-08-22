@@ -445,6 +445,13 @@ class ProviderService {
     return config.image && typeof config.image === "object" ? config.image : config;
   }
 
+  /** Return the configured timeout for image edit, fusion, and generation calls. */
+  getImageTimeoutMs(config) {
+    const source = config || {};
+    const timeoutMs = Number(source.image_timeout_ms || source.timeout_ms || 300000);
+    return Math.max(10000, Math.min(timeoutMs, 900000));
+  }
+
   /** Build one configured BeeAPI image endpoint URL. */
   getImageEditEndpoint(config) {
     const source = config || {};
@@ -560,13 +567,15 @@ class ProviderService {
       prompt: prompt,
       size: size,
       quality: quality,
-      images: preparedImages
+      images: preparedImages,
+      timeout_ms: this.getImageTimeoutMs(config)
     }, requestId);
     const controller = new AbortController();
-    /** Abort one BeeAPI image edit request after five minutes. */
+    const timeoutMs = this.getImageTimeoutMs(config);
+    /** Abort one BeeAPI image edit/fusion request after the configured image timeout. */
     const timeoutHandle = setTimeout(function abortImageEditRequest() {
       controller.abort();
-    }, 300000);
+    }, timeoutMs);
     let providerResponse;
     let providerText;
     try {
@@ -579,7 +588,7 @@ class ProviderService {
       providerText = await providerResponse.text();
     } catch (error) {
       if (error && error.name === "AbortError") {
-        throw createProviderError("BeeAPI 图片请求超过五分钟。", 504, "BEEAPI_TIMEOUT");
+        throw createProviderError("BeeAPI 图片请求超过配置超时时间。", 504, "BEEAPI_TIMEOUT");
       }
       throw createProviderError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502, "BEEAPI_NETWORK_ERROR");
     } finally {

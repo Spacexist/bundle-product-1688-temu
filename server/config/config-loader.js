@@ -11,6 +11,7 @@ function readServerConfig() {
   }
   const server = source.server && typeof source.server === "object" ? source.server : {};
   const storage = source.storage && typeof source.storage === "object" ? source.storage : {};
+  const workflow = source.workflow && typeof source.workflow === "object" ? source.workflow : {};
   source.server = {
     host: String(server.host || "127.0.0.1"),
     port: Number(server.port || 3000),
@@ -19,10 +20,17 @@ function readServerConfig() {
       : ["http://127.0.0.1:5173", "http://localhost:5173", "chrome-extension://*"]
   };
   source.storage = {
-    cacheDirectory: String(storage.cacheDirectory || "D:/自动组货数据/cache"),
-    imageDirectory: String(storage.imageDirectory || "D:/自动组货数据/cache/image"),
-    historyDirectory: String(storage.historyDirectory || "D:/自动组货数据/cache/history"),
+    cacheDirectory: String(storage.cacheDirectory || "D:/自动组货/cache"),
+    imageDirectory: String(storage.imageDirectory || "D:/自动组货/cache/image"),
+    historyDirectory: String(storage.historyDirectory || "D:/自动组货/cache/history"),
     historyLimit: Number(storage.historyLimit || 200)
+  };
+  source.workflow = {
+    default_mode: String(workflow.default_mode || "clip") === "legacy" ? "legacy" : "clip",
+    clip_candidate_count: Math.max(1, Math.min(Number(workflow.clip_candidate_count || 10), 40)),
+    legacy_candidate_count: Math.max(1, Math.min(Number(workflow.legacy_candidate_count || 4), 10)),
+    clip_kimi_system_prompt: String(workflow.clip_kimi_system_prompt || ""),
+    clip_kimi_prompt: String(workflow.clip_kimi_prompt || "")
   };
   return source;
 }
@@ -45,6 +53,7 @@ function createPublicServerConfig(config) {
       endpoint: image.endpoint || "",
       generation_endpoint: image.generation_endpoint || "",
       generation_size: image.generation_size || "1024x1024",
+      image_timeout_ms: Number(image.image_timeout_ms || image.timeout_ms || 300000),
       quality: ["low", "medium", "high"].includes(String(image.quality || "medium").toLowerCase())
         ? String(image.quality || "medium").toLowerCase()
         : "medium",
@@ -62,6 +71,12 @@ function createPublicServerConfig(config) {
       workflow_prompt: kimi.workflow_prompt || "",
       carousel_default_requirement: kimi.carousel_default_requirement || "",
       apikey_masked: maskSecret(kimi.apikey)
+    },
+    workflow: {
+      default_mode: source.workflow.default_mode,
+      clip_candidate_count: source.workflow.clip_candidate_count,
+      legacy_candidate_count: source.workflow.legacy_candidate_count,
+      clip_kimi_prompt: source.workflow.clip_kimi_prompt
     }
   };
 }

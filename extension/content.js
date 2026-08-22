@@ -32,9 +32,9 @@ function getCurrentUnifiedPlatform() {
 /** Return the button label for the current platform. */
 function getUnifiedButtonText(platform, action) {
   if (platform === "1688" && action === "replaceSku") {
-    return "1688\n替换 SKU";
+    return "替换 SKU";
   }
-  return platform === "1688" ? "1688\n绑定" : "Temu\n采集";
+  return platform === "1688" ? "1688 绑定" : "Temu 采集";
 }
 
 /** Render the floating collector button with one lifecycle status. */

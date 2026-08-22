@@ -30,6 +30,7 @@ class WorkflowController {
         ok: true,
         data: {
           active_temu_main_id: String(active.active_temu_main_id || ""),
+          active_source_mode: String(active.active_source_mode || ""),
           task: active.task || null
         },
         error: null,
@@ -48,12 +49,40 @@ class WorkflowController {
     }
     const temuMainId = String(request.validatedBody.temu_main_id || "");
     try {
-      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId, "legacy");
       const result = await this.workflow.generatePrompts(request.validatedBody, request.requestId);
-      this.workflow.setTemporaryState(temuMainId, "prompts_ready", "", "", request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "prompts_ready", "", "", request.requestId, "legacy");
       response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
-      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "legacy");
+      next(error);
+    }
+  }
+
+  /** Generate CLIP-backed real-product candidates through the local listing service. */
+  async assembleClip(request, response, next) {
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
+    try {
+      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId, "clip");
+      const result = await this.workflow.assembleClip(request.validatedBody, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "ready", "", "", request.requestId, "clip");
+      response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "clip");
+      next(error);
+    }
+  }
+
+  /** Search CLIP directly with one user-entered keyword and persist two candidates. */
+  async searchClip(request, response, next) {
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
+    try {
+      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId, "clip");
+      const result = await this.workflow.searchClip(request.validatedBody, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "ready", "", "", request.requestId, "clip");
+      response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "clip");
       next(error);
     }
   }
@@ -199,7 +228,7 @@ class WorkflowController {
       const result = await this.workflow.generateImages(request.validatedBody, request.requestId);
       response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
-      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "legacy");
       next(error);
     }
   }
