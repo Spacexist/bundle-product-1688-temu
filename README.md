@@ -13,6 +13,7 @@
 </p>
 
 自动组货是面向 Temu 与 1688 商品处理流程的 Chrome Extension + Vue 工作台。扩展负责采集原始商品，Express Server 负责规范化、缓存、图片任务与第三方 API，工作台负责组货编辑、SKU 处理和导出。
+注意:clip-28w条数据训练版已更新至huggingface,效果有明显提升
 
 ## UI 预览
 
