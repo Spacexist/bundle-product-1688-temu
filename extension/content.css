@@ -7,17 +7,18 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 136px;
-  height: 42px;
-  min-height: 42px;
-  padding: 0 16px;
-  border: 1px solid rgba(255, 255, 255, .82);
+  isolation: isolate;
+  width: 128px;
+  height: 38px;
+  min-height: 38px;
+  padding: 0 15px;
+  border: 1px solid rgba(234, 88, 12, .38);
   border-radius: 999px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, .72), rgba(232, 238, 248, .52));
-  box-shadow: 0 12px 30px rgba(45, 55, 76, .16), inset 0 1px 0 rgba(255, 255, 255, .92);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
-  color: #111827;
+  background: #fff4ed;
+  box-shadow: 0 8px 18px rgba(234, 88, 12, .18), 0 1px 2px rgba(15, 23, 42, .08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: #050505 !important;
   cursor: pointer;
   font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
   text-align: center;
@@ -25,18 +26,35 @@
   transition: transform .18s ease, border-color .18s ease, background .18s ease, box-shadow .18s ease;
 }
 
+#unified-platform-collector-button::before,
+#unified-platform-sku-replacer-button::before {
+  display: none;
+}
+
 #unified-platform-collector-button.is-temu,
-#unified-platform-sku-replacer-button.is-temu { color: #111827; }
+#unified-platform-sku-replacer-button.is-temu { color: #050505 !important; }
 #unified-platform-collector-button.is-1688,
-#unified-platform-sku-replacer-button.is-1688 { color: #111827; }
+#unified-platform-sku-replacer-button.is-1688 { color: #050505 !important; }
+
+#unified-platform-collector-button.is-1688 {
+  border-color: rgba(37, 99, 235, .36);
+  background: #eff6ff;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, .16), 0 1px 2px rgba(15, 23, 42, .08);
+}
 
 #unified-platform-collector-button.is-1688 { left: calc(50% + 25px); transform: none; }
 
 #unified-platform-collector-button:hover,
 #unified-platform-sku-replacer-button:hover {
-  border-color: rgba(255, 255, 255, .96);
-  background: linear-gradient(145deg, rgba(255, 255, 255, .86), rgba(236, 242, 251, .68));
-  box-shadow: 0 15px 34px rgba(45, 55, 76, .2), inset 0 1px 0 #fff;
+  border-color: rgba(234, 88, 12, .58);
+  background: #ffeadb;
+  box-shadow: 0 10px 22px rgba(234, 88, 12, .24), 0 2px 4px rgba(15, 23, 42, .1);
+}
+
+#unified-platform-collector-button.is-1688:hover {
+  border-color: rgba(37, 99, 235, .55);
+  background: #dbeafe;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, .22), 0 2px 4px rgba(15, 23, 42, .1);
 }
 
 #unified-platform-collector-button:hover { transform: translate(-50%, -2px); }
@@ -57,34 +75,45 @@
 #unified-platform-collector-button.is-broadcasting,
 #unified-platform-sku-replacer-button.is-collecting,
 #unified-platform-sku-replacer-button.is-broadcasting {
-    color: #111827;
+  color: #050505 !important;
   background: linear-gradient(145deg, rgba(255, 255, 255, .78), rgba(255, 242, 204, .58));
 }
 
 #unified-platform-collector-button.is-completed,
 #unified-platform-sku-replacer-button.is-completed {
-    color: #111827;
+  color: #050505 !important;
   background: linear-gradient(145deg, rgba(255, 255, 255, .78), rgba(220, 252, 231, .6));
 }
 
 #unified-platform-collector-button.is-failed,
 #unified-platform-sku-replacer-button.is-failed {
-    color: #111827;
+  color: #050505 !important;
   background: linear-gradient(145deg, rgba(255, 255, 255, .78), rgba(254, 226, 226, .62));
 }
 
-#unified-platform-sku-replacer-button { left: calc(50% - 131px); width: 146px; transform: none; }
-#unified-platform-sku-replacer-button.is-1688 { color: #111827; }
+#unified-platform-sku-replacer-button { left: calc(50% - 131px); width: 140px; transform: none; }
+#unified-platform-sku-replacer-button.is-1688 {
+  border-color: rgba(79, 70, 229, .32);
+  background: #eef2ff;
+  box-shadow: 0 8px 18px rgba(79, 70, 229, .16), 0 1px 2px rgba(15, 23, 42, .08);
+  color: #050505 !important;
+}
+
+#unified-platform-sku-replacer-button.is-1688:hover {
+  border-color: rgba(79, 70, 229, .5);
+  background: #e0e7ff;
+  box-shadow: 0 10px 22px rgba(79, 70, 229, .2), 0 2px 4px rgba(15, 23, 42, .1);
+}
 
 .unified-collector-dot {
   position: absolute;
   top: 8px;
-  right: 12px;
-  width: 7px;
-  height: 7px;
+  right: 11px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background: #60a5fa;
-  box-shadow: 0 0 0 3px rgba(96, 165, 250, .13);
+  background: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .92), 0 0 8px rgba(59, 130, 246, .42);
 }
 
 .is-collecting .unified-collector-dot,
@@ -97,7 +126,7 @@
 .is-completed .unified-collector-dot { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .15); }
 .is-failed .unified-collector-dot { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .15); }
 .unified-collector-copy { min-width: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 0; }
-.unified-collector-label { max-width: 150px; overflow: hidden; font-size: 14px; font-weight: 800; line-height: 1.1; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.unified-collector-label { max-width: 150px; overflow: hidden; color: #050505 !important; font-size: 14px; font-weight: 800; line-height: 1.1; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .unified-collector-detail { display: none; }
 
 @keyframes unified-collector-pulse {
