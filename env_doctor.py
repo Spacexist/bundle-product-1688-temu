@@ -15,6 +15,7 @@ from typing import Any
 
 
 DEFAULT_PORTS = [3000, 5173, 9990]
+NODE_MODULE_REPAIR_PACKAGES = ["vite", "@vitejs/plugin-vue", "esbuild", "@esbuild/win32-x64"]
 GPU_RUNTIME_PATTERNS = [
     "*cublas64_*.dll",
     "*cublasLt64_*.dll",
@@ -121,6 +122,16 @@ def resolve_npm_command(project_root: Path) -> Path | str:
     return "npm"
 
 
+def verify_npm_runtime(project_root: Path) -> list[str]:
+    """Return missing files from the bundled npm runtime used for automatic repair."""
+    required = [
+        project_root / "runtime" / "node" / "npm.cmd",
+        project_root / "runtime" / "node" / "node_modules" / "npm" / "bin" / "npm-cli.js",
+        project_root / "runtime" / "node" / "node_modules" / "npm" / "bin" / "npm-prefix.js",
+    ]
+    return [str(path) for path in required if not path.exists()]
+
+
 def run_checked(command: list[str], cwd: Path) -> None:
     """Run one repair command and fail fast when it exits unsuccessfully."""
     printable = " ".join(f'"{part}"' if " " in part else part for part in command)
@@ -130,6 +141,78 @@ def run_checked(command: list[str], cwd: Path) -> None:
         raise RuntimeError(f"Command failed with exit code {completed.returncode}: {printable}")
 
 
+def verify_node_modules(project_root: Path) -> list[str]:
+    """Return missing npm modules by asking the bundled Node resolver directly."""
+    node_command = str(resolve_node_executable(project_root))
+    probe_code = """
+const modules = ["express", "cors", "zod", "vue", "vite", "@vitejs/plugin-vue", "content-type", "type-is", "media-typer", "mime-types"];
+const missing = [];
+for (const name of modules) {
+  try {
+    require.resolve(name, { paths: [process.cwd()] });
+  } catch (error) {
+    missing.push(name + " -> " + error.message);
+  }
+}
+if (missing.length) {
+  console.error(missing.join("\\n"));
+  process.exit(2);
+}
+console.log("node module resolver ok");
+"""
+    completed = subprocess.run(
+        [node_command, "-e", probe_code],
+        cwd=str(project_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        shell=False,
+    )
+    if completed.returncode == 0:
+        missing_files = verify_node_module_files(project_root)
+        if not missing_files:
+            return []
+        return missing_files
+    detail = (completed.stderr or completed.stdout or "").strip()
+    missing_modules = [line for line in detail.splitlines() if line.strip()]
+    missing_modules.extend(verify_node_module_files(project_root))
+    return missing_modules
+
+
+def verify_node_module_files(project_root: Path) -> list[str]:
+    """Return missing package files that require.resolve can miss after a bad ZIP."""
+    required_files = [
+        project_root / "node_modules" / "vite" / "dist" / "node" / "index.js",
+        project_root / "node_modules" / "@vitejs" / "plugin-vue" / "dist" / "index.mjs",
+        project_root / "node_modules" / "@esbuild" / "win32-x64" / "esbuild.exe",
+    ]
+    return ["file missing: " + str(path) for path in required_files if not path.exists()]
+
+
+def resolve_node_module_package_directory(project_root: Path, package_name: str) -> Path:
+    """Resolve one npm package name to its directory under node_modules."""
+    node_modules = project_root / "node_modules"
+    name = str(package_name or "").strip()
+    if name.startswith("@") and "/" in name:
+        scope, scoped_name = name.split("/", 1)
+        return node_modules / scope / scoped_name
+    return node_modules / name
+
+
+def remove_incomplete_node_module_packages(project_root: Path) -> list[str]:
+    """Remove known fragile frontend packages so npm install must lay them down again."""
+    removed: list[str] = []
+    node_modules = (project_root / "node_modules").resolve()
+    for package_name in NODE_MODULE_REPAIR_PACKAGES:
+        package_directory = resolve_node_module_package_directory(project_root, package_name).resolve()
+        if not is_inside(node_modules, package_directory) or not package_directory.exists():
+            continue
+        shutil.rmtree(package_directory)
+        removed.append(package_name)
+    return removed
+
+
 def resolve_configured_path(project_root: Path, value: Any, default_value: str) -> Path:
     """Resolve one configured path relative to the project when it is not absolute."""
     text = str(value or default_value).strip()
@@ -137,6 +220,59 @@ def resolve_configured_path(project_root: Path, value: Any, default_value: str) 
     if candidate.is_absolute():
         return candidate.resolve()
     return (project_root / candidate).resolve()
+
+
+def resolve_portable_configured_path(project_root: Path, value: Any, default_value: str, label: str) -> Path:
+    """Resolve one portable bundle path and fall back when stale machine paths are configured."""
+    configured_text = str(value or "").strip()
+    default_path = (project_root / default_value).resolve()
+    configured_path = resolve_configured_path(project_root, configured_text, default_value)
+    if configured_text and not is_legacy_venv_python_command(configured_text) and configured_path.exists():
+        return configured_path
+    if configured_text and configured_path != default_path:
+        print_line("WARN", f"Ignored stale {label}: {configured_path}; using {default_path}")
+    return default_path
+
+
+def is_legacy_venv_python_command(value: Any) -> bool:
+    """Return whether one configured Python command points at the old non-portable venv launcher."""
+    text = str(value or "").replace("\\", "/").lower()
+    return text.endswith("bundle/python-cpu/scripts/python.exe") or "/bundle/python-cpu/scripts/python.exe" in text
+
+
+def build_bundled_python_environment(clip_root: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
+    """Create child-process environment that lets portable Python import bundled site-packages."""
+    environment = os.environ.copy()
+    site_packages = clip_root.parent / "python-cpu" / "Lib" / "site-packages"
+    existing_pythonpath = environment.get("PYTHONPATH", "")
+    pythonpath_parts = [str(site_packages)]
+    if existing_pythonpath:
+        pythonpath_parts.append(existing_pythonpath)
+    environment["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
+    if extra:
+        environment.update(extra)
+    return environment
+
+
+def repair_portable_workflow_paths(project_root: Path, config: dict[str, Any], defaults: dict[str, Any]) -> bool:
+    """Reset CLIP bundle paths that would break after copying the project to another computer."""
+    workflow = config.get("workflow") if isinstance(config.get("workflow"), dict) else {}
+    default_workflow = defaults.get("workflow") if isinstance(defaults.get("workflow"), dict) else {}
+    changed = False
+    portable_keys = ["clip_project_directory", "clip_python_command"]
+    for key in portable_keys:
+        default_value = str(default_workflow.get(key, "")).strip()
+        current_value = str(workflow.get(key, "")).strip()
+        if not default_value or not current_value:
+            continue
+        current_path = resolve_configured_path(project_root, current_value, default_value)
+        default_path = (project_root / default_value).resolve()
+        if Path(current_value).is_absolute() or is_legacy_venv_python_command(current_value) or not current_path.exists():
+            if default_path.exists() and current_value != default_value:
+                workflow[key] = default_value
+                changed = True
+                print_line("FIX", f"Reset portable workflow path {key}: {default_value}")
+    return changed
 
 
 def ensure_private_config(project_root: Path, repair: bool) -> dict[str, Any]:
@@ -165,13 +301,16 @@ def ensure_private_config(project_root: Path, repair: bool) -> dict[str, Any]:
     except OSError:
         print_line("WARN", "server/config.json is protected; using template defaults for environment checks.")
         return defaults
-    if merge_missing_values(config, defaults):
+    changed = merge_missing_values(config, defaults)
+    if repair:
+        changed = repair_portable_workflow_paths(project_root, config, defaults) or changed
+    if changed:
         if not repair:
             print_line("WARN", "server/config.json is missing default keys; run with --repair to patch it.")
         else:
             try:
                 write_json(config_path, config)
-                print_line("FIX", "Patched missing server/config.json keys without overwriting existing values.")
+                print_line("FIX", "Patched portable server/config.json values without overwriting private secrets.")
             except OSError:
                 print_line("WARN", "server/config.json is protected; skipped config patching.")
     else:
@@ -247,15 +386,33 @@ def ensure_storage(project_root: Path, config: dict[str, Any], repair: bool) -> 
 
 
 def ensure_node_modules(project_root: Path, install: bool) -> None:
-    """Install npm dependencies only when the local node_modules marker is missing."""
+    """Install npm dependencies when node_modules is missing or resolver checks fail."""
     marker = project_root / "node_modules" / ".package-lock.json"
-    if marker.exists():
+    missing_modules = verify_node_modules(project_root) if marker.exists() else ["node_modules marker missing"]
+    if marker.exists() and not missing_modules:
         print_line("OK", "node_modules already installed.")
         return
     if not install:
-        raise FileNotFoundError("node_modules is missing; run with --install to repair it.")
+        raise FileNotFoundError("node_modules is incomplete; run with --install to repair it. Missing: " + "; ".join(missing_modules[:6]))
+    if missing_modules:
+        print_line("WARN", "node_modules is incomplete: " + "; ".join(missing_modules[:6]))
+    missing_npm_runtime = verify_npm_runtime(project_root)
+    if missing_npm_runtime:
+        raise RuntimeError("Bundled npm runtime is incomplete; re-extract the ZIP with 7-Zip/WinRAR before retrying. Missing: " + "; ".join(missing_npm_runtime))
+    removed_packages = remove_incomplete_node_module_packages(project_root)
+    if removed_packages:
+        print_line("FIX", "Removed incomplete npm packages before reinstall: " + ", ".join(removed_packages))
     npm_command = str(resolve_npm_command(project_root))
-    run_checked([npm_command, "install"], project_root)
+    run_checked([npm_command, "install", "--include=optional", "--ignore-scripts=false"], project_root)
+    missing_after_install = verify_node_modules(project_root)
+    if missing_after_install:
+        removed_packages = remove_incomplete_node_module_packages(project_root)
+        if removed_packages:
+            print_line("FIX", "Retrying after removing stubborn npm packages: " + ", ".join(removed_packages))
+            run_checked([npm_command, "install", "--include=optional", "--ignore-scripts=false", "--force"], project_root)
+            missing_after_install = verify_node_modules(project_root)
+    if missing_after_install:
+        raise RuntimeError("node_modules is still incomplete after npm install. Re-extract the ZIP made by the fixed create_distribution.py with 7-Zip/WinRAR. Missing: " + "; ".join(missing_after_install[:6]))
 
 
 def matches_gpu_runtime_pattern(path: Path) -> bool:
@@ -422,9 +579,10 @@ except Exception as exc:
 
 print("__ENV_DOCTOR_JSON__" + json.dumps(result, ensure_ascii=False))
 '''
-    environment = os.environ.copy()
-    environment["PYTHONIOENCODING"] = "utf-8"
-    environment["AUTO_BUNDLE_CLIP_ROOT"] = str(clip_root)
+    environment = build_bundled_python_environment(clip_root, {
+        "PYTHONIOENCODING": "utf-8",
+        "AUTO_BUNDLE_CLIP_ROOT": str(clip_root),
+    })
     completed = subprocess.run(
         [str(python_command), "-c", probe_code],
         cwd=str(clip_root),
@@ -528,10 +686,11 @@ summary = {
 }
 print("__ENV_DOCTOR_BENCHMARK__" + json.dumps(summary, ensure_ascii=False))
 '''
-    environment = os.environ.copy()
-    environment["CUDA_VISIBLE_DEVICES"] = "-1"
-    environment["PYTHONIOENCODING"] = "utf-8"
-    environment["AUTO_BUNDLE_CLIP_ROOT"] = str(clip_root)
+    environment = build_bundled_python_environment(clip_root, {
+        "CUDA_VISIBLE_DEVICES": "-1",
+        "PYTHONIOENCODING": "utf-8",
+        "AUTO_BUNDLE_CLIP_ROOT": str(clip_root),
+    })
     completed = subprocess.run(
         [str(python_command), "-c", benchmark_code],
         cwd=str(clip_root),
@@ -554,8 +713,8 @@ print("__ENV_DOCTOR_BENCHMARK__" + json.dumps(summary, ensure_ascii=False))
 def benchmark_clip_cpu(project_root: Path, config: dict[str, Any]) -> None:
     """Print a no-CUDA CLIP speed benchmark using the bundled Python environment."""
     workflow = config.get("workflow") if isinstance(config.get("workflow"), dict) else {}
-    clip_root = resolve_configured_path(project_root, workflow.get("clip_project_directory"), "bundle/clip")
-    python_command = resolve_configured_path(project_root, workflow.get("clip_python_command"), "bundle/python-cpu/Scripts/python.exe")
+    clip_root = resolve_portable_configured_path(project_root, workflow.get("clip_project_directory"), "bundle/clip", "CLIP project directory")
+    python_command = resolve_portable_configured_path(project_root, workflow.get("clip_python_command"), "bundle/python-runtime/python.exe", "CLIP Python runtime")
     require_file(python_command, "CLIP Python runtime")
     print_line("INFO", "Benchmarking CLIP with CUDA hidden; this simulates a no-CUDA computer.")
     summary = run_clip_cpu_benchmark(python_command, clip_root)
@@ -571,8 +730,8 @@ def benchmark_clip_cpu(project_root: Path, config: dict[str, Any]) -> None:
 def check_clip_bundle(project_root: Path, config: dict[str, Any]) -> None:
     """Report whether the bundled CLIP files and Python runtime are usable."""
     workflow = config.get("workflow") if isinstance(config.get("workflow"), dict) else {}
-    clip_root = resolve_configured_path(project_root, workflow.get("clip_project_directory"), "bundle/clip")
-    python_command = resolve_configured_path(project_root, workflow.get("clip_python_command"), "bundle/python-cpu/Scripts/python.exe")
+    clip_root = resolve_portable_configured_path(project_root, workflow.get("clip_project_directory"), "bundle/clip", "CLIP project directory")
+    python_command = resolve_portable_configured_path(project_root, workflow.get("clip_python_command"), "bundle/python-runtime/python.exe", "CLIP Python runtime")
     required = [
         clip_root / "work" / "stdio_listing_worker.py",
         clip_root / "work" / "full_listing_server.py",
