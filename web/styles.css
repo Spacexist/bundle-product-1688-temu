@@ -350,6 +350,23 @@ button { cursor: pointer; }
 .image-editor-prompt input:focus { outline: 2px solid rgba(37, 99, 235, .18); border-color: #2563eb; }
 .image-editor-prompt input[readonly], .image-editor-prompt textarea[readonly] { color: #64748b; cursor: default; }
 .image-editor-error { margin-top: 10px; padding: 9px 11px; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 12px; }
+.miaoshou-export-dialog { width: min(560px, 94vw); }
+.miaoshou-export-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.miaoshou-export-option { display: grid; min-height: 84px; align-content: center; gap: 6px; padding: 14px; border: 1px solid rgba(255, 255, 255, .68); border-radius: 10px; background: rgba(255, 255, 255, .35); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .86); color: #29303b; text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease; }
+.miaoshou-export-option:hover:not(:disabled), .miaoshou-export-option.active { border-color: rgba(185, 105, 79, .44); background: rgba(255, 247, 243, .66); box-shadow: 0 8px 20px rgba(117, 65, 49, .12), inset 0 1px 0 #fff; transform: translateY(-1px); }
+.miaoshou-export-option:disabled { cursor: wait; opacity: .62; }
+.miaoshou-export-option strong { font-size: 14px; font-weight: 800; }
+.miaoshou-export-option span { color: #64748b; font-size: 12px; }
+.miaoshou-cookie-status { margin-top: 12px; padding: 8px 10px; border: 1px solid rgba(148, 163, 184, .28); border-radius: 8px; background: rgba(248, 250, 252, .72); color: #64748b; font-size: 12px; font-weight: 700; line-height: 1.5; }
+.miaoshou-cookie-status.is-ready { border-color: rgba(16, 185, 129, .28); background: rgba(236, 253, 245, .72); color: #047857; }
+.miaoshou-cookie-status.is-loading { color: #2563eb; }
+.miaoshou-export-progress { display: grid; gap: 7px; margin-top: 14px; }
+.miaoshou-export-progress > span { display: block; width: 100%; height: 8px; overflow: hidden; border-radius: 999px; background: rgba(148, 163, 184, .26); box-shadow: inset 0 1px 2px rgba(63, 75, 94, .16); }
+.miaoshou-export-progress > span > i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #ff7048, #3b82f6); transition: width .22s ease; }
+.miaoshou-export-progress small { color: #64748b; font-size: 12px; font-weight: 700; }
+.miaoshou-export-result { margin-top: 10px; padding: 9px 11px; border-radius: 8px; font-size: 12px; font-weight: 700; line-height: 1.5; }
+.miaoshou-export-result.is-success { background: #ecfdf5; color: #047857; }
+.miaoshou-export-result.is-error { background: #fef2f2; color: #b91c1c; }
 .image-editor-loading { display: grid; place-items: center; gap: 7px; color: #475569; }
 .image-editor-loading span { width: 28px; height: 28px; border: 3px solid #dbeafe; border-top-color: #2563eb; border-radius: 50%; animation: image-editor-spin .8s linear infinite; }
 .image-editor-loading small { color: #94a3b8; font-weight: 400; }

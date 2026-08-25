@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import importlib
 import json
 import os
 import shutil
@@ -29,6 +30,7 @@ GPU_RUNTIME_PATTERNS = [
     "*nvjpeg*.dll",
     "*torch_cuda.dll",
 ]
+WINDOWS_UNBLOCK_SUFFIXES = {".exe", ".dll", ".pyd", ".cmd", ".bat", ".ps1", ".py"}
 
 
 def print_line(level: str, message: str) -> None:
@@ -252,6 +254,84 @@ def build_bundled_python_environment(clip_root: Path, extra: dict[str, str] | No
     if extra:
         environment.update(extra)
     return environment
+
+
+def is_windows_access_denied(error: BaseException) -> bool:
+    """Return whether an exception is Windows' access denied error."""
+    winerror = getattr(error, "winerror", None)
+    errno = getattr(error, "errno", None)
+    return winerror == 5 or errno == 13
+
+
+def add_bundled_python_paths_to_current_process(clip_root: Path) -> None:
+    """Let the current Python process import the bundled CLIP site-packages."""
+    site_packages = (clip_root.parent / "python-cpu" / "Lib" / "site-packages").resolve()
+    work_directory = (clip_root / "work").resolve()
+    for candidate in [str(site_packages), str(work_directory)]:
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+    os.environ["AUTO_BUNDLE_CLIP_ROOT"] = str(clip_root)
+
+
+def record_inline_python_probe_check(result: dict[str, Any], name: str, ok: bool, detail: Any) -> None:
+    """Append one inline CLIP dependency check result."""
+    result["checks"].append({"name": name, "ok": bool(ok), "detail": str(detail)})
+
+
+def import_inline_python_probe_package(result: dict[str, Any], name: str, import_name: str | None = None) -> Any:
+    """Import one package in the current process and record its version or error."""
+    module_name = import_name or name
+    try:
+        module = importlib.import_module(module_name)
+        version = getattr(module, "__version__", "version unknown")
+        record_inline_python_probe_check(result, name, True, version)
+        return module
+    except Exception as exc:
+        record_inline_python_probe_check(result, name, False, type(exc).__name__ + ": " + str(exc))
+        return None
+
+
+def run_python_probe_inline(clip_root: Path) -> dict[str, Any]:
+    """Run the CLIP dependency probe inside the already-running doctor process."""
+    add_bundled_python_paths_to_current_process(clip_root)
+    result: dict[str, Any] = {
+        "python": {"executable": sys.executable, "version": sys.version.split()[0]},
+        "checks": [],
+    }
+    torch = import_inline_python_probe_package(result, "torch")
+    if torch is not None:
+        try:
+            cuda_available = bool(torch.cuda.is_available())
+            cuda_version = getattr(torch.version, "cuda", "") or "cpu"
+            device_count = int(torch.cuda.device_count()) if cuda_available else 0
+            record_inline_python_probe_check(result, "torch.cuda", True, "available=" + str(cuda_available) + ", cuda=" + str(cuda_version) + ", devices=" + str(device_count))
+        except Exception as exc:
+            record_inline_python_probe_check(result, "torch.cuda", False, type(exc).__name__ + ": " + str(exc))
+    faiss = import_inline_python_probe_package(result, "faiss")
+    if faiss is not None:
+        try:
+            index = faiss.IndexFlatIP(512)
+            record_inline_python_probe_check(result, "faiss.index", index.d == 512, "IndexFlatIP dimension=" + str(index.d))
+        except Exception as exc:
+            record_inline_python_probe_check(result, "faiss.index", False, type(exc).__name__ + ": " + str(exc))
+    open_clip = import_inline_python_probe_package(result, "open_clip")
+    if open_clip is not None:
+        try:
+            tokenizer = open_clip.get_tokenizer("ViT-B-32")
+            has_factory = hasattr(open_clip, "create_model_and_transforms")
+            record_inline_python_probe_check(result, "open_clip.runtime", callable(tokenizer) and has_factory, "tokenizer=ok, create_model_and_transforms=" + str(has_factory))
+        except Exception as exc:
+            record_inline_python_probe_check(result, "open_clip.runtime", False, type(exc).__name__ + ": " + str(exc))
+    import_inline_python_probe_package(result, "PIL", "PIL.Image")
+    import_inline_python_probe_package(result, "flask")
+    import_inline_python_probe_package(result, "requests")
+    import_inline_python_probe_package(result, "numpy")
+    try:
+        importlib.import_module("full_listing_server")
+        record_inline_python_probe_check(result, "clip.full_listing_server", True, "import ok")
+    except Exception as exc:
+        record_inline_python_probe_check(result, "clip.full_listing_server", False, type(exc).__name__ + ": " + str(exc))
+    return result
 
 
 def repair_portable_workflow_paths(project_root: Path, config: dict[str, Any], defaults: dict[str, Any]) -> bool:
@@ -583,17 +663,28 @@ print("__ENV_DOCTOR_JSON__" + json.dumps(result, ensure_ascii=False))
         "PYTHONIOENCODING": "utf-8",
         "AUTO_BUNDLE_CLIP_ROOT": str(clip_root),
     })
-    completed = subprocess.run(
-        [str(python_command), "-c", probe_code],
-        cwd=str(clip_root),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        shell=False,
-        timeout=60,
-        env=environment,
-    )
+    try:
+        completed = subprocess.run(
+            [str(python_command), "-c", probe_code],
+            cwd=str(clip_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            shell=False,
+            timeout=60,
+            env=environment,
+        )
+    except PermissionError as exc:
+        if not is_windows_access_denied(exc):
+            raise
+        print_line("WARN", "CLIP Python 子进程启动被 Windows 拒绝，改用当前 Python 进程继续检查。")
+        return run_python_probe_inline(clip_root)
+    except OSError as exc:
+        if not is_windows_access_denied(exc):
+            raise
+        print_line("WARN", "CLIP Python 子进程启动被 Windows 拒绝，改用当前 Python 进程继续检查。")
+        return run_python_probe_inline(clip_root)
     marker = "__ENV_DOCTOR_JSON__"
     for line in completed.stdout.splitlines():
         if line.startswith(marker):
@@ -760,6 +851,25 @@ def check_project_files(project_root: Path) -> None:
         print_line("WARN", "Bundled Node missing; will rely on system node.")
 
 
+def remove_windows_zone_identifier_streams(project_root: Path) -> tuple[int, int]:
+    """Remove downloaded-file blocking marks from executable project files on Windows."""
+    if os.name != "nt":
+        return (0, 0)
+    removed = 0
+    failed = 0
+    for item in project_root.rglob("*"):
+        if not item.is_file() or item.suffix.lower() not in WINDOWS_UNBLOCK_SUFFIXES:
+            continue
+        try:
+            os.remove(str(item) + ":Zone.Identifier")
+            removed += 1
+        except FileNotFoundError:
+            continue
+        except OSError:
+            failed += 1
+    return (removed, failed)
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Create the command line parser used by script and frozen exe modes."""
     parser = argparse.ArgumentParser(description="Detect and repair Auto Bundle local environment.")
@@ -778,6 +888,12 @@ def main() -> int:
     args = parser.parse_args()
     project_root = resolve_project_root(args.project_root)
     print_line("INFO", f"Project: {project_root}")
+    if args.repair:
+        removed, failed = remove_windows_zone_identifier_streams(project_root)
+        if removed:
+            print_line("FIX", "Removed Windows download blocking marks: " + str(removed))
+        elif failed:
+            print_line("WARN", "Could not remove some Windows download blocking marks: " + str(failed))
     config = ensure_private_config(project_root, args.repair)
     ensure_storage(project_root, config, args.repair)
     ensure_node_modules(project_root, args.install)

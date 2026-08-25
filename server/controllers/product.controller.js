@@ -155,6 +155,30 @@ class ProductController {
       next(error);
     }
   }
+
+  /** Upload the current Temu-only 妙手 ZIP directly into Miaoshou's import flow. */
+  async importMiaoshouOnline(request, response, next) {
+    try {
+      const input = request.validatedBody || {};
+      const result = await this.miaoshouExport.importTemuOnline({
+        cookie: input.cookie,
+        autoFetch: input.auto_fetch !== false
+      });
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return whether server/cookie.json contains a reusable Miaoshou Cookie. */
+  getMiaoshouCookieStatus(request, response, next) {
+    try {
+      const result = this.miaoshouExport.getSavedMiaoshouCookieStatus();
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 module.exports = { ProductController: ProductController };

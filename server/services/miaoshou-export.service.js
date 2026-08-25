@@ -1,5 +1,17 @@
 const archiver = require("archiver");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const stream = require("stream");
 const XLSX = require("xlsx");
+
+const MIAOSHOU_BASE_URL = "https://erp.91miaoshou.com";
+const MIAOSHOU_WEB_INIT_CONFIG_PATH = "/api/home/home/getWebInitConfig";
+const MIAOSHOU_GET_STS_PATH = "/api/app_media/app_attach_file/getOssUploadTempFileStsConfig";
+const MIAOSHOU_PROCESS_PATH = "/api/move/common_collect_box/processImportCopyV2";
+const MIAOSHOU_APP_SIGN_AES_KEY = "c70528119f323ee2";
+const MIAOSHOU_APP_SIGN_REPLACE_KEY = "50fb8857276b7c76b871754755571d76";
+const MIAOSHOU_COOKIE_EXPIRY_SKEW_MS = 60000;
 
 /** Return an array or a safe empty list for one cache field. */
 function asArray(value) {
@@ -151,6 +163,236 @@ function safeMiaoshouName(value, fallback) {
   return (text || fallback || "产品素材包").slice(0, 80);
 }
 
+/** Clean a browser Cookie header before it is saved or sent upstream. */
+function normalizeMiaoshouCookie(cookie) {
+  return String(cookie || "").trim().replace(/\\_/g, "_").replace(/[\r\n]+/g, " ");
+}
+
+/** Read one named cookie value from a Cookie header string. */
+function getMiaoshouCookieValue(cookie, name) {
+  const parts = normalizeMiaoshouCookie(cookie).split(";");
+  const prefix = String(name || "") + "=";
+  for (let index = 0; index < parts.length; index += 1) {
+    const item = parts[index].trim();
+    if (item.indexOf(prefix) === 0) {
+      return item.slice(prefix.length);
+    }
+  }
+  return "";
+}
+
+/** Decode one base64url segment from a Miaoshou JWT cookie value. */
+function decodeMiaoshouBase64Url(value) {
+  const text = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padding = text.length % 4 ? "=".repeat(4 - (text.length % 4)) : "";
+  return Buffer.from(text + padding, "base64").toString("utf8");
+}
+
+/** Parse the payload section from a Miaoshou autoLoginToken JWT. */
+function decodeMiaoshouJwtPayload(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length < 2) {
+    return null;
+  }
+  try {
+    return JSON.parse(decodeMiaoshouBase64Url(parts[1]));
+  } catch (error) {
+    return null;
+  }
+}
+
+/** Read the best known expiry timestamp from the saved Miaoshou Cookie. */
+function readMiaoshouCookieExpiresAt(cookie) {
+  const token = getMiaoshouCookieValue(cookie, "autoLoginToken");
+  const payload = decodeMiaoshouJwtPayload(token);
+  const sourceValue = payload && (payload.expireTime || payload.exp) ? payload.expireTime || payload.exp : "";
+  const seconds = Number(sourceValue || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return "";
+  }
+  return new Date(seconds * 1000).toISOString();
+}
+
+/** Summarize whether one Miaoshou Cookie exists and is locally expired. */
+function createMiaoshouCookieStatus(cookie) {
+  const normalizedCookie = normalizeMiaoshouCookie(cookie);
+  const expiresAt = readMiaoshouCookieExpiresAt(normalizedCookie);
+  const expiresTime = expiresAt ? Date.parse(expiresAt) : 0;
+  const expired = Boolean(expiresTime && Date.now() + MIAOSHOU_COOKIE_EXPIRY_SKEW_MS >= expiresTime);
+  return {
+    hasCookie: Boolean(normalizedCookie),
+    expired: expired,
+    expiresAt: expiresAt
+  };
+}
+
+/** Convert one upstream JSON response into an Error with a readable message. */
+function createMiaoshouError(message, statusCode, details) {
+  const error = new Error(message);
+  error.statusCode = statusCode || 502;
+  error.details = details || null;
+  return error;
+}
+
+/** Return true when Miaoshou's response looks like an expired or invalid login. */
+function isMiaoshouLoginFailure(payload, statusCode) {
+  if (statusCode === 401 || statusCode === 403) {
+    return true;
+  }
+  const source = payload && typeof payload === "object" ? payload : {};
+  const text = [
+    source.result,
+    source.code,
+    source.reason,
+    source.message,
+    source.msg,
+    source.error
+  ].join(" ");
+  return /登录|登陆|未登录|未登陆|授权|过期|cookie|token|login|auth/i.test(text);
+}
+
+/** Create the standard frontend-readable error for expired Miaoshou cookies. */
+function createMiaoshouLoginError(details) {
+  return createMiaoshouError("妙手 Cookie 已过期或无效，请重新复制 Cookie 后再试。", 401, details || null);
+}
+
+/** Decode the dynamic Miaoshou x-app-zebra signing rule using Node crypto. */
+function decryptMiaoshouSignRule(encryptedRule) {
+  const decipher = crypto.createDecipheriv("aes-128-cbc", Buffer.from(MIAOSHOU_APP_SIGN_AES_KEY), Buffer.alloc(16));
+  return Buffer.concat([
+    decipher.update(Buffer.from(String(encryptedRule || ""), "base64")),
+    decipher.final()
+  ]).toString("utf8");
+}
+
+/** Convert a full Miaoshou API path into the apiName string used by the signer. */
+function normalizeMiaoshouApiName(pathname) {
+  const pathText = String(pathname || "");
+  if (pathText.indexOf("/api/") === 0) {
+    return pathText.slice(5);
+  }
+  if (pathText.indexOf("/") === 0) {
+    return pathText.slice(1);
+  }
+  return pathText;
+}
+
+/** Build the signed browser-like headers required by Miaoshou backend APIs. */
+async function createMiaoshouSignedHeaders(cookie, pathname, frontVersion) {
+  const normalizedCookie = normalizeMiaoshouCookie(cookie);
+  if (!normalizedCookie) {
+    throw createMiaoshouError("请先输入妙手 Cookie。", 400, null);
+  }
+  const baseHeaders = {
+    Accept: "application/json, text/plain, */*",
+    Origin: MIAOSHOU_BASE_URL,
+    Referer: MIAOSHOU_BASE_URL + "/common_collect_box/index?fetchType=importCopy",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
+    Cookie: normalizedCookie
+  };
+  const initResponse = await fetch(MIAOSHOU_BASE_URL + MIAOSHOU_WEB_INIT_CONFIG_PATH, {
+    headers: baseHeaders,
+    signal: AbortSignal.timeout(30000)
+  });
+  const initText = await initResponse.text();
+  let initPayload = null;
+  try {
+    initPayload = JSON.parse(initText);
+  } catch (error) {
+    if (isMiaoshouLoginFailure(null, initResponse.status)) {
+      throw createMiaoshouLoginError({ status: initResponse.status });
+    }
+    throw createMiaoshouError("妙手签名配置返回不是 JSON。", 502, { status: initResponse.status });
+  }
+  if (isMiaoshouLoginFailure(initPayload, initResponse.status)) {
+    throw createMiaoshouLoginError({ status: initResponse.status });
+  }
+  if (!initResponse.ok) {
+    throw createMiaoshouError("妙手签名配置获取失败，HTTP " + initResponse.status + "。", 502, { status: initResponse.status });
+  }
+  const data = initPayload && initPayload.data && initPayload.data.timestamp && initPayload.data.rule ? initPayload.data : initPayload;
+  if (!data || !data.timestamp || !data.rule) {
+    throw createMiaoshouError("妙手签名配置缺少 timestamp 或 rule。", 502, { status: initResponse.status });
+  }
+  let rule = null;
+  try {
+    rule = JSON.parse(decryptMiaoshouSignRule(data.rule));
+  } catch (error) {
+    throw createMiaoshouError("妙手签名规则解析失败，请刷新 Cookie 后重试。", 502, { status: initResponse.status });
+  }
+  const timestamp = String(Number(data.timestamp || Math.floor(Date.now() / 1000)));
+  const signTemplate = String(rule.rule || "").replace(/key/g, MIAOSHOU_APP_SIGN_REPLACE_KEY);
+  const signText = signTemplate
+    .replace(/apiName/g, normalizeMiaoshouApiName(pathname))
+    .replace(/timestamp/g, timestamp);
+  const headers = Object.assign({}, baseHeaders, {
+    "Content-Type": "application/x-www-form-urlencoded",
+    "x-timestamp": timestamp,
+    "x-front-version": String(frontVersion || "")
+  });
+  headers[rule.key] = crypto.createHash("md5").update(signText).digest("hex");
+  return headers;
+}
+
+/** Extract the STS config object from the Miaoshou response envelope. */
+function readMiaoshouStsConfig(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const stsConfig = source.stsConfig && typeof source.stsConfig === "object" ? source.stsConfig : null;
+  if (source.result !== "success" || !stsConfig) {
+    if (isMiaoshouLoginFailure(source, 200)) {
+      throw createMiaoshouLoginError(source);
+    }
+    throw createMiaoshouError("妙手 OSS 凭证获取失败：" + String(source.reason || source.message || "未知错误。"), 502, null);
+  }
+  return stsConfig;
+}
+
+/** Generate the object path expected by Miaoshou collect-box import ZIP uploads. */
+function generateMiaoshouOssPath(cookie) {
+  const accountId = getMiaoshouCookieValue(cookie, "accountId");
+  if (!accountId) {
+    throw createMiaoshouError("妙手 Cookie 缺少 accountId。", 400, null);
+  }
+  return "temp_dir/d1/collect_import_zip/" + accountId + "/mserpZip_" + Date.now() + "_" + crypto.randomUUID() + ".zip";
+}
+
+/** Resolve the public OSS upload URL from STS config and object path. */
+function buildMiaoshouOssUrl(stsConfig, ossPath) {
+  return "https://" + String(stsConfig.bucket || "earth-pvt") + "." + String(stsConfig.region || "oss-cn-beijing") + ".aliyuncs.com/" + String(ossPath || "").replace(/^[/\\]+/, "");
+}
+
+/** Build a browser-compatible Alibaba OSS V1 PUT signature for ZIP upload. */
+function buildMiaoshouOssPutHeaders(ossUrl, stsConfig, body) {
+  const parsed = new URL(ossUrl);
+  const bucket = parsed.hostname.split(".")[0];
+  const objectKey = parsed.pathname;
+  const contentType = "application/zip";
+  const ossDate = new Date().toUTCString();
+  const ossUserAgent = "aliyun-sdk-js/6.23.0 AutoBuild";
+  const canonicalizedHeaders = "x-oss-date:" + ossDate + "\n"
+    + "x-oss-security-token:" + String(stsConfig.securityToken || "") + "\n"
+    + "x-oss-user-agent:" + ossUserAgent + "\n";
+  const stringToSign = "PUT\n\n" + contentType + "\n" + ossDate + "\n"
+    + canonicalizedHeaders
+    + "/" + bucket + objectKey;
+  const signature = crypto.createHmac("sha1", String(stsConfig.accessKeySecret || ""))
+    .update(stringToSign)
+    .digest("base64");
+  return {
+    Accept: "*/*",
+    "Content-Type": contentType,
+    "Content-Length": String(body.length),
+    Host: parsed.hostname,
+    Origin: MIAOSHOU_BASE_URL,
+    Referer: MIAOSHOU_BASE_URL + "/",
+    Date: ossDate,
+    "x-oss-date": ossDate,
+    "x-oss-security-token": String(stsConfig.securityToken || ""),
+    "x-oss-user-agent": ossUserAgent,
+    Authorization: "OSS " + String(stsConfig.accessKeyId || "") + ":" + signature
+  };
+}
+
 /** Build all server-side files required by the 妙手 product import package. */
 class MiaoshouExportService {
   /** Store the cache, ViewModel and image-cache dependencies. */
@@ -159,6 +401,69 @@ class MiaoshouExportService {
     this.repository = settings.repository;
     this.viewModels = settings.viewModels;
     this.images = settings.images;
+    this.cacheDirectory = path.resolve(__dirname, "..", settings.cacheDirectory || (this.repository && this.repository.cacheDirectory) || "D:/自动组货/cache");
+    this.cookieFilePath = path.resolve(__dirname, "..", "cookie.json");
+  }
+
+  /** Persist the latest Miaoshou Cookie in server/cookie.json for reuse and inspection. */
+  saveMiaoshouCookie(cookie) {
+    const normalizedCookie = normalizeMiaoshouCookie(cookie);
+    if (!normalizedCookie) {
+      throw createMiaoshouError("请先输入妙手 Cookie。", 400, null);
+    }
+    const status = createMiaoshouCookieStatus(normalizedCookie);
+    if (status.expired) {
+      throw createMiaoshouLoginError({ expires_at: status.expiresAt });
+    }
+    fs.mkdirSync(path.dirname(this.cookieFilePath), { recursive: true });
+    fs.writeFileSync(this.cookieFilePath, JSON.stringify({
+      updated_at: new Date().toISOString(),
+      cookie: normalizedCookie
+    }, null, 2), "utf8");
+    return normalizedCookie;
+  }
+
+  /** Read the saved Miaoshou Cookie from server/cookie.json when it exists. */
+  readSavedMiaoshouCookie() {
+    if (!fs.existsSync(this.cookieFilePath)) {
+      return "";
+    }
+    let payload = null;
+    try {
+      payload = JSON.parse(fs.readFileSync(this.cookieFilePath, "utf8"));
+    } catch (error) {
+      throw createMiaoshouError("server/cookie.json 不是有效 JSON，请重新粘贴 Cookie。", 400, null);
+    }
+    return normalizeMiaoshouCookie(payload && payload.cookie);
+  }
+
+  /** Return frontend-safe metadata for the saved Miaoshou Cookie. */
+  getSavedMiaoshouCookieStatus() {
+    const cookie = this.readSavedMiaoshouCookie();
+    const status = createMiaoshouCookieStatus(cookie);
+    return {
+      hasCookie: status.hasCookie,
+      expired: status.expired,
+      expiresAt: status.expiresAt,
+      path: this.cookieFilePath
+    };
+  }
+
+  /** Prefer a newly pasted Cookie, otherwise reuse the valid saved Cookie. */
+  resolveMiaoshouCookie(cookie) {
+    const normalizedCookie = normalizeMiaoshouCookie(cookie);
+    if (normalizedCookie) {
+      return this.saveMiaoshouCookie(normalizedCookie);
+    }
+    const savedCookie = this.readSavedMiaoshouCookie();
+    if (!savedCookie) {
+      throw createMiaoshouError("server/cookie.json 中没有可用 Cookie，请先粘贴一次妙手 Cookie。", 400, null);
+    }
+    const status = createMiaoshouCookieStatus(savedCookie);
+    if (status.expired) {
+      throw createMiaoshouLoginError({ expires_at: status.expiresAt });
+    }
+    return savedCookie;
   }
 
   /** Build one 妙手-compatible workbook from a Temu ViewModel record. */
@@ -340,6 +645,113 @@ class MiaoshouExportService {
     }
     await archiveState.completion;
     return { fileName: fileName, productCount: records.length, failureCount: failures.length };
+  }
+
+  /** Generate the current Temu ZIP in memory for direct online import. */
+  async createTemuZipBuffer() {
+    const chunks = [];
+    const output = new stream.PassThrough();
+    output.on("data", function collectMiaoshouZipChunk(chunk) {
+      chunks.push(Buffer.from(chunk));
+    });
+    const result = await this.createTemuZip(output, function ignoreMiaoshouZipStart() {});
+    return { buffer: Buffer.concat(chunks), result: result };
+  }
+
+  /** Request fresh OSS upload credentials from Miaoshou. */
+  async getMiaoshouSts(cookie) {
+    const pathName = MIAOSHOU_GET_STS_PATH;
+    const headers = await createMiaoshouSignedHeaders(cookie, pathName, "1787622471824");
+    const response = await fetch(MIAOSHOU_BASE_URL + pathName + "?scene=collectImportTempFile", {
+      headers: headers,
+      signal: AbortSignal.timeout(30000)
+    });
+    const text = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch (error) {
+      if (isMiaoshouLoginFailure(null, response.status)) {
+        throw createMiaoshouLoginError({ status: response.status });
+      }
+      throw createMiaoshouError("妙手 OSS 凭证返回不是 JSON。", 502, { status: response.status });
+    }
+    if (!response.ok && isMiaoshouLoginFailure(payload, response.status)) {
+      throw createMiaoshouLoginError(payload);
+    }
+    if (!response.ok) {
+      throw createMiaoshouError("妙手 OSS 凭证获取失败，HTTP " + response.status + "。", 502, { status: response.status });
+    }
+    return readMiaoshouStsConfig(payload);
+  }
+
+  /** Upload one ZIP buffer to the Miaoshou OSS bucket and return its object path. */
+  async putMiaoshouOss(cookie, zipBuffer) {
+    const stsConfig = await this.getMiaoshouSts(cookie);
+    const ossPath = generateMiaoshouOssPath(cookie);
+    const ossUrl = buildMiaoshouOssUrl(stsConfig, ossPath);
+    const response = await fetch(ossUrl, {
+      method: "PUT",
+      headers: buildMiaoshouOssPutHeaders(ossUrl, stsConfig, zipBuffer),
+      body: zipBuffer,
+      signal: AbortSignal.timeout(120000)
+    });
+    if (!response.ok) {
+      throw createMiaoshouError("妙手 OSS 上传失败，HTTP " + response.status + "。", 502, null);
+    }
+    return ossPath;
+  }
+
+  /** Call Miaoshou's import endpoint after the ZIP has been uploaded. */
+  async processMiaoshouImport(cookie, ossPath, fileName, autoFetch) {
+    const pathName = MIAOSHOU_PROCESS_PATH;
+    const headers = await createMiaoshouSignedHeaders(cookie, pathName, "1787622471824");
+    const body = new URLSearchParams({
+      ossPath: String(ossPath || ""),
+      fileName: String(fileName || "").replace(/\.zip$/i, ""),
+      templateType: "mserpZip",
+      isAutoFetch: autoFetch ? "1" : "0"
+    });
+    const response = await fetch(MIAOSHOU_BASE_URL + pathName, {
+      method: "POST",
+      headers: headers,
+      body: body,
+      signal: AbortSignal.timeout(30000)
+    });
+    const text = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch (error) {
+      if (isMiaoshouLoginFailure(null, response.status)) {
+        throw createMiaoshouLoginError({ status: response.status });
+      }
+      throw createMiaoshouError("妙手导入接口返回不是 JSON。", 502, { status: response.status });
+    }
+    if (!response.ok || payload.result !== "success") {
+      if (isMiaoshouLoginFailure(payload, response.status)) {
+        throw createMiaoshouLoginError(payload);
+      }
+      throw createMiaoshouError("妙手导入失败：" + String(payload.reason || payload.message || "未知错误。"), 502, null);
+    }
+    return payload;
+  }
+
+  /** Save Cookie, upload the current cache ZIP, and create a Miaoshou import task. */
+  async importTemuOnline(options) {
+    const settings = options || {};
+    const cookie = this.resolveMiaoshouCookie(settings.cookie);
+    const zip = await this.createTemuZipBuffer();
+    const ossPath = await this.putMiaoshouOss(cookie, zip.buffer);
+    const importPayload = await this.processMiaoshouImport(cookie, ossPath, zip.result.fileName, settings.autoFetch !== false);
+    return {
+      fileName: zip.result.fileName,
+      productCount: zip.result.productCount,
+      failureCount: zip.result.failureCount,
+      ossPath: ossPath,
+      importResult: importPayload.result || "success",
+      importTaskId: importPayload.commonCollectBoxImportTaskId || importPayload.importTaskId || ""
+    };
   }
 }
 

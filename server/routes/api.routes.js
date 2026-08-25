@@ -47,6 +47,8 @@ function createApiRouter(options) {
   router.post("/restore", validationModule.validate(schemaModule.jsonImportSchema, "body"), products.restoreJson.bind(products));
   router.get("/exports/json", products.exportJson.bind(products));
   router.get("/zip", products.exportMiaoshouZip.bind(products));
+  router.get("/miaoshou/cookie", products.getMiaoshouCookieStatus.bind(products));
+  router.post("/miaoshou/import", validationModule.validate(schemaModule.miaoshouImportSchema, "body"), products.importMiaoshouOnline.bind(products));
   router.post("/products/collect", validationModule.validate(schemaModule.collectionSchema, "body"), products.collect.bind(products));
   router.patch(
     "/products/:platform/:platformId/modules/:module",

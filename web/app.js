@@ -332,7 +332,7 @@ const app = createApp({
         <div class="toolbar">
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'smart' }" type="button" @click="changeWorkspaceMode('smart')">组货模式</button>
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'realtime' }" type="button" @click="changeWorkspaceMode('realtime')">工作台</button>
-          <button class="mode-button glass-action-button" type="button" :disabled="!temuRecords.length || miaoshouExportBusy" @click="exportMiaoshouZip">{{ miaoshouExportBusy ? '妙手导出中…' : '导出妙手 ZIP' }}</button>
+          <button class="mode-button glass-action-button" type="button" :disabled="!temuRecords.length || miaoshouExportBusy" @click="openMiaoshouExportDialog">{{ miaoshouExportBusy ? '妙手处理中…' : '导出妙手 ZIP' }}</button>
           <label class="mode-button restore-button glass-action-button">
             备份恢复
             <input type="file" accept="application/json,.json" @change="handleRestoreFile">
@@ -469,6 +469,24 @@ const app = createApp({
           <section v-if="gallerySkuPickerImages('1688').length" class="gallery-sku-picker-group"><strong>1688 SKU</strong><div class="sku-image-picker-grid"><button v-for="(image, imageIndex) in gallerySkuPickerImages('1688')" :key="'1688-' + imageIndex" type="button" :title="'加入 1688 SKU 图片 ' + (imageIndex + 1)" @click="selectGalleryImageFromSku(image)"><img :src="imageSource(image)" referrerpolicy="no-referrer" :alt="'1688 SKU 图片 ' + (imageIndex + 1)"></button></div></section>
           <div v-if="!gallerySkuPickerImages('temu').length && !gallerySkuPickerImages('1688').length" class="sku-image-picker-empty">当前 Temu 和 1688 商品暂无 SKU 图片。</div>
         </aside>
+        <div v-if="miaoshouExportDialogOpen" class="image-editor-modal" @click.self="closeMiaoshouExportDialog">
+          <section class="image-editor-dialog miaoshou-export-dialog" role="dialog" aria-modal="true" aria-label="妙手导出">
+            <header class="image-editor-header"><div><strong>妙手导出</strong><span>{{ temuRecords.length }} 个 Temu 商品</span></div><button type="button" aria-label="关闭妙手导出" @click="closeMiaoshouExportDialog">×</button></header>
+            <div class="miaoshou-export-options">
+              <button class="miaoshou-export-option" type="button" :disabled="miaoshouExportBusy" @click="exportMiaoshouZip"><strong>下载 ZIP</strong><span>生成本地妙手导入包</span></button>
+              <button class="miaoshou-export-option" :class="{ active: miaoshouExportMode === 'online' }" type="button" :disabled="miaoshouExportBusy" @click="selectMiaoshouOnlineImport"><strong>在线导入</strong><span>保存 Cookie 并上传妙手</span></button>
+            </div>
+            <div v-if="miaoshouExportMode === 'online'" class="miaoshou-cookie-status" :class="{ 'is-ready': miaoshouSavedCookieReady, 'is-loading': miaoshouSavedCookieLoading }">{{ miaoshouSavedCookieStatusText || '正在读取 server/cookie.json' }}</div>
+            <label v-if="miaoshouExportMode === 'online'" class="image-editor-prompt"><span>妙手 Cookie</span><textarea v-model="miaoshouCookieDraft" rows="6" autocomplete="off" placeholder="server/cookie.json 有效时可留空；需要更换时粘贴新 Cookie" aria-label="妙手 Cookie"></textarea></label>
+            <div v-if="miaoshouExportBusy || miaoshouExportProgress > 0" class="miaoshou-export-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="miaoshouExportProgress">
+              <span><i :style="{ width: miaoshouExportProgress + '%' }"></i></span>
+              <small>{{ miaoshouExportProgressText || '准备中' }}</small>
+            </div>
+            <div v-if="miaoshouExportResultText" class="miaoshou-export-result" :class="'is-' + miaoshouExportResultType">{{ miaoshouExportResultText }}</div>
+            <div v-if="miaoshouExportError" class="image-editor-error">{{ miaoshouExportError }}</div>
+            <footer class="image-editor-actions"><button class="image-editor-cancel" type="button" :disabled="miaoshouExportBusy" @click="closeMiaoshouExportDialog">{{ miaoshouExportResultText ? '关闭' : '取消' }}</button><button v-if="miaoshouExportMode === 'online'" class="image-editor-confirm" type="button" :disabled="miaoshouExportBusy || miaoshouSavedCookieLoading || (!miaoshouCookieDraft.trim() && !miaoshouSavedCookieReady)" @click="importMiaoshouOnline">{{ miaoshouExportBusy ? '导入中…' : '开始在线导入' }}</button></footer>
+          </section>
+        </div>
         <div v-if="workflowPromptDialogOpen" class="image-editor-modal">
           <section class="image-editor-dialog workflow-prompt-dialog" role="dialog" aria-modal="true" aria-label="自定义组货提示词">
             <header class="image-editor-header"><div><strong>{{ workflowPromptDialogMode === 'clip' ? '自定义新版 CLIP 组货' : '自定义组货方向' }}</strong><span>{{ workflowPromptDialogMode === 'clip' ? 'Kimi 将按照本次要求生成 CLIP 检索词' : 'Kimi 将按照本次要求推荐 4 个商品' }}</span></div><button type="button" aria-label="关闭组货提示词" @click="closeWorkflowPromptDialog">×</button></header>
@@ -661,7 +679,19 @@ const app = createApp({
       copyFirstSkuAttributeBusyKeys: {},
       topbarCollapsed: false,
       topbarLastScrollY: 0,
-      miaoshouExportBusy: false
+      miaoshouExportDialogOpen: false,
+      miaoshouExportMode: "",
+      miaoshouCookieDraft: "",
+      miaoshouExportError: "",
+      miaoshouExportBusy: false,
+      miaoshouExportProgress: 0,
+      miaoshouExportProgressText: "",
+      miaoshouExportProgressTimer: null,
+      miaoshouExportResultType: "",
+      miaoshouExportResultText: "",
+      miaoshouSavedCookieReady: false,
+      miaoshouSavedCookieLoading: false,
+      miaoshouSavedCookieStatusText: ""
     };
   },
   /** Start cache subscription after the Vue view is mounted. */
@@ -1642,6 +1672,49 @@ const app = createApp({
       }
       const nakedTask = tasks[mainId];
       return this.isWorkflowTaskForMode(nakedTask, sourceMode) ? nakedTask : {};
+    },
+
+    /** Return every refresh-safe temporary workflow state retained for one Temu product. */
+    workflowTemporaryTasksForProduct: function workflowTemporaryTasksForProduct(temuMainId) {
+      const mainId = String(temuMainId || "").trim();
+      const tasks = [];
+      const clipTask = this.workflowTemporaryTaskForMode(mainId, "clip");
+      const legacyTask = this.workflowTemporaryTaskForMode(mainId, "legacy");
+      if (clipTask && clipTask.status) {
+        tasks.push(clipTask);
+      }
+      if (legacyTask && legacyTask.status && legacyTask !== clipTask) {
+        tasks.push(legacyTask);
+      }
+      return tasks;
+    },
+
+    /** Return whether one refresh-safe temporary workflow state is still running. */
+    isWorkflowTemporaryTaskRunning: function isWorkflowTemporaryTaskRunning(task) {
+      const status = String(task && task.status || "");
+      return status === "analyzing" || status === "generating";
+    },
+
+    /** Return whether one Temu product has a refresh-safe running workflow state. */
+    hasRunningWorkflowTemporaryTask: function hasRunningWorkflowTemporaryTask(record) {
+      const tasks = this.workflowTemporaryTasksForProduct(record && record.main_id);
+      for (let index = 0; index < tasks.length; index += 1) {
+        if (this.isWorkflowTemporaryTaskRunning(tasks[index])) {
+          return true;
+        }
+      }
+      return false;
+    },
+
+    /** Return whether one Temu product has a refresh-safe failed workflow state. */
+    hasWorkflowTemporaryTaskError: function hasWorkflowTemporaryTaskError(record) {
+      const tasks = this.workflowTemporaryTasksForProduct(record && record.main_id);
+      for (let index = 0; index < tasks.length; index += 1) {
+        if (String(tasks[index] && tasks[index].status || "") === "error") {
+          return true;
+        }
+      }
+      return false;
     },
 
     /** Start the selected workflow mode after letting the user confirm its prompt. */
@@ -4780,7 +4853,7 @@ const app = createApp({
         return false;
       }
       const mainId = String(record.main_id || "");
-      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId] || this.hasRunningWorkflowTemporaryTask(record)) {
         return true;
       }
       const retainedTasks = this.workflowTasksForProduct(mainId);
@@ -4791,7 +4864,7 @@ const app = createApp({
           break;
         }
       }
-      if (!this.workflowTaskErrorKeys[mainId] && !hasPrompts) {
+      if (!this.workflowTaskErrorKeys[mainId] && !this.hasWorkflowTemporaryTaskError(record) && !hasPrompts) {
         return false;
       }
       return !this.isWorkflowTaskIndicatorAcknowledged(record);
@@ -4840,7 +4913,7 @@ const app = createApp({
         return;
       }
       const mainId = String(record.main_id || "");
-      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId] || this.hasRunningWorkflowTemporaryTask(record)) {
         return;
       }
       const signature = this.workflowTaskIndicatorSignature(record);
@@ -4911,7 +4984,7 @@ const app = createApp({
         return false;
       }
       const mainId = String(record.main_id || "");
-      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId] || this.hasRunningWorkflowTemporaryTask(record)) {
         return false;
       }
       const retainedTasks = this.workflowTasksForProduct(mainId);
@@ -4929,7 +5002,7 @@ const app = createApp({
         return false;
       }
       const mainId = String(record.main_id || "");
-      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId]) {
+      if (this.workflowPromptBusyKeys[mainId] || this.workflowGenerateBusyKeys[mainId] || this.hasRunningWorkflowTemporaryTask(record)) {
         return false;
       }
       const retainedTasks = this.workflowTasksForProduct(mainId);
@@ -4938,7 +5011,7 @@ const app = createApp({
           return true;
         }
       }
-      return Boolean(this.workflowTaskErrorKeys[mainId]);
+      return Boolean(this.workflowTaskErrorKeys[mainId] || this.hasWorkflowTemporaryTaskError(record));
     },
 
     /** Select one Temu product and open its intelligent-packing workspace. */
@@ -6575,19 +6648,164 @@ const app = createApp({
       return result;
     },
 
+    /** Open the 妙手 export choice dialog before starting a download or online import. */
+    openMiaoshouExportDialog: function openMiaoshouExportDialog() {
+      if (!this.temuRecords.length || this.miaoshouExportBusy) {
+        return;
+      }
+      this.miaoshouExportMode = "";
+      this.miaoshouExportError = "";
+      this.clearMiaoshouExportResult();
+      this.clearMiaoshouSavedCookieStatus();
+      this.stopMiaoshouExportProgress(0, "");
+      this.miaoshouExportDialogOpen = true;
+    },
+
+    /** Close the 妙手 export dialog when no import or ZIP generation is running. */
+    closeMiaoshouExportDialog: function closeMiaoshouExportDialog() {
+      if (this.miaoshouExportBusy) {
+        return;
+      }
+      this.miaoshouExportDialogOpen = false;
+      this.miaoshouExportMode = "";
+      this.miaoshouExportError = "";
+      this.clearMiaoshouExportResult();
+      this.clearMiaoshouSavedCookieStatus();
+      this.stopMiaoshouExportProgress(0, "");
+    },
+
+    /** Switch the 妙手 export dialog into online-import mode. */
+    selectMiaoshouOnlineImport: function selectMiaoshouOnlineImport() {
+      if (this.miaoshouExportBusy) {
+        return;
+      }
+      this.miaoshouExportMode = "online";
+      this.miaoshouExportError = "";
+      this.clearMiaoshouExportResult();
+      this.stopMiaoshouExportProgress(0, "");
+      this.loadMiaoshouCookieStatus();
+    },
+
+    /** Reset the frontend-only saved-cookie status shown in the Miaoshou modal. */
+    clearMiaoshouSavedCookieStatus: function clearMiaoshouSavedCookieStatus() {
+      this.miaoshouSavedCookieReady = false;
+      this.miaoshouSavedCookieLoading = false;
+      this.miaoshouSavedCookieStatusText = "";
+    },
+
+    /** Format the saved Miaoshou Cookie expiry for the small modal status line. */
+    formatMiaoshouCookieExpiresAt: function formatMiaoshouCookieExpiresAt(value) {
+      if (!value) {
+        return "有效期未知";
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return "有效期未知";
+      }
+      return date.toLocaleString();
+    },
+
+    /** Read server/cookie.json status so saved valid cookies can be reused. */
+    loadMiaoshouCookieStatus: async function loadMiaoshouCookieStatus() {
+      this.miaoshouSavedCookieReady = false;
+      this.miaoshouSavedCookieLoading = true;
+      this.miaoshouSavedCookieStatusText = "正在读取 server/cookie.json";
+      try {
+        const response = await fetch(apiUrl("/miaoshou/cookie"));
+        const payload = await response.json().catch(function handleMiaoshouCookieStatusJsonError() {
+          return null;
+        });
+        if (!response.ok || !payload || payload.ok === false) {
+          throw new Error(getApiErrorMessage(payload, "读取 server/cookie.json 失败。"));
+        }
+        const data = readApiData(payload) || {};
+        if (!data.hasCookie) {
+          this.miaoshouSavedCookieStatusText = "server/cookie.json 还没有 Cookie，请先粘贴一次。";
+          return;
+        }
+        if (data.expired) {
+          this.miaoshouSavedCookieStatusText = "server/cookie.json 里的 Cookie 已过期，请重新粘贴。";
+          return;
+        }
+        this.miaoshouSavedCookieReady = true;
+        this.miaoshouSavedCookieStatusText = "已读取 server/cookie.json，可直接导入；" + this.formatMiaoshouCookieExpiresAt(data.expiresAt);
+      } catch (error) {
+        this.miaoshouSavedCookieStatusText = String(error && error.message || "读取 server/cookie.json 失败。");
+      } finally {
+        this.miaoshouSavedCookieLoading = false;
+      }
+    },
+
+    /** Show one persistent 妙手 export result message inside the modal. */
+    setMiaoshouExportResult: function setMiaoshouExportResult(type, text) {
+      this.miaoshouExportResultType = String(type || "normal");
+      this.miaoshouExportResultText = String(text || "");
+    },
+
+    /** Clear the modal's persistent 妙手 export result message. */
+    clearMiaoshouExportResult: function clearMiaoshouExportResult() {
+      this.miaoshouExportResultType = "";
+      this.miaoshouExportResultText = "";
+    },
+
+    /** Update the visible 妙手 export progress bar and its short stage label. */
+    setMiaoshouExportProgress: function setMiaoshouExportProgress(value, text) {
+      const nextValue = Math.max(0, Math.min(100, Number(value) || 0));
+      this.miaoshouExportProgress = Math.round(nextValue);
+      this.miaoshouExportProgressText = String(text || "");
+    },
+
+    /** Start a conservative progress ticker while the backend performs a long import request. */
+    startMiaoshouExportProgress: function startMiaoshouExportProgress(text) {
+      this.stopMiaoshouExportProgress(Math.max(this.miaoshouExportProgress, 52), text);
+      const view = this;
+      /** Move the progress bar forward without claiming completion before the API returns. */
+      function advanceMiaoshouExportProgress() {
+        if (!view.miaoshouExportBusy) {
+          window.clearInterval(view.miaoshouExportProgressTimer);
+          view.miaoshouExportProgressTimer = null;
+          return;
+        }
+        if (view.miaoshouExportProgress < 92) {
+          view.miaoshouExportProgress += view.miaoshouExportProgress < 76 ? 4 : 1;
+        }
+      }
+      this.miaoshouExportProgressTimer = window.setInterval(advanceMiaoshouExportProgress, 650);
+    },
+
+    /** Stop any running 妙手 export ticker and set the final displayed stage. */
+    stopMiaoshouExportProgress: function stopMiaoshouExportProgress(value, text) {
+      if (this.miaoshouExportProgressTimer) {
+        window.clearInterval(this.miaoshouExportProgressTimer);
+        this.miaoshouExportProgressTimer = null;
+      }
+      this.setMiaoshouExportProgress(value, text);
+    },
+
+    /** Wait until all visible Temu save requests have finished before exporting. */
+    waitForMiaoshouExportReady: async function waitForMiaoshouExportReady() {
+      for (let index = 0; index < this.temuRecords.length; index += 1) {
+        await this.waitForProductSaveIdle(this.temuRecords[index]);
+      }
+    },
+
     /** Request a streamed server download for the Temu-only 妙手 ZIP. */
     exportMiaoshouZip: async function exportMiaoshouZip() {
       if (this.miaoshouExportBusy || !this.temuRecords.length) {
         return;
       }
       this.miaoshouExportBusy = true;
+      this.miaoshouExportError = "";
+      this.clearMiaoshouExportResult();
       try {
+        this.setMiaoshouExportProgress(12, "同步当前页面缓存");
         this.setStatus("正在同步当前页面缓存，随后生成妙手 ZIP。", "normal");
-        for (let index = 0; index < this.temuRecords.length; index += 1) {
-          await this.waitForProductSaveIdle(this.temuRecords[index]);
-        }
+        await this.waitForMiaoshouExportReady();
+        this.setMiaoshouExportProgress(55, "生成本地 ZIP");
         this.setStatus("服务器正在以当前缓存生成妙手 ZIP，完成后会自动下载。", "normal");
         window.location.href = apiUrl("/zip");
+        this.stopMiaoshouExportProgress(100, "浏览器开始下载");
+        this.setMiaoshouExportResult("success", "妙手 ZIP 已开始下载。如果浏览器没有弹出下载，请检查下载拦截或稍后重试。");
         const view = this;
         /** Release the ZIP export busy state after the browser starts the download. */
         function releaseMiaoshouExportBusy() {
@@ -6596,7 +6814,58 @@ const app = createApp({
         window.setTimeout(releaseMiaoshouExportBusy, 1500);
       } catch (error) {
         this.miaoshouExportBusy = false;
-        this.setStatus("妙手导出前同步缓存失败：" + String(error && error.message || "未知错误。"), "error");
+        this.stopMiaoshouExportProgress(0, "");
+        const message = "妙手 ZIP 导出失败：" + String(error && error.message || "未知错误。");
+        this.setMiaoshouExportResult("error", message);
+        this.setStatus(message, "error");
+      }
+    },
+
+    /** Upload the current Temu-only 妙手 ZIP directly through the backend import flow. */
+    importMiaoshouOnline: async function importMiaoshouOnline() {
+      if (this.miaoshouExportBusy || !this.temuRecords.length) {
+        return;
+      }
+      const cookie = String(this.miaoshouCookieDraft || "").trim();
+      if (!cookie && !this.miaoshouSavedCookieReady) {
+        this.miaoshouExportError = "";
+        this.setMiaoshouExportResult("error", "server/cookie.json 没有可用 Cookie，请先粘贴一次妙手 Cookie。");
+        return;
+      }
+      this.miaoshouExportBusy = true;
+      this.miaoshouExportError = "";
+      this.clearMiaoshouExportResult();
+      try {
+        this.setMiaoshouExportProgress(10, "同步当前页面缓存");
+        this.setStatus("正在同步当前页面缓存，随后在线导入妙手。", "normal");
+        await this.waitForMiaoshouExportReady();
+        this.startMiaoshouExportProgress("生成 ZIP、上传 OSS 并提交妙手");
+        const response = await fetch(apiUrl("/miaoshou/import"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cookie: cookie || undefined, auto_fetch: true })
+        });
+        const payload = await response.json().catch(function handleMiaoshouImportJsonError() {
+          return null;
+        });
+        if (!response.ok || !payload || payload.ok === false) {
+          const fallback = response.status === 401 ? "妙手 Cookie 已过期或无效，请重新复制 Cookie 后再试。" : "妙手在线导入失败。";
+          throw new Error(getApiErrorMessage(payload, fallback));
+        }
+        const data = readApiData(payload) || {};
+        this.stopMiaoshouExportProgress(100, "导入任务已提交");
+        this.miaoshouCookieDraft = "";
+        this.miaoshouSavedCookieReady = true;
+        this.setMiaoshouExportResult("success", "妙手在线导入已提交：" + String(data.productCount || 0) + " 个商品，isAutoFetch=1。");
+        this.setStatus(this.miaoshouExportResultText, "success");
+      } catch (error) {
+        const message = String(error && error.message || "未知错误。");
+        this.stopMiaoshouExportProgress(0, "");
+        this.miaoshouExportError = "";
+        this.setMiaoshouExportResult("error", "妙手在线导入失败：" + message);
+        this.setStatus("妙手在线导入失败：" + message, "error");
+      } finally {
+        this.miaoshouExportBusy = false;
       }
     },
 

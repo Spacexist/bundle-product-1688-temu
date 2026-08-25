@@ -3,6 +3,8 @@ web/cache.json
 node_modules/
 /config.json
 server/config.json
+server/cookie.json
+server/logs/
 bundle/clip/config.json
 bundle/clip/data/
 bundle/clip/models/

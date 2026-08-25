@@ -27,6 +27,11 @@ const configUpdateSchema = z.object({
 
 const jsonImportSchema = z.object({ json_text: z.string().min(2) });
 
+const miaoshouImportSchema = z.object({
+  cookie: z.string().trim().max(50000).optional(),
+  auto_fetch: z.boolean().optional()
+});
+
 const imageCacheSchema = z.object({
   source: z.string().min(1),
   platform: z.enum(["temu", "1688", "transfer"]),
@@ -192,6 +197,7 @@ module.exports = {
   undoSchema: undoSchema,
   configUpdateSchema: configUpdateSchema,
   jsonImportSchema: jsonImportSchema,
+  miaoshouImportSchema: miaoshouImportSchema,
   imageCacheSchema: imageCacheSchema,
   imageSearchSchema: imageSearchSchema,
   dollarTransferSchema: dollarTransferSchema,
