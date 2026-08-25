@@ -13,6 +13,7 @@ bundle/clip/models/
 *.rar
 bundle/python/
 bundle/python-cpu/
+bundle/python-runtime/
 bundle/_delete_pending_python_gpu/
 __pycache__/
 test_*.py

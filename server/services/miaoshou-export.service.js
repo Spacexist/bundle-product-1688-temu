@@ -201,13 +201,29 @@ function decodeMiaoshouJwtPayload(token) {
   }
 }
 
+/** Return all positive second-based expiry claims from a Miaoshou JWT payload. */
+function readMiaoshouExpiryClaimSeconds(payload) {
+  const source = payload && typeof payload === "object" ? payload : {};
+  const names = ["exp", "expireTime"];
+  const values = [];
+  for (let index = 0; index < names.length; index += 1) {
+    const seconds = Number(source[names[index]] || 0);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      values.push(seconds);
+    }
+  }
+  if (!values.length) {
+    return 0;
+  }
+  return Math.min.apply(null, values);
+}
+
 /** Read the best known expiry timestamp from the saved Miaoshou Cookie. */
 function readMiaoshouCookieExpiresAt(cookie) {
   const token = getMiaoshouCookieValue(cookie, "autoLoginToken");
   const payload = decodeMiaoshouJwtPayload(token);
-  const sourceValue = payload && (payload.expireTime || payload.exp) ? payload.expireTime || payload.exp : "";
-  const seconds = Number(sourceValue || 0);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
+  const seconds = readMiaoshouExpiryClaimSeconds(payload);
+  if (!seconds) {
     return "";
   }
   return new Date(seconds * 1000).toISOString();

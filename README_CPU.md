@@ -62,7 +62,7 @@
 ## 运行测试
 
 ```powershell
-bundle\python-cpu\Scripts\python.exe env_doctor.py --project-root . --repair
+bundle\python-runtime\python.exe env_doctor.py --project-root . --repair
 ```
 
 测试包括:
@@ -159,4 +159,4 @@ A: CLIP 推理会比 GPU 慢，但 Kimi API 调用速度不受影响。建议使
 1. Python 版本是否为 3.8+
 2. PyTorch 是否为 CPU 版本
 3. config.json 中的 Kimi API 密钥是否正确
-4. 运行 `bundle\python-cpu\Scripts\python.exe env_doctor.py --project-root . --repair` 查看详细错误
+4. 运行 `bundle\python-runtime\python.exe env_doctor.py --project-root . --repair` 查看详细错误

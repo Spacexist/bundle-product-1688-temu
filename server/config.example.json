@@ -13,7 +13,7 @@
   "workflow": {
     "default_mode": "clip",
     "clip_project_directory": "bundle/clip",
-    "clip_python_command": "bundle/python-cpu/Scripts/python.exe",
+    "clip_python_command": "bundle/python-runtime/python.exe",
     "clip_candidate_count": 10,
     "legacy_candidate_count": 4,
     "clip_translation": {

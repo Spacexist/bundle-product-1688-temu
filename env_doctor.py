@@ -334,6 +334,12 @@ def run_python_probe_inline(clip_root: Path) -> dict[str, Any]:
     return result
 
 
+def warn_clip_worker_may_still_need_python_spawn(python_command: Path) -> None:
+    """Warn when doctor fallback passes but the backend may still need Python spawn access."""
+    print_line("WARN", "当前环境检查已降级通过，但后端 CLIP worker 仍需要启动 Python: " + str(python_command))
+    print_line("WARN", "如果页面里 CLIP 仍失败，请重新解压 ZIP，或在 python.exe 文件属性中解除阻止。")
+
+
 def repair_portable_workflow_paths(project_root: Path, config: dict[str, Any], defaults: dict[str, Any]) -> bool:
     """Reset CLIP bundle paths that would break after copying the project to another computer."""
     workflow = config.get("workflow") if isinstance(config.get("workflow"), dict) else {}
@@ -679,11 +685,13 @@ print("__ENV_DOCTOR_JSON__" + json.dumps(result, ensure_ascii=False))
         if not is_windows_access_denied(exc):
             raise
         print_line("WARN", "CLIP Python 子进程启动被 Windows 拒绝，改用当前 Python 进程继续检查。")
+        warn_clip_worker_may_still_need_python_spawn(python_command)
         return run_python_probe_inline(clip_root)
     except OSError as exc:
         if not is_windows_access_denied(exc):
             raise
         print_line("WARN", "CLIP Python 子进程启动被 Windows 拒绝，改用当前 Python 进程继续检查。")
+        warn_clip_worker_may_still_need_python_spawn(python_command)
         return run_python_probe_inline(clip_root)
     marker = "__ENV_DOCTOR_JSON__"
     for line in completed.stdout.splitlines():

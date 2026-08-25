@@ -73,8 +73,11 @@ function resolveDiagnosticsFlow(direction) {
   if (normalizedDirection === "BROADCAST") {
     return { key: "backend_broadcast", label: "后端 → 前端广播" };
   }
-  if (normalizedDirection === "OUTBOUND" || normalizedDirection === "UPSTREAM") {
-    return { key: "backend_proxy", label: "后端 → 上游中转" };
+  if (normalizedDirection === "OUTBOUND") {
+    return { key: "backend_outbound", label: "后端 → 上游/Worker" };
+  }
+  if (normalizedDirection === "UPSTREAM") {
+    return { key: "upstream_response", label: "上游/Worker → 后端" };
   }
   if (normalizedDirection === "SEND" || normalizedDirection === "DONE") {
     return { key: "backend_response", label: "后端 → 前端响应" };

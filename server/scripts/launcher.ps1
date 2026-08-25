@@ -6,7 +6,7 @@ $Script:ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..
 $Script:NodeExe = Join-Path $Script:ProjectRoot "runtime\node\node.exe"
 $Script:NpmCmd = Join-Path $Script:ProjectRoot "runtime\node\npm.cmd"
 $Script:ClipRoot = Join-Path $Script:ProjectRoot "bundle\clip"
-$Script:BundledCpuPythonExe = Join-Path $Script:ProjectRoot "bundle\python-cpu\Scripts\python.exe"
+$Script:BundledCpuPythonExe = Join-Path $Script:ProjectRoot "bundle\python-runtime\python.exe"
 $Script:ApiProcess = $null
 $Script:WebProcess = $null
 

@@ -8,7 +8,8 @@ cd /d "%PROJECT_ROOT%"
 
 set "NODE_EXE=%PROJECT_ROOT%runtime\node\node.exe"
 set "NPM_CMD=%PROJECT_ROOT%runtime\node\npm.cmd"
-set "PYTHON_EXE=%PROJECT_ROOT%bundle\python-cpu\Scripts\python.exe"
+set "PYTHON_EXE=%PROJECT_ROOT%bundle\python-runtime\python.exe"
+set "PYTHONPATH=%PROJECT_ROOT%bundle\python-cpu\Lib\site-packages;%PYTHONPATH%"
 set "DOCTOR_EXE=%PROJECT_ROOT%env-doctor.exe"
 set "DOCTOR_PY=%PROJECT_ROOT%env_doctor.py"
 
@@ -24,11 +25,16 @@ echo NPM:  %NPM_CMD%
 echo.
 
 call :progress "#####-----" "50%%" "Checking and repairing environment..."
+if exist "%PYTHON_EXE%" if exist "%DOCTOR_PY%" (
+  "%PYTHON_EXE%" "%DOCTOR_PY%" --project-root "%PROJECT_ROOT_ARG%" --repair --install --kill-ports 3000,5173,9990
+  goto doctor_done
+)
 if exist "%DOCTOR_EXE%" (
   "%DOCTOR_EXE%" --project-root "%PROJECT_ROOT_ARG%" --repair --install --kill-ports 3000,5173,9990
 ) else (
   "%PYTHON_EXE%" "%DOCTOR_PY%" --project-root "%PROJECT_ROOT_ARG%" --repair --install --kill-ports 3000,5173,9990
 )
+:doctor_done
 if errorlevel 1 goto failed
 
 call :progress "########--" "80%%" "Starting backend and workbench in background..."

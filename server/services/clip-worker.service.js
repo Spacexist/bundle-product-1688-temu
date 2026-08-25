@@ -46,24 +46,92 @@ class ClipWorkerService {
   resolveClipProjectDirectory(config) {
     const workflow = config && config.workflow && typeof config.workflow === "object" ? config.workflow : {};
     const configured = String(workflow.clip_project_directory || "").trim();
+    const bundledClipDirectory = path.resolve(this.appRoot, "bundle", "clip");
     if (configured) {
-      return path.resolve(this.appRoot, configured);
+      const configuredDirectory = path.isAbsolute(configured) ? configured : path.resolve(this.appRoot, configured);
+      if (fs.existsSync(configuredDirectory)) {
+        return configuredDirectory;
+      }
     }
-    return path.resolve(this.appRoot, "bundle", "clip");
+    return bundledClipDirectory;
+  }
+
+  /** Return whether a configured Python command is a filesystem path instead of a shell command. */
+  isPythonPathCommand(command) {
+    const value = String(command || "").trim();
+    return path.isAbsolute(value) || value.indexOf("/") >= 0 || value.indexOf("\\") >= 0 || /\.exe$/i.test(value);
+  }
+
+  /** Return whether a Python command points at the old venv launcher that is not safe as the primary runtime. */
+  isLegacyVenvPythonCommand(command) {
+    const value = String(command || "").replace(/\\/g, "/").toLowerCase();
+    return value.endsWith("bundle/python-cpu/scripts/python.exe") || value.indexOf("/bundle/python-cpu/scripts/python.exe") >= 0;
   }
 
   /** Resolve the bundled Python executable, with system Python kept as a fallback. */
   resolvePythonCommand(config) {
     const workflow = config && config.workflow && typeof config.workflow === "object" ? config.workflow : {};
     const configured = String(workflow.clip_python_command || "").trim();
-    if (configured) {
-      return configured;
-    }
+    const bundledRuntimePython = path.join(this.appRoot, "bundle", "python-runtime", "python.exe");
     const bundledCpuPython = path.join(this.appRoot, "bundle", "python-cpu", "Scripts", "python.exe");
+    if (configured) {
+      const configuredPython = path.isAbsolute(configured) ? configured : path.resolve(this.appRoot, configured);
+      if (this.isPythonPathCommand(configured) && !this.isLegacyVenvPythonCommand(configured) && fs.existsSync(configuredPython)) {
+        return configuredPython;
+      }
+      if (!this.isPythonPathCommand(configured) && !this.isLegacyVenvPythonCommand(configured)) {
+        return configured;
+      }
+    }
+    if (fs.existsSync(bundledRuntimePython)) {
+      return bundledRuntimePython;
+    }
     if (fs.existsSync(bundledCpuPython)) {
       return bundledCpuPython;
     }
     return "py";
+  }
+
+  /** Add the venv site-packages directory so the portable Python runtime can import bundled wheels. */
+  applyBundledPythonPath(environment) {
+    const sitePackages = path.join(this.appRoot, "bundle", "python-cpu", "Lib", "site-packages");
+    if (!fs.existsSync(sitePackages)) {
+      return;
+    }
+    const existing = String(environment.PYTHONPATH || "").trim();
+    environment.PYTHONPATH = existing ? sitePackages + path.delimiter + existing : sitePackages;
+  }
+
+  /** Return whether one process error means Windows denied executing Python. */
+  isWindowsAccessDeniedError(error) {
+    const source = error || {};
+    const message = String(source.message || "");
+    return source.code === "EACCES"
+      || source.code === "EPERM"
+      || source.errno === 13
+      || source.winerror === 5
+      || /WinError 5|拒绝访问|access is denied/i.test(message);
+  }
+
+  /** Convert a raw Python spawn failure into an operator-friendly CLIP error. */
+  createPythonStartError(pythonCommand, error) {
+    if (!this.isWindowsAccessDeniedError(error)) {
+      return error;
+    }
+    return new Error("CLIP Python 启动被 Windows 拒绝访问：" + String(pythonCommand || "")
+      + "。请在解压后的项目目录运行 启动.bat 触发环境修复；如果仍失败，请用 7-Zip/WinRAR 重新解压，或在文件属性里解除阻止。");
+  }
+
+  /** Check a filesystem Python command before spawning so access errors stay readable. */
+  assertPythonCommandAccessible(pythonCommand) {
+    if (!this.isPythonPathCommand(pythonCommand)) {
+      return;
+    }
+    try {
+      fs.accessSync(pythonCommand, fs.constants.F_OK | fs.constants.X_OK);
+    } catch (error) {
+      throw this.createPythonStartError(pythonCommand, error);
+    }
   }
 
   /** Return whether either slim or original CLIP metadata exists for index position lookup. */
@@ -108,6 +176,7 @@ class ClipWorkerService {
     environment.CLIP_WORKER_MODE = "stdio";
     environment.PYTHONUTF8 = "1";
     environment.PYTHONIOENCODING = "utf-8:backslashreplace";
+    this.applyBundledPythonPath(environment);
     return environment;
   }
 
@@ -193,16 +262,22 @@ class ClipWorkerService {
       const pythonCommand = service.resolvePythonCommand(config);
       try {
         service.validateClipBundle(clipDirectory, workerScript);
+        service.assertPythonCommandAccessible(pythonCommand);
       } catch (error) {
         reject(error);
         return;
       }
-      service.child = childProcess.spawn(pythonCommand, [workerScript], {
-        cwd: clipDirectory,
-        env: service.buildEnvironment(config),
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true
-      });
+      try {
+        service.child = childProcess.spawn(pythonCommand, [workerScript], {
+          cwd: clipDirectory,
+          env: service.buildEnvironment(config),
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true
+        });
+      } catch (error) {
+        reject(service.createPythonStartError(pythonCommand, error));
+        return;
+      }
       service.reader = readline.createInterface({ input: service.child.stdout });
       service.reader.on("line", service.handleLine.bind(service));
       service.child.stderr.on("data", function handleClipWorkerStderr(chunk) {
@@ -211,8 +286,12 @@ class ClipWorkerService {
         }
       });
       service.child.on("error", function handleClipWorkerError(error) {
-        service.rejectPending(error);
-        reject(error);
+        const startError = service.createPythonStartError(pythonCommand, error);
+        service.rejectPending(startError);
+        service.child = null;
+        service.reader = null;
+        service.startPromise = null;
+        reject(startError);
       });
       service.child.on("exit", function handleClipWorkerExit(code) {
         const error = new Error("CLIP worker exited with code " + Number(code || 0));
@@ -221,7 +300,9 @@ class ClipWorkerService {
         service.reader = null;
         service.startPromise = null;
       });
-      resolve();
+      service.child.once("spawn", function handleClipWorkerSpawned() {
+        resolve();
+      });
     });
     await this.startPromise;
     this.startPromise = null;

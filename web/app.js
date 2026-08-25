@@ -6789,6 +6789,52 @@ const app = createApp({
       }
     },
 
+    /** Read a downloadable filename from one Content-Disposition response header. */
+    readMiaoshouDownloadFileName: function readMiaoshouDownloadFileName(disposition) {
+      const header = String(disposition || "");
+      const encodedMatch = header.match(/filename\*=UTF-8''([^;]+)/i);
+      if (encodedMatch) {
+        try {
+          return decodeURIComponent(encodedMatch[1].replace(/^"+|"+$/g, ""));
+        } catch (error) {
+          return encodedMatch[1].replace(/^"+|"+$/g, "");
+        }
+      }
+      const plainMatch = header.match(/filename="?([^";]+)"?/i);
+      if (plainMatch) {
+        return plainMatch[1];
+      }
+      return "Temu-妙手导入包-" + Date.now() + ".zip";
+    },
+
+    /** Trigger a browser download for one server-produced Miaoshou ZIP blob. */
+    downloadMiaoshouZipBlob: function downloadMiaoshouZipBlob(blob, fileName) {
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.setTimeout(function revokeMiaoshouZipObjectUrl() {
+        URL.revokeObjectURL(objectUrl);
+      }, 1000);
+    },
+
+    /** Read the server ZIP error body without assuming a specific response format. */
+    readMiaoshouZipErrorMessage: async function readMiaoshouZipErrorMessage(response) {
+      const payload = await response.clone().json().catch(function ignoreMiaoshouZipJsonError() {
+        return null;
+      });
+      if (payload) {
+        return getApiErrorMessage(payload, "妙手 ZIP 导出失败。");
+      }
+      const text = await response.text().catch(function ignoreMiaoshouZipTextError() {
+        return "";
+      });
+      return text ? text.slice(0, 300) : "妙手 ZIP 导出失败，HTTP " + response.status + "。";
+    },
+
     /** Request a streamed server download for the Temu-only 妙手 ZIP. */
     exportMiaoshouZip: async function exportMiaoshouZip() {
       if (this.miaoshouExportBusy || !this.temuRecords.length) {
@@ -6802,22 +6848,25 @@ const app = createApp({
         this.setStatus("正在同步当前页面缓存，随后生成妙手 ZIP。", "normal");
         await this.waitForMiaoshouExportReady();
         this.setMiaoshouExportProgress(55, "生成本地 ZIP");
-        this.setStatus("服务器正在以当前缓存生成妙手 ZIP，完成后会自动下载。", "normal");
-        window.location.href = apiUrl("/zip");
-        this.stopMiaoshouExportProgress(100, "浏览器开始下载");
-        this.setMiaoshouExportResult("success", "妙手 ZIP 已开始下载。如果浏览器没有弹出下载，请检查下载拦截或稍后重试。");
-        const view = this;
-        /** Release the ZIP export busy state after the browser starts the download. */
-        function releaseMiaoshouExportBusy() {
-          view.miaoshouExportBusy = false;
+        this.setStatus("服务器正在以当前缓存生成妙手 ZIP。", "normal");
+        const response = await fetch(apiUrl("/zip"));
+        if (!response.ok) {
+          throw new Error(await this.readMiaoshouZipErrorMessage(response));
         }
-        window.setTimeout(releaseMiaoshouExportBusy, 1500);
+        this.setMiaoshouExportProgress(82, "接收 ZIP 文件");
+        const blob = await response.blob();
+        this.setMiaoshouExportProgress(96, "写入浏览器下载");
+        const fileName = this.readMiaoshouDownloadFileName(response.headers.get("Content-Disposition"));
+        this.downloadMiaoshouZipBlob(blob, fileName);
+        this.stopMiaoshouExportProgress(100, "ZIP 已生成并下载");
+        this.setMiaoshouExportResult("success", "妙手 ZIP 已生成并开始下载：" + fileName);
       } catch (error) {
-        this.miaoshouExportBusy = false;
         this.stopMiaoshouExportProgress(0, "");
         const message = "妙手 ZIP 导出失败：" + String(error && error.message || "未知错误。");
         this.setMiaoshouExportResult("error", message);
         this.setStatus(message, "error");
+      } finally {
+        this.miaoshouExportBusy = false;
       }
     },
 

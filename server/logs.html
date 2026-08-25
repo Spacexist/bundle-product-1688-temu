@@ -3,105 +3,111 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Server 实时收发日志</title>
+  <title>Server 服务日志</title>
   <style>
-    :root { color-scheme: dark; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; }
+    :root { color-scheme: dark; --bg: #07101f; --panel: #0b1628; --line: #26354e; --muted: #94a3b8; --dim: #64748b; --text: #dbeafe; --strong: #f8fafc; --blue: #38bdf8; --green: #22c55e; --orange: #f59e0b; --red: #ef4444; font-family: Inter, "Microsoft YaHei", system-ui, sans-serif; }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #07101f; color: #dbeafe; }
+    body { margin: 0; background: radial-gradient(circle at top left, rgba(56, 189, 248, .08), transparent 34%), var(--bg); color: var(--text); }
     header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid #1e293b; background: rgba(7, 16, 31, .94); backdrop-filter: blur(12px); }
-    h1 { margin: 0; font-size: 17px; }
-    .status { display: inline-flex; align-items: center; gap: 7px; color: #94a3b8; font-size: 12px; }
-    .status::before { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; content: ""; }
-    .status.is-online::before { background: #22c55e; box-shadow: 0 0 12px rgba(34, 197, 94, .65); }
-    .actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-    button, select, a { min-height: 34px; padding: 7px 11px; border: 1px solid #334155; border-radius: 8px; background: #111c2f; color: #dbeafe; font: inherit; font-size: 12px; text-decoration: none; }
+    h1 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+    button, select, a { min-height: 34px; padding: 7px 11px; border: 1px solid #334155; border-radius: 8px; background: #111c2f; color: var(--text); font: inherit; font-size: 12px; text-decoration: none; }
     button { cursor: pointer; }
-    button:hover, select:hover, a:hover { border-color: #38bdf8; }
-    main { width: min(1500px, calc(100% - 28px)); margin: 16px auto 40px; }
-    .summary { display: flex; gap: 10px; margin-bottom: 12px; color: #94a3b8; font-size: 12px; }
-    .queue-panel { margin-bottom: 14px; padding: 14px; border: 1px solid #26354e; border-radius: 12px; background: linear-gradient(135deg, #0d1b31, #0a1424); box-shadow: 0 10px 34px rgba(0, 0, 0, .16); }
+    button:hover, select:hover, a:hover { border-color: var(--blue); }
+    main { width: min(1580px, calc(100% - 28px)); margin: 16px auto 40px; }
+    .status { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+    .status::before { width: 8px; height: 8px; border-radius: 50%; background: var(--red); content: ""; }
+    .status.is-online::before { background: var(--green); box-shadow: 0 0 12px rgba(34, 197, 94, .65); }
+    .actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+    .summary { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+    .summary span { padding: 5px 8px; border: 1px solid rgba(148, 163, 184, .16); border-radius: 999px; background: rgba(15, 23, 42, .48); }
+    .queue-panel { margin-bottom: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(135deg, #0d1b31, #0a1424); box-shadow: 0 10px 34px rgba(0, 0, 0, .16); }
     .queue-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-    .queue-heading h2 { margin: 0; color: #f8fafc; font-size: 14px; }
-    .queue-heading p { margin: 4px 0 0; color: #64748b; font-size: 11px; }
+    .queue-heading h2 { margin: 0; color: var(--strong); font-size: 14px; }
+    .queue-heading p { margin: 4px 0 0; color: var(--dim); font-size: 11px; }
     .queue-heading-meta { display: flex; align-items: center; gap: 8px; }
     .queue-limit { padding: 5px 8px; border: 1px solid #334155; border-radius: 999px; color: #bfdbfe; font: 11px Consolas, monospace; }
     .queue-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
     .queue-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 8px 10px; border: 1px solid #1e293b; border-radius: 8px; background: rgba(15, 23, 42, .72); }
-    .queue-stat span { color: #94a3b8; font-size: 11px; }
-    .queue-stat strong { color: #f8fafc; font: 800 16px Consolas, monospace; }
+    .queue-stat span { color: var(--muted); font-size: 11px; }
+    .queue-stat strong { color: var(--strong); font: 800 16px Consolas, monospace; }
     .queue-lanes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .queue-lane { min-width: 0; padding: 10px; border: 1px solid #1e293b; border-radius: 9px; background: rgba(5, 11, 22, .44); }
     .queue-lane[data-state="running"] { border-color: rgba(34, 197, 94, .35); }
     .queue-lane[data-state="waiting"] { border-color: rgba(245, 158, 11, .35); }
     .queue-lane-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #cbd5e1; font-size: 11px; font-weight: 800; }
-    .queue-lane-heading span { color: #64748b; font: 10px Consolas, monospace; }
+    .queue-lane-heading span { color: var(--dim); font: 10px Consolas, monospace; }
     .queue-task-list { display: grid; gap: 6px; }
-    .queue-task { padding: 8px 9px; border-left: 3px solid #64748b; border-radius: 7px; background: #101c30; }
-    .queue-task[data-state="running"] { border-left-color: #22c55e; }
-    .queue-task[data-state="waiting"] { border-left-color: #f59e0b; }
+    .queue-task { padding: 8px 9px; border-left: 3px solid var(--dim); border-radius: 7px; background: #101c30; }
+    .queue-task[data-state="running"] { border-left-color: var(--green); }
+    .queue-task[data-state="waiting"] { border-left-color: var(--orange); }
     .queue-task-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .queue-task-type { color: #f8fafc; font-size: 11px; font-weight: 800; }
-    .queue-task-number { color: #64748b; font: 10px Consolas, monospace; }
-    .queue-task-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: #94a3b8; font: 10px/1.4 Consolas, monospace; }
+    .queue-task-type { color: var(--strong); font-size: 11px; font-weight: 800; }
+    .queue-task-number { color: var(--dim); font: 10px Consolas, monospace; }
+    .queue-task-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; color: var(--muted); font: 10px/1.4 Consolas, monospace; }
     .queue-task-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .queue-task-empty { padding: 12px 6px; color: #475569; font-size: 11px; text-align: center; }
-    .log-list { display: grid; gap: 12px; }
-    .network-card { overflow: hidden; border: 1px solid #26354e; border-left: 4px solid #64748b; border-radius: 12px; background: #0b1628; box-shadow: 0 8px 30px rgba(0, 0, 0, .12); }
-    .network-card[data-status="success"] { border-left-color: #22c55e; }
-    .network-card[data-status="error"] { border-left-color: #ef4444; }
-    .network-card[data-status="pending"] { border-left-color: #f59e0b; }
-    .network-head { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(170px, auto) 110px 160px; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #1e293b; background: #101c30; }
-    .request-summary { display: flex; min-width: 0; align-items: center; gap: 14px; }
-    .request-name { color: #f8fafc; font-size: 13px; font-weight: 800; }
-    .flow-badges { display: flex; flex-wrap: wrap; gap: 5px; }
-    .flow-badge { padding: 4px 7px; border: 1px solid #334155; border-radius: 999px; color: #cbd5e1; font-size: 10px; white-space: nowrap; }
-    .flow-badge[data-flow="frontend_request"] { border-color: #2563eb; color: #93c5fd; }
-    .flow-badge[data-flow="backend_proxy"] { border-color: #c2410c; color: #fdba74; }
-    .flow-badge[data-flow="backend_response"] { border-color: #15803d; color: #86efac; }
-    .flow-badge[data-flow="backend_broadcast"] { border-color: #7e22ce; color: #d8b4fe; }
-    .request-meta { display: inline-flex; flex-shrink: 0; align-items: center; gap: 12px; }
-    .time, .request-id { color: #94a3b8; font: 11px/1.5 Consolas, monospace; word-break: break-all; }
-    .status-code { display: inline-flex; width: fit-content; min-width: 54px; justify-content: center; padding: 4px 8px; border-radius: 999px; background: #334155; color: #e2e8f0; font: 800 11px/1.3 Consolas, monospace; }
-    .network-card[data-status="success"] .status-code { background: rgba(34, 197, 94, .16); color: #86efac; }
-    .network-card[data-status="error"] .status-code { background: rgba(239, 68, 68, .16); color: #fca5a5; }
-    .network-card[data-status="pending"] .status-code { background: rgba(245, 158, 11, .16); color: #fcd34d; }
-    .network-columns { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: #1e293b; }
-    .network-phase { min-width: 0; padding: 12px; background: #0b1628; }
-    .phase-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #93c5fd; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
-    .phase-count { color: #64748b; font: 10px Consolas, monospace; }
-    .event-block + .event-block { margin-top: 9px; padding-top: 9px; border-top: 1px dashed #26354e; }
-    .event-label { margin-bottom: 5px; color: #cbd5e1; font: 700 10px/1.4 Consolas, monospace; word-break: break-word; }
-    pre { max-height: 360px; margin: 0; overflow: auto; padding: 10px; border-radius: 7px; background: #050b16; color: #bfdbfe; font: 11px/1.55 Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
-    .phase-empty { padding: 26px 8px; color: #475569; font-size: 11px; text-align: center; }
-    .empty { padding: 80px 20px; border: 1px dashed #334155; border-radius: 12px; color: #64748b; text-align: center; }
-    @media (max-width: 800px) {
+    .service-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+    .service-panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-top: 3px solid var(--accent, var(--blue)); border-radius: 14px; background: rgba(11, 22, 40, .92); box-shadow: 0 10px 30px rgba(0, 0, 0, .12); }
+    .service-panel[data-empty="true"] { opacity: .68; }
+    .service-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 12px 13px; border-bottom: 1px solid #1e293b; background: rgba(16, 28, 48, .84); }
+    .service-head h2 { margin: 0; color: var(--strong); font-size: 14px; }
+    .service-head p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .service-count { flex: 0 0 auto; padding: 4px 8px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 999px; color: #cbd5e1; font: 11px Consolas, monospace; }
+    .service-body { display: grid; gap: 8px; max-height: 560px; overflow: auto; padding: 10px; }
+    .log-card { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(148, 163, 184, .14); border-left: 3px solid var(--accent, var(--blue)); border-radius: 10px; background: rgba(5, 11, 22, .58); }
+    .log-card.is-error { border-left-color: var(--red); }
+    .log-card.is-warning { border-left-color: var(--orange); }
+    .log-top { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: start; }
+    .log-title { min-width: 0; color: var(--strong); font-size: 12px; font-weight: 800; line-height: 1.45; word-break: break-word; }
+    .log-time { color: var(--dim); font: 10px Consolas, monospace; white-space: nowrap; }
+    .detail-button { justify-self: start; min-height: 26px; padding: 4px 8px; border-color: rgba(56, 189, 248, .28); background: rgba(56, 189, 248, .08); color: #bae6fd; }
+    .log-card:hover .detail-button { border-color: rgba(56, 189, 248, .72); }
+    .route-line { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: center; padding: 8px; border-radius: 8px; background: rgba(15, 23, 42, .62); }
+    .route-node { min-width: 0; overflow: hidden; color: #bfdbfe; font: 11px/1.4 Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .route-arrow { color: var(--accent, var(--blue)); font-size: 13px; font-weight: 900; }
+    .facts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fact { max-width: 100%; overflow: hidden; padding: 4px 7px; border: 1px solid rgba(148, 163, 184, .16); border-radius: 7px; color: #cbd5e1; font: 10px/1.35 Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .fact.is-error { border-color: rgba(239, 68, 68, .34); color: #fca5a5; }
+    pre { max-height: 260px; margin: 8px 0 0; overflow: auto; padding: 10px; border-radius: 7px; background: #050b16; color: #bfdbfe; font: 11px/1.55 Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+    .empty { padding: 32px 12px; color: #475569; font-size: 12px; text-align: center; }
+    .log-inspector { position: fixed; right: 18px; bottom: 18px; z-index: 30; display: grid; width: min(980px, calc(100vw - 36px)); max-height: min(760px, calc(100vh - 36px)); overflow: hidden; border: 1px solid #3b4b63; border-top: 3px solid var(--blue); border-radius: 16px; background: #081223; box-shadow: 0 24px 80px rgba(0, 0, 0, .42); }
+    .log-inspector[hidden] { display: none; }
+    .inspector-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; padding: 13px 14px; border-bottom: 1px solid #1e293b; background: #101c30; }
+    .inspector-title { margin: 0; color: var(--strong); font-size: 14px; line-height: 1.45; }
+    .inspector-subtitle { margin-top: 4px; color: var(--muted); font: 11px Consolas, monospace; }
+    .inspector-close { min-width: 34px; padding: 5px 9px; font-size: 16px; line-height: 1; }
+    .inspector-body { display: grid; gap: 12px; overflow: auto; padding: 12px 14px 14px; }
+    .inspector-route { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px; border: 1px solid rgba(148, 163, 184, .14); border-radius: 10px; background: rgba(15, 23, 42, .72); }
+    .inspector-section { display: grid; gap: 8px; }
+    .inspector-section h3 { margin: 0; color: #e2e8f0; font-size: 12px; }
+    .inspector-facts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .inspector-tabs { display: flex; gap: 8px; align-items: center; }
+    .inspector-tab { min-height: 28px; padding: 5px 10px; border-color: rgba(148, 163, 184, .2); background: rgba(15, 23, 42, .72); color: #cbd5e1; font-weight: 800; }
+    .inspector-tab.is-active { border-color: rgba(56, 189, 248, .7); background: rgba(56, 189, 248, .14); color: #e0f2fe; }
+    .inspector-tab:disabled { cursor: not-allowed; opacity: .45; }
+    .inspector-json { max-height: 420px; margin: 0; }
+    @media (max-width: 980px) {
       header { align-items: flex-start; flex-wrap: wrap; }
       .actions { width: 100%; margin-left: 0; overflow-x: auto; }
-      .network-head { grid-template-columns: 1fr 70px; }
-      .request-summary { align-items: flex-start; flex-direction: column; gap: 4px; }
-      .request-id, .time { grid-column: span 1; }
-      .network-columns { grid-template-columns: 1fr; }
-      .queue-lanes { grid-template-columns: 1fr; }
+      .service-grid, .queue-lanes { grid-template-columns: 1fr; }
+      .log-inspector { right: 8px; bottom: 8px; width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
     }
   </style>
 </head>
 <body>
   <header>
-    <h1>Server 实时收发日志</h1>
+    <h1>Server 服务日志</h1>
     <span id="connectionStatus" class="status">连接中</span>
     <div class="actions">
-      <select id="statusFilter" aria-label="请求状态">
-        <option value="">全部请求</option>
-        <option value="success">成功</option>
-        <option value="error">失败</option>
-        <option value="pending">进行中</option>
-      </select>
-      <select id="flowFilter" aria-label="流量方向">
-        <option value="">全部流量</option>
-        <option value="frontend_request">前端请求后端</option>
-        <option value="backend_proxy">后端请求中转</option>
-        <option value="backend_response">后端响应前端</option>
-        <option value="backend_broadcast">后端广播前端</option>
+      <select id="serviceFilter" aria-label="服务分类">
+        <option value="">全部服务</option>
+        <option value="frontend_api">Frontend API</option>
+        <option value="clip_worker">CLIP Worker</option>
+        <option value="bundle_api">Bundle API</option>
+        <option value="llm_provider">LLM Provider</option>
+        <option value="image_provider">Image Provider</option>
+        <option value="sse_broadcast">SSE Broadcast</option>
+        <option value="system">System</option>
       </select>
       <button id="pauseButton" type="button">暂停滚动</button>
       <button id="clearButton" type="button">清空显示</button>
@@ -113,7 +119,7 @@
       <div class="queue-heading">
         <div>
           <h2>Images Queue</h2>
-          <p>edits / gen 共用并发，按进入顺序执行</p>
+          <p>本机图片任务队列，只展示执行/等待，不混进接口日志</p>
         </div>
         <div class="queue-heading-meta">
           <span id="queueLiveStatus" class="status">队列连接中</span>
@@ -136,24 +142,55 @@
       </div>
     </section>
     <div class="summary">
-      <span id="logCount">0 个请求</span>
-      <span id="flowSummary">前端请求 0 · 中转 0 · 响应 0 · 广播 0</span>
-      <span>API Key 已脱敏，Base64 仅显示类型与长度</span>
+      <span id="logCount">0 条日志</span>
+      <span id="serviceSummary">Frontend API 0 · CLIP 0 · Provider 0</span>
+      <span>status 不做主显示；错误只在关键字段里提示</span>
     </div>
-    <div id="logList" class="log-list"></div>
+    <div id="logList" class="service-grid"></div>
+    <aside id="logInspector" class="log-inspector" hidden aria-live="polite">
+      <header class="inspector-head">
+        <div>
+          <h2 id="inspectorTitle" class="inspector-title">日志详情</h2>
+          <div id="inspectorSubtitle" class="inspector-subtitle"></div>
+        </div>
+        <button id="inspectorClose" class="inspector-close" type="button" aria-label="关闭日志详情">×</button>
+      </header>
+      <div class="inspector-body">
+        <div id="inspectorRoute" class="inspector-route"></div>
+        <section class="inspector-section">
+          <h3>关键字段</h3>
+          <div id="inspectorFacts" class="inspector-facts"></div>
+        </section>
+        <section class="inspector-section">
+          <h3>Body</h3>
+          <div class="inspector-tabs" role="tablist" aria-label="日志请求响应详情">
+            <button id="inspectorRequestTab" class="inspector-tab" type="button" role="tab">Payload</button>
+            <button id="inspectorResponseTab" class="inspector-tab" type="button" role="tab">Response</button>
+          </div>
+          <pre id="inspectorPayload" class="inspector-json"></pre>
+        </section>
+      </div>
+    </aside>
   </main>
   <script>
     var logEntries = [];
-    var requestGroups = [];
     var isPaused = false;
     var logRenderScheduled = false;
     var lastLogEventId = 0;
     var formattedPayloadCache = {};
-    var statusFilter = document.getElementById("statusFilter");
-    var flowFilter = document.getElementById("flowFilter");
+    var serviceFilter = document.getElementById("serviceFilter");
     var logList = document.getElementById("logList");
     var logCount = document.getElementById("logCount");
-    var flowSummary = document.getElementById("flowSummary");
+    var serviceSummary = document.getElementById("serviceSummary");
+    var logInspector = document.getElementById("logInspector");
+    var inspectorTitle = document.getElementById("inspectorTitle");
+    var inspectorSubtitle = document.getElementById("inspectorSubtitle");
+    var inspectorRoute = document.getElementById("inspectorRoute");
+    var inspectorFacts = document.getElementById("inspectorFacts");
+    var inspectorPayload = document.getElementById("inspectorPayload");
+    var inspectorRequestTab = document.getElementById("inspectorRequestTab");
+    var inspectorResponseTab = document.getElementById("inspectorResponseTab");
+    var inspectorClose = document.getElementById("inspectorClose");
     var pauseButton = document.getElementById("pauseButton");
     var clearButton = document.getElementById("clearButton");
     var connectionStatus = document.getElementById("connectionStatus");
@@ -167,13 +204,18 @@
     var queuePendingList = document.getElementById("queuePendingList");
     var serverLogEventSource = null;
     var queuePollTimer = null;
-    var queueState = {
-      concurrency: 3,
-      active: 0,
-      pending: 0,
-      active_tasks: [],
-      pending_tasks: []
-    };
+    var inspectorCurrentCall = null;
+    var inspectorActivePayloadType = "response";
+    var queueState = { concurrency: 3, active: 0, pending: 0, active_tasks: [], pending_tasks: [] };
+    var serviceDefinitions = [
+      { key: "frontend_api", title: "Frontend API", subtitle: "浏览器/扩展 ↔ 本机 API，重点看 request upload 和 response", accent: "#38bdf8" },
+      { key: "clip_worker", title: "CLIP Worker", subtitle: "本机 CLIP 检索 worker，重点看 query、top_k、返回数量和耗时", accent: "#818cf8" },
+      { key: "bundle_api", title: "Bundle API", subtitle: "bundle 内部 API 调用，重点看 bundle 请求和返回摘要", accent: "#a78bfa" },
+      { key: "llm_provider", title: "LLM Provider", subtitle: "大模型供应商调用，名称泛化，后续换供应商不用改 UI", accent: "#fb7185" },
+      { key: "image_provider", title: "Image Provider", subtitle: "图片生成/编辑供应商调用，名称泛化，后续换供应商不用改 UI", accent: "#f97316" },
+      { key: "sse_broadcast", title: "SSE Broadcast", subtitle: "本机后端推送到前端的广播事件", accent: "#22c55e" },
+      { key: "system", title: "System", subtitle: "启动、异常和无法归类的内部日志", accent: "#94a3b8" }
+    ];
 
     /** Update the visible state of the live SSE connection. */
     function setConnectionStatus(isOnline, text) {
@@ -197,13 +239,13 @@
       return text;
     }
 
-    /** Queue one grouped-log repaint into the next browser frame. */
+    /** Queue one service-log repaint into the next browser frame. */
     function scheduleLogRender() {
       if (isPaused || logRenderScheduled) {
         return;
       }
       logRenderScheduled = true;
-      /** Render the latest grouped logs after the current event burst. */
+      /** Render the latest classified logs after the current event burst. */
       function renderScheduledLogs() {
         logRenderScheduled = false;
         if (!isPaused) {
@@ -216,7 +258,7 @@
     /** Convert a request duration from milliseconds into a seconds label. */
     function formatDurationSeconds(durationMs) {
       var safeDuration = Math.max(0, Number(durationMs) || 0);
-      return "耗时 " + (safeDuration / 1000).toFixed(2) + " 秒";
+      return (safeDuration / 1000).toFixed(2) + "s";
     }
 
     /** Format one queue timestamp for the compact task card. */
@@ -255,9 +297,7 @@
       number.textContent = "#" + String(task && task.id || "-");
       meta.className = "queue-task-meta";
       request.textContent = "请求 " + String(task && task.request_id || "-");
-      time.textContent = state === "running"
-        ? "开始 " + formatQueueTime(task && task.started_at)
-        : "进入 " + formatQueueTime(task && task.enqueued_at);
+      time.textContent = state === "running" ? "开始 " + formatQueueTime(task && task.started_at) : "进入 " + formatQueueTime(task && task.enqueued_at);
       head.appendChild(type);
       head.appendChild(number);
       meta.appendChild(request);
@@ -315,291 +355,510 @@
       renderQueue();
     }
 
-    /** Parse the server local timestamp for pending request duration updates. */
-    function parseServerTime(time) {
-      var timestamp = new Date(String(time || "").replace(" ", "T")).getTime();
-      return Number.isFinite(timestamp) ? timestamp : Date.now();
-    }
-
-    /** Return the grouped display status for one complete or pending request. */
-    function getRequestGroupStatus(group) {
-      if (!group || group.status === null || group.status === undefined) {
-        if (group && group.flows && group.flows.backend_broadcast) {
-          return "success";
+    /** Return one service definition by key. */
+    function getServiceDefinition(serviceKey) {
+      for (var index = 0; index < serviceDefinitions.length; index += 1) {
+        if (serviceDefinitions[index].key === serviceKey) {
+          return serviceDefinitions[index];
         }
-        return "pending";
       }
-      return Number(group.status) >= 400 ? "error" : "success";
+      return serviceDefinitions[serviceDefinitions.length - 1];
     }
 
-    /** Return the compact status label shown in one grouped flow card. */
-    function getRequestStatusLabel(group) {
-      if (group.status === null || group.status === undefined) {
-        return group.flows && group.flows.backend_broadcast ? "BROADCAST" : "PENDING";
-      }
-      return String(group.status);
+    /** Normalize one visible label so provider names stay replaceable in the UI. */
+    function getGenericLabel(entry) {
+      var label = String(entry && entry.label || "");
+      return label.replace(/Kimi/gi, "LLM Provider").replace(/Moonshot/gi, "LLM Provider").replace(/BeeAPI/gi, "Image Provider");
     }
 
-    /** Resolve old and new log entries to the same flow names. */
-    function getEntryFlow(entry) {
-      if (entry && entry.flow) {
-        return String(entry.flow);
-      }
+    /** Return the service bucket for one backend log entry. */
+    function getEntryServiceKey(entry) {
+      var label = String(entry && entry.label || "").toLowerCase();
       var direction = String(entry && entry.direction || "").toUpperCase();
-      if (direction === "RECEIVE" || direction === "RECEIVE BODY") {
-        return "frontend_request";
+      var flow = String(entry && entry.flow || "");
+      var payload = entry && entry.payload && typeof entry.payload === "object" ? entry.payload : {};
+      if (direction === "RECEIVE" || direction === "RECEIVE BODY" || direction === "SEND" || flow === "frontend_request" || flow === "backend_response") {
+        return "frontend_api";
       }
-      if (direction === "OUTBOUND" || direction === "UPSTREAM") {
-        return "backend_proxy";
+      if (direction === "BROADCAST" || flow === "backend_broadcast") {
+        return "sse_broadcast";
       }
-      if (direction === "BROADCAST") {
-        return "backend_broadcast";
+      if (label.indexOf("bundle api") >= 0) {
+        return "bundle_api";
       }
-      if (direction === "SEND" || direction === "DONE") {
-        return "backend_response";
+      if (label.indexOf("clip worker") >= 0 || label.indexOf("clip workflow") >= 0 || label.indexOf("bundle clip") >= 0) {
+        return "clip_worker";
+      }
+      if (label.indexOf("kimi") >= 0 || label.indexOf("moonshot") >= 0 || String(payload.model || "").toLowerCase().indexOf("kimi") >= 0) {
+        return "llm_provider";
+      }
+      if (label.indexOf("beeapi") >= 0 || label.indexOf("image provider") >= 0 || label.indexOf("provider source image") >= 0 || label.indexOf("detail image") >= 0 || label.indexOf("generation") >= 0 || label.indexOf("fusion") >= 0) {
+        return "image_provider";
       }
       return "system";
     }
 
-    /** Find one grouped flow entry without creating duplicates. */
-    function findRequestGroup(groupKey) {
-      for (var index = 0; index < requestGroups.length; index += 1) {
-        if (requestGroups[index].group_key === groupKey) {
-          return requestGroups[index];
-        }
-      }
-      return null;
+    /** Return whether one entry has an error-like signal worth highlighting. */
+    function isErrorEntry(entry) {
+      var label = String(entry && entry.label || "").toLowerCase();
+      var payload = entry && entry.payload && typeof entry.payload === "object" ? entry.payload : {};
+      var status = Number(payload.status || 0);
+      return status >= 400 || label.indexOf("error") >= 0 || label.indexOf("failed") >= 0 || Boolean(payload.error || payload.error_code);
     }
 
-    /** Create one Network-style request group for incoming server events. */
-    function createRequestGroup(entry, groupKey) {
-      var group = {
-        group_key: groupKey,
-        request_id: String(entry.request_id || "-"),
-        first_time: String(entry.time || ""),
-        last_time: String(entry.time || ""),
-        started_ms: parseServerTime(entry.time),
-        label: "等待请求信息",
-        status: null,
-        duration_ms: null,
-        flows: {},
-        events: []
-      };
-      requestGroups.push(group);
-      return group;
+    /** Return whether one entry has a pending or timeout signal worth highlighting. */
+    function isWarningEntry(entry) {
+      var label = String(entry && entry.label || "").toLowerCase();
+      return label.indexOf("timeout") >= 0 || label.indexOf("fallback") >= 0 || label.indexOf("skipped") >= 0;
     }
 
-    /** Apply one raw server event to its existing Network-style request group. */
-    function applyEntryToRequestGroup(group, entry) {
-      group.events.push(entry);
-      group.last_time = String(entry.time || group.last_time);
-      group.flows[getEntryFlow(entry)] = true;
-      if (entry.direction === "RECEIVE") {
-        group.label = String(entry.label || group.label);
-      }
-      if (entry.direction === "BROADCAST" && group.label === "等待请求信息") {
-        group.label = String(entry.label || group.label);
-      }
-      if (entry.direction === "DONE" && entry.payload) {
-        group.status = entry.payload.status;
-        group.duration_ms = entry.payload.duration_ms;
-      }
-      if (entry.direction === "SEND" && group.status === null) {
-        var statusMatch = /->\s*(\d{3})/.exec(String(entry.label || ""));
-        if (statusMatch) {
-          group.status = Number(statusMatch[1]);
-        }
-      }
-    }
-
-    /** Return whether one entry belongs to an intentionally long-lived SSE request. */
-    function isLongLivedEventEntry(entry) {
+    /** Read one display target from label and payload without exposing secret values. */
+    function getProviderTarget(entry) {
+      var payload = entry && entry.payload && typeof entry.payload === "object" ? entry.payload : {};
       var label = String(entry && entry.label || "");
-      return label.indexOf("GET /api/v1/events") >= 0;
+      var methodMatch = /\b(GET|POST|PUT|PATCH|DELETE)\s+([^\s]+)/i.exec(label);
+      if (payload.target) {
+        return String(payload.target);
+      }
+      if (payload.url) {
+        return String(payload.url);
+      }
+      if (methodMatch) {
+        return methodMatch[1].toUpperCase() + " " + methodMatch[2];
+      }
+      return getServiceDefinition(getEntryServiceKey(entry)).title;
     }
 
-    /** Add one raw event to the matching request group. */
-    function groupLogEntry(entry, entryIndex) {
-      if (isLongLivedEventEntry(entry)) {
+    /** Return the source and target pair shown in the route line. */
+    function getRoutePair(entry) {
+      var direction = String(entry && entry.direction || "").toUpperCase();
+      var payload = entry && entry.payload && typeof entry.payload === "object" ? entry.payload : {};
+      var service = getServiceDefinition(getEntryServiceKey(entry)).title;
+      if (payload.source || payload.target) {
+        return { from: String(payload.source || "Local Server"), to: String(payload.target || service) };
+      }
+      if (direction === "OUTBOUND") {
+        return { from: "Local Server", to: getProviderTarget(entry) };
+      }
+      if (direction === "UPSTREAM") {
+        return { from: service, to: "Local Server" };
+      }
+      if (direction === "BROADCAST") {
+        return { from: "Local Server", to: "Browser SSE" };
+      }
+      return { from: "Local Server", to: service };
+    }
+
+    /** Add one compact fact pill to the list if it has content. */
+    function pushFact(facts, label, value, isError) {
+      if (value === undefined || value === null || value === "") {
         return;
       }
-      var requestId = String(entry && entry.request_id || "-");
-      var eventId = String(entry && entry.event_id || entryIndex || "0");
-      var groupKey = requestId === "-" ? "event:" + eventId : "request:" + requestId;
-      var group = findRequestGroup(groupKey);
-      if (!group) {
-        group = createRequestGroup(entry || {}, groupKey);
-      }
-      applyEntryToRequestGroup(group, entry || {});
+      facts.push({ label: label, value: String(value), is_error: Boolean(isError) });
     }
 
-    /** Rebuild every Network-style request group from retained raw history. */
-    function rebuildRequestGroups() {
-      requestGroups = [];
-      for (var index = 0; index < logEntries.length; index += 1) {
-        groupLogEntry(logEntries[index], index);
+    /** Return key facts for one log card instead of dumping full JSON. */
+    function getEntryFacts(entry) {
+      var facts = [];
+      var payload = entry && entry.payload && typeof entry.payload === "object" ? entry.payload : {};
+      var upload = payload.upload && typeof payload.upload === "object" ? payload.upload : {};
+      pushFact(facts, "request", entry && entry.request_id);
+      pushFact(facts, "duration", payload.duration_ms ? formatDurationSeconds(payload.duration_ms) : "");
+      pushFact(facts, "query", payload.query);
+      pushFact(facts, "top_k", payload.top_k);
+      pushFact(facts, "results", payload.result_count);
+      pushFact(facts, "groups", payload.group_count);
+      pushFact(facts, "prompts", payload.prompts_searched);
+      pushFact(facts, "upload", upload.content_type || upload.body_type);
+      pushFact(facts, "fields", upload.fields ? upload.fields.join(",") : "");
+      pushFact(facts, "image_bytes", payload.image_bytes);
+      pushFact(facts, "image_chars", payload.image_base64_chars);
+      pushFact(facts, "code", payload.error_code || payload.code, true);
+      pushFact(facts, "error", payload.error, true);
+      if (!facts.length) {
+        pushFact(facts, "event", String(entry && entry.direction || "INFO"));
+      }
+      return facts.slice(0, 9);
+    }
+
+    /** Create one fact pill element. */
+    function createFactElement(fact) {
+      var element = document.createElement("span");
+      element.className = fact.is_error ? "fact is-error" : "fact";
+      element.textContent = fact.label + ": " + fact.value;
+      return element;
+    }
+
+    /** Create one log call group from its first event. */
+    function createLogCall(entry) {
+      return {
+        service_key: getEntryServiceKey(entry),
+        request_id: String(entry && entry.request_id || "-"),
+        first_time: String(entry && entry.time || ""),
+        last_time: String(entry && entry.time || ""),
+        events: [],
+        request_entry: null,
+        response_entry: null
+      };
+    }
+
+    /** Add one raw event into a Network-style request/response call group. */
+    function addEntryToLogCall(call, entry) {
+      var direction = String(entry && entry.direction || "").toUpperCase();
+      call.events.push(entry);
+      call.last_time = String(entry && entry.time || call.last_time);
+      if (direction === "RECEIVE" || direction === "OUTBOUND" || direction === "BROADCAST") {
+        call.request_entry = call.request_entry || entry;
+      }
+      if (direction === "SEND" || direction === "DONE" || direction === "UPSTREAM") {
+        call.response_entry = entry;
+      }
+      if (!call.request_entry && direction === "RECEIVE BODY") {
+        call.request_entry = entry;
       }
     }
 
-    /** Create one clearly labeled transport-flow column for a grouped request. */
-    function createPhaseElement(title, flowKey, group) {
-      var section = document.createElement("section");
-      var heading = document.createElement("div");
-      var titleElement = document.createElement("span");
-      var countElement = document.createElement("span");
-      var count = 0;
-      section.className = "network-phase";
-      heading.className = "phase-title";
-      titleElement.textContent = title;
-      countElement.className = "phase-count";
-      heading.appendChild(titleElement);
-      heading.appendChild(countElement);
-      section.appendChild(heading);
-      for (var index = 0; index < group.events.length; index += 1) {
-        var entry = group.events[index];
-        if (getEntryFlow(entry) !== flowKey) {
-          continue;
+    /** Return the most useful event for naming one request/response call group. */
+    function getCallPrimaryEntry(call) {
+      return call && (call.request_entry || call.response_entry || call.events[0]) || {};
+    }
+
+    /** Return the combined display label for one call group. */
+    function getCallLabel(call) {
+      var primary = getCallPrimaryEntry(call);
+      return getGenericLabel(primary);
+    }
+
+    /** Return whether any event inside one call group has an error signal. */
+    function isErrorCall(call) {
+      var events = call && Array.isArray(call.events) ? call.events : [];
+      for (var index = 0; index < events.length; index += 1) {
+        if (isErrorEntry(events[index])) {
+          return true;
         }
-        var eventBlock = document.createElement("div");
-        var eventLabel = document.createElement("div");
-        var payloadText = formatPayload(entry.payload, entry.event_id);
-        eventBlock.className = "event-block";
-        eventLabel.className = "event-label";
-        eventLabel.textContent = String(entry.flow_label || "") + " · " + String(entry.direction || "") + " · " + String(entry.label || "");
-        eventBlock.appendChild(eventLabel);
-        if (payloadText) {
-          var payload = document.createElement("pre");
-          payload.textContent = payloadText;
-          eventBlock.appendChild(payload);
-        }
-        section.appendChild(eventBlock);
-        count += 1;
       }
-      countElement.textContent = String(count);
-      if (!count) {
-        var empty = document.createElement("div");
-        empty.className = "phase-empty";
-        empty.textContent = "暂无";
-        section.appendChild(empty);
-      }
-      return section;
+      return false;
     }
 
-    /** Create flow badges showing every transport direction in one request group. */
-    function createFlowBadges(group) {
-      var wrapper = document.createElement("div");
-      var flowDefinitions = [
-        { key: "frontend_request", label: "前端请求后端" },
-        { key: "backend_proxy", label: "后端请求中转" },
-        { key: "backend_response", label: "后端响应前端" },
-        { key: "backend_broadcast", label: "后端广播前端" }
-      ];
-      wrapper.className = "flow-badges";
-      for (var index = 0; index < flowDefinitions.length; index += 1) {
-        var definition = flowDefinitions[index];
-        if (!group.flows[definition.key]) {
-          continue;
+    /** Return whether any event inside one call group has a warning signal. */
+    function isWarningCall(call) {
+      var events = call && Array.isArray(call.events) ? call.events : [];
+      for (var index = 0; index < events.length; index += 1) {
+        if (isWarningEntry(events[index])) {
+          return true;
         }
-        var badge = document.createElement("span");
-        badge.className = "flow-badge";
-        badge.dataset.flow = definition.key;
-        badge.textContent = definition.label;
-        wrapper.appendChild(badge);
       }
-      return wrapper;
+      return false;
     }
 
-    /** Create one Network-style card containing request and response together. */
-    function createNetworkCard(group) {
+    /** Return the route shown for a combined request/response call. */
+    function getCallRoutePair(call) {
+      var primary = getCallPrimaryEntry(call);
+      return getRoutePair(primary);
+    }
+
+    /** Add one unique fact pill to a combined call summary. */
+    function pushUniqueFact(facts, seen, label, value, isError) {
+      var key = String(label) + ":" + String(value);
+      if (seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      pushFact(facts, label, value, isError);
+    }
+
+    /** Return key facts from all request/response events in one call group. */
+    function getCallFacts(call) {
+      var facts = [];
+      var seen = {};
+      var events = call && Array.isArray(call.events) ? call.events : [];
+      pushUniqueFact(facts, seen, "request", call && call.request_id);
+      pushUniqueFact(facts, seen, "events", events.length);
+      for (var index = 0; index < events.length; index += 1) {
+        var entry = events[index] || {};
+        var payload = entry.payload && typeof entry.payload === "object" ? entry.payload : {};
+        var upload = payload.upload && typeof payload.upload === "object" ? payload.upload : {};
+        pushUniqueFact(facts, seen, "duration", payload.duration_ms ? formatDurationSeconds(payload.duration_ms) : "");
+        pushUniqueFact(facts, seen, "query", payload.query);
+        pushUniqueFact(facts, seen, "top_k", payload.top_k);
+        pushUniqueFact(facts, seen, "results", payload.result_count);
+        pushUniqueFact(facts, seen, "groups", payload.group_count);
+        pushUniqueFact(facts, seen, "prompts", payload.prompts_searched);
+        pushUniqueFact(facts, seen, "upload", upload.content_type || upload.body_type);
+        pushUniqueFact(facts, seen, "fields", upload.fields ? upload.fields.join(",") : "");
+        pushUniqueFact(facts, seen, "image_bytes", payload.image_bytes);
+        pushUniqueFact(facts, seen, "image_chars", payload.image_base64_chars);
+        pushUniqueFact(facts, seen, "code", payload.error_code || payload.code, true);
+        pushUniqueFact(facts, seen, "error", payload.error, true);
+      }
+      if (!facts.length) {
+        pushFact(facts, "event", "req/res");
+      }
+      return facts.slice(0, 10);
+    }
+
+    /** Create one compact service log card. */
+    function createLogCard(call) {
       var card = document.createElement("article");
-      var head = document.createElement("div");
-      var summary = document.createElement("div");
-      var name = document.createElement("div");
-      var meta = document.createElement("div");
-      var badges = createFlowBadges(group);
-      var startedTime = document.createElement("div");
-      var status = document.createElement("div");
-      var duration = document.createElement("div");
-      var identity = document.createElement("div");
-      var columns = document.createElement("div");
-      var groupStatus = getRequestGroupStatus(group);
-      card.className = "network-card";
-      card.dataset.status = groupStatus;
-      head.className = "network-head";
-      summary.className = "request-summary";
-      name.className = "request-name";
-      name.textContent = group.label;
-      meta.className = "request-meta";
-      startedTime.className = "time";
-      startedTime.textContent = group.first_time;
-      status.className = "status-code";
-      status.textContent = getRequestStatusLabel(group);
-      duration.className = "time";
-      if (group.duration_ms === null) {
-        duration.textContent = "请求中";
-      } else {
-        duration.textContent = formatDurationSeconds(group.duration_ms);
+      var top = document.createElement("div");
+      var title = document.createElement("div");
+      var time = document.createElement("div");
+      var route = document.createElement("div");
+      var from = document.createElement("div");
+      var arrow = document.createElement("div");
+      var to = document.createElement("div");
+      var facts = document.createElement("div");
+      var detailButton = document.createElement("button");
+      var pair = getCallRoutePair(call);
+      card.className = "log-card";
+      if (isErrorCall(call)) {
+        card.className += " is-error";
+      } else if (isWarningCall(call)) {
+        card.className += " is-warning";
       }
-      identity.className = "request-id";
-      identity.textContent = group.request_id;
-      meta.appendChild(startedTime);
-      meta.appendChild(duration);
-      summary.appendChild(name);
-      summary.appendChild(meta);
-      head.appendChild(summary);
-      head.appendChild(badges);
-      head.appendChild(status);
-      head.appendChild(identity);
-      columns.className = "network-columns";
-      columns.appendChild(createPhaseElement("前端请求后端", "frontend_request", group));
-      columns.appendChild(createPhaseElement("后端请求中转", "backend_proxy", group));
-      columns.appendChild(createPhaseElement("后端响应前端", "backend_response", group));
-      columns.appendChild(createPhaseElement("后端广播前端", "backend_broadcast", group));
-      card.appendChild(head);
-      card.appendChild(columns);
+      top.className = "log-top";
+      title.className = "log-title";
+      title.textContent = getCallLabel(call);
+      time.className = "log-time";
+      time.textContent = String(call && call.last_time || "");
+      route.className = "route-line";
+      from.className = "route-node";
+      from.textContent = pair.from;
+      arrow.className = "route-arrow";
+      arrow.textContent = "→";
+      to.className = "route-node";
+      to.textContent = pair.to;
+      facts.className = "facts";
+      var factList = getCallFacts(call);
+      for (var index = 0; index < factList.length; index += 1) {
+        facts.appendChild(createFactElement(factList[index]));
+      }
+      detailButton.className = "detail-button";
+      detailButton.type = "button";
+      detailButton.textContent = "打开详情";
+      detailButton.addEventListener("click", function openSelectedLogDetail(event) {
+        event.stopPropagation();
+        openLogInspector(call);
+      });
+      card.addEventListener("dblclick", function openLogDetailFromCard() {
+        openLogInspector(call);
+      });
+      top.appendChild(title);
+      top.appendChild(time);
+      route.appendChild(from);
+      route.appendChild(arrow);
+      route.appendChild(to);
+      card.appendChild(top);
+      card.appendChild(route);
+      card.appendChild(facts);
+      card.appendChild(detailButton);
       return card;
     }
 
-    /** Render one card per request instead of one row per event. */
-    function renderLogs() {
-      var selectedStatus = statusFilter.value;
-      var selectedFlow = flowFilter.value;
-      var visibleCount = 0;
-      var flowCounts = {
-        frontend_request: 0,
-        backend_proxy: 0,
-        backend_response: 0,
-        backend_broadcast: 0
+    /** Render one source-target route inside the Network-style inspector. */
+    function renderInspectorRoute(pair) {
+      var from = document.createElement("div");
+      var arrow = document.createElement("div");
+      var to = document.createElement("div");
+      inspectorRoute.textContent = "";
+      from.className = "route-node";
+      from.textContent = pair.from;
+      arrow.className = "route-arrow";
+      arrow.textContent = "→";
+      to.className = "route-node";
+      to.textContent = pair.to;
+      inspectorRoute.appendChild(from);
+      inspectorRoute.appendChild(arrow);
+      inspectorRoute.appendChild(to);
+    }
+
+    /** Open the large Network-style inspector for one compact log card. */
+    function openLogInspector(call) {
+      var pair = getCallRoutePair(call);
+      var factList = getCallFacts(call);
+      inspectorCurrentCall = call;
+      inspectorTitle.textContent = getCallLabel(call);
+      inspectorSubtitle.textContent = String(call && call.first_time || "") + " → " + String(call && call.last_time || "") + " · request " + String(call && call.request_id || "-");
+      renderInspectorRoute(pair);
+      inspectorFacts.textContent = "";
+      for (var index = 0; index < factList.length; index += 1) {
+        inspectorFacts.appendChild(createFactElement(factList[index]));
+      }
+      setInspectorPayloadType(call && call.response_entry ? "response" : "request");
+      logInspector.hidden = false;
+    }
+
+    /** Close the large Network-style inspector without clearing current logs. */
+    function closeLogInspector() {
+      inspectorCurrentCall = null;
+      logInspector.hidden = true;
+    }
+
+    /** Return the request or response entry selected by the inspector body tabs. */
+    function getInspectorPayloadEntry(call, payloadType) {
+      if (!call) {
+        return null;
+      }
+      return payloadType === "request" ? call.request_entry : call.response_entry;
+    }
+
+    /** Render the currently selected inspector body without mixing request and response. */
+    function renderInspectorPayload() {
+      var entry = getInspectorPayloadEntry(inspectorCurrentCall, inspectorActivePayloadType);
+      var fallback = {
+        type: inspectorActivePayloadType,
+        message: inspectorActivePayloadType === "request" ? "暂无 Payload" : "暂无 Response",
+        events: inspectorCurrentCall && inspectorCurrentCall.events || []
       };
-      var fragment = document.createDocumentFragment();
-      for (var entryIndex = 0; entryIndex < logEntries.length; entryIndex += 1) {
-        var entryFlow = getEntryFlow(logEntries[entryIndex]);
-        if (Object.prototype.hasOwnProperty.call(flowCounts, entryFlow)) {
-          flowCounts[entryFlow] += 1;
-        }
-      }
-      flowSummary.textContent = "前端请求 " + flowCounts.frontend_request
-        + " · 中转 " + flowCounts.backend_proxy
-        + " · 响应 " + flowCounts.backend_response
-        + " · 广播 " + flowCounts.backend_broadcast;
-      for (var index = requestGroups.length - 1; index >= 0; index -= 1) {
-        var group = requestGroups[index];
-        if (selectedStatus && getRequestGroupStatus(group) !== selectedStatus) {
-          continue;
-        }
-        if (selectedFlow && !group.flows[selectedFlow]) {
-          continue;
-        }
-        fragment.appendChild(createNetworkCard(group));
-        visibleCount += 1;
-      }
-      logCount.textContent = visibleCount + " 个请求";
-      if (!visibleCount) {
+      inspectorPayload.textContent = formatPayload(entry || fallback, "inspector:" + String(inspectorCurrentCall && inspectorCurrentCall.request_id || "") + ":" + inspectorActivePayloadType + ":" + String(inspectorCurrentCall && inspectorCurrentCall.events ? inspectorCurrentCall.events.length : 0));
+    }
+
+    /** Switch the inspector body tab and keep disabled tabs visually honest. */
+    function setInspectorPayloadType(payloadType) {
+      var hasRequest = Boolean(getInspectorPayloadEntry(inspectorCurrentCall, "request"));
+      var hasResponse = Boolean(getInspectorPayloadEntry(inspectorCurrentCall, "response"));
+      inspectorActivePayloadType = payloadType;
+      inspectorRequestTab.disabled = !hasRequest;
+      inspectorResponseTab.disabled = !hasResponse;
+      inspectorRequestTab.classList.toggle("is-active", inspectorActivePayloadType === "request");
+      inspectorResponseTab.classList.toggle("is-active", inspectorActivePayloadType === "response");
+      inspectorRequestTab.setAttribute("aria-selected", inspectorActivePayloadType === "request" ? "true" : "false");
+      inspectorResponseTab.setAttribute("aria-selected", inspectorActivePayloadType === "response" ? "true" : "false");
+      renderInspectorPayload();
+    }
+
+    /** Handle the Payload body tab click. */
+    function handleInspectorRequestTabClick() {
+      setInspectorPayloadType("request");
+    }
+
+    /** Handle the Response body tab click. */
+    function handleInspectorResponseTabClick() {
+      setInspectorPayloadType("response");
+    }
+
+    /** Create one service section and append its newest log cards. */
+    function createServicePanel(definition, entries) {
+      var panel = document.createElement("section");
+      var head = document.createElement("div");
+      var titleBox = document.createElement("div");
+      var title = document.createElement("h2");
+      var subtitle = document.createElement("p");
+      var count = document.createElement("span");
+      var body = document.createElement("div");
+      panel.className = "service-panel";
+      panel.style.setProperty("--accent", definition.accent);
+      panel.dataset.empty = entries.length ? "false" : "true";
+      head.className = "service-head";
+      title.textContent = definition.title;
+      subtitle.textContent = definition.subtitle;
+      count.className = "service-count";
+      count.textContent = String(entries.length);
+      body.className = "service-body";
+      titleBox.appendChild(title);
+      titleBox.appendChild(subtitle);
+      head.appendChild(titleBox);
+      head.appendChild(count);
+      panel.appendChild(head);
+      if (!entries.length) {
         var empty = document.createElement("div");
         empty.className = "empty";
-        empty.textContent = "等待 Server 收发请求…";
-        fragment.appendChild(empty);
+        empty.textContent = "暂无日志";
+        body.appendChild(empty);
       }
+      for (var index = entries.length - 1; index >= 0; index -= 1) {
+        body.appendChild(createLogCard(entries[index]));
+      }
+      panel.appendChild(body);
+      return panel;
+    }
+
+    /** Return the pending-pairing key used to combine request and response logs. */
+    function getPendingCallKey(entry) {
+      return getEntryServiceKey(entry) + "::" + String(entry && entry.request_id || "-");
+    }
+
+    /** Return whether one entry starts a request/response call group. */
+    function isCallRequestEntry(entry) {
+      var direction = String(entry && entry.direction || "").toUpperCase();
+      return direction === "RECEIVE" || direction === "OUTBOUND" || direction === "BROADCAST";
+    }
+
+    /** Return whether one entry completes or enriches an existing call group. */
+    function isCallResponseEntry(entry) {
+      var direction = String(entry && entry.direction || "").toUpperCase();
+      return direction === "RECEIVE BODY" || direction === "SEND" || direction === "DONE" || direction === "UPSTREAM";
+    }
+
+    /** Find the newest open request call for one response entry. */
+    function findPendingCall(pendingCalls, entry) {
+      var key = getPendingCallKey(entry);
+      var list = pendingCalls[key] || [];
+      for (var index = list.length - 1; index >= 0; index -= 1) {
+        if (!list[index].response_entry) {
+          return list[index];
+        }
+      }
+      return list.length ? list[list.length - 1] : null;
+    }
+
+    /** Push one call into the correct service bucket and pending lookup. */
+    function registerCall(buckets, pendingCalls, call) {
+      var serviceKey = call.service_key;
+      if (!buckets[serviceKey]) {
+        serviceKey = "system";
+        call.service_key = serviceKey;
+      }
+      buckets[serviceKey].push(call);
+      var key = call.service_key + "::" + call.request_id;
+      if (!pendingCalls[key]) {
+        pendingCalls[key] = [];
+      }
+      pendingCalls[key].push(call);
+    }
+
+    /** Build classified service buckets from combined request/response calls. */
+    function buildServiceBuckets() {
+      var buckets = {};
+      var pendingCalls = {};
+      for (var definitionIndex = 0; definitionIndex < serviceDefinitions.length; definitionIndex += 1) {
+        buckets[serviceDefinitions[definitionIndex].key] = [];
+      }
+      for (var entryIndex = 0; entryIndex < logEntries.length; entryIndex += 1) {
+        var entry = logEntries[entryIndex] || {};
+        var call = null;
+        if (isCallResponseEntry(entry)) {
+          call = findPendingCall(pendingCalls, entry);
+        }
+        if (!call) {
+          call = createLogCall(entry);
+          registerCall(buckets, pendingCalls, call);
+        }
+        addEntryToLogCall(call, entry);
+        if (isCallRequestEntry(entry) && !pendingCalls[getPendingCallKey(entry)]) {
+          registerCall(buckets, pendingCalls, call);
+        }
+      }
+      return buckets;
+    }
+
+    /** Render service-grouped logs with only the selected service visible. */
+    function renderLogs() {
+      var selectedService = serviceFilter.value;
+      var buckets = buildServiceBuckets();
+      var fragment = document.createDocumentFragment();
+      var total = 0;
+      for (var index = 0; index < serviceDefinitions.length; index += 1) {
+        var definition = serviceDefinitions[index];
+        var entries = buckets[definition.key] || [];
+        total += entries.length;
+        if (selectedService && selectedService !== definition.key) {
+          continue;
+        }
+        fragment.appendChild(createServicePanel(definition, entries.slice(-40)));
+      }
+      logCount.textContent = total + " 条日志";
+      serviceSummary.textContent = "Frontend API " + buckets.frontend_api.length + " · CLIP " + buckets.clip_worker.length + " · Bundle " + buckets.bundle_api.length + " · LLM " + buckets.llm_provider.length + " · Image " + buckets.image_provider.length;
       logList.textContent = "";
       logList.appendChild(fragment);
     }
@@ -616,9 +875,6 @@
       logEntries.push(entry);
       if (logEntries.length > 300) {
         logEntries.splice(0, logEntries.length - 300);
-        rebuildRequestGroups();
-      } else {
-        groupLogEntry(entry, logEntries.length - 1);
       }
       if (!isPaused) {
         scheduleLogRender();
@@ -641,7 +897,6 @@
             }
           }
         }
-        rebuildRequestGroups();
         renderLogs();
       } catch (error) {
         setConnectionStatus(false, "历史读取失败");
@@ -719,13 +974,8 @@
       }
     }
 
-    /** Re-render grouped requests after the status filter changes. */
-    function handleStatusFilterChange() {
-      renderLogs();
-    }
-
-    /** Re-render grouped requests after the transport-flow filter changes. */
-    function handleFlowFilterChange() {
+    /** Re-render grouped services after the service filter changes. */
+    function handleServiceFilterChange() {
       renderLogs();
     }
 
@@ -741,12 +991,19 @@
     /** Clear only the current browser display while keeping future logs live. */
     function handleClearClick() {
       logEntries = [];
-      requestGroups = [];
       formattedPayloadCache = {};
+      closeLogInspector();
       renderLogs();
     }
 
-    /** Load history first and then connect the live grouped request stream. */
+    /** Close the Network-style inspector when Escape is pressed. */
+    function handleInspectorKeydown(event) {
+      if (event && event.key === "Escape") {
+        closeLogInspector();
+      }
+    }
+
+    /** Load history first and then connect the live grouped service stream. */
     async function initializeLogPage() {
       await loadLogHistory();
       await loadQueueState();
@@ -754,10 +1011,13 @@
       queuePollTimer = window.setTimeout(pollImageQueue, 1000);
     }
 
-    statusFilter.addEventListener("change", handleStatusFilterChange);
-    flowFilter.addEventListener("change", handleFlowFilterChange);
+    serviceFilter.addEventListener("change", handleServiceFilterChange);
     pauseButton.addEventListener("click", handlePauseClick);
     clearButton.addEventListener("click", handleClearClick);
+    inspectorClose.addEventListener("click", closeLogInspector);
+    inspectorRequestTab.addEventListener("click", handleInspectorRequestTabClick);
+    inspectorResponseTab.addEventListener("click", handleInspectorResponseTabClick);
+    window.addEventListener("keydown", handleInspectorKeydown);
     window.addEventListener("load", initializeLogPage);
     window.addEventListener("beforeunload", cleanupLiveConnections);
   </script>
