@@ -24,6 +24,9 @@ class CarouselRuntimeService {
     this.writeLog = settings.writeLog;
     this.images = settings.images;
     this.providers = settings.providers;
+    this.planningControllers = Object.create(null);
+    this.generationControllers = Object.create(null);
+    this.cancelledTaskIds = Object.create(null);
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     this.recoverInterruptedTasks();
   }
@@ -36,6 +39,37 @@ class CarouselRuntimeService {
   /** Return the JSON path for one runtime task. */
   getTaskPath(taskId) {
     return path.join(this.runtimeDirectory, this.normalizeTaskId(taskId) + ".json");
+  }
+
+  /** Return whether one task was explicitly abandoned during this server process. */
+  isTaskCancelled(taskId) {
+    return Boolean(this.cancelledTaskIds[this.normalizeTaskId(taskId)]);
+  }
+
+  /** Stop processing when a deleted task must no longer be persisted or reported. */
+  assertTaskAvailable(taskId) {
+    if (this.isTaskCancelled(taskId) || !this.readTask(taskId)) {
+      throw createCarouselError("轮播任务已被放弃。", 409, "CAROUSEL_TASK_CANCELLED");
+    }
+  }
+
+  /** Return one stable key for a cancellable carousel page image request. */
+  getGenerationControllerKey(taskId, pageIndex, generationId) {
+    return this.normalizeTaskId(taskId) + ":" + Number(pageIndex) + ":" + String(generationId || "");
+  }
+
+  /** Abort and forget every active image request owned by one carousel task. */
+  abortGenerationControllersForTask(taskId) {
+    const safeTaskId = this.normalizeTaskId(taskId);
+    const prefix = safeTaskId + ":";
+    const keys = Object.keys(this.generationControllers);
+    for (let index = 0; index < keys.length; index += 1) {
+      if (keys[index].indexOf(prefix) !== 0) {
+        continue;
+      }
+      this.generationControllers[keys[index]].abort();
+      delete this.generationControllers[keys[index]];
+    }
   }
 
   /** Read one task without exposing malformed runtime data. */
@@ -96,6 +130,9 @@ class CarouselRuntimeService {
     const target = task && typeof task === "object" ? task : null;
     if (!target || !target.id) {
       throw createCarouselError("轮播任务缺少 ID。", 500, "CAROUSEL_TASK_INVALID");
+    }
+    if (this.isTaskCancelled(target.id)) {
+      throw createCarouselError("轮播任务已被放弃。", 409, "CAROUSEL_TASK_CANCELLED");
     }
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     target.updated_at = new Date().toISOString();
@@ -238,6 +275,59 @@ class CarouselRuntimeService {
     return { task: task, existing: false };
   }
 
+  /** Normalize manually configured storyboard prompts into carousel pages. */
+  normalizeManualPages(pages) {
+    const sourcePages = Array.isArray(pages) ? pages : [];
+    const normalized = [];
+    for (let index = 0; index < sourcePages.length; index += 1) {
+      const item = sourcePages[index] && typeof sourcePages[index] === "object" ? sourcePages[index] : {};
+      const prompt = String(item.prompt || "").trim();
+      if (!prompt) {
+        continue;
+      }
+      normalized.push({
+        index: normalized.length,
+        purpose: String(item.purpose || "分镜" + (normalized.length + 1)).trim(),
+        prompt: prompt,
+        status: "pending",
+        image_url: "",
+        selected: true,
+        error: "",
+        error_code: ""
+      });
+    }
+    if (!normalized.length || normalized.length > 10) {
+      throw createCarouselError("默认分镜数量必须为 1 到 10。", 400, "CAROUSEL_MANUAL_PAGE_COUNT_INVALID");
+    }
+    return normalized;
+  }
+
+  /** Create a ready carousel task from manually configured storyboard prompts. */
+  createManualTask(input) {
+    const source = input && typeof input === "object" ? input : {};
+    const pages = this.normalizeManualPages(source.pages);
+    const created = this.createTask(Object.assign({}, source, {
+      count: pages.length,
+      prompt: "手动默认分镜",
+      advanced: false,
+      reasoning_enabled: false
+    }));
+    if (created.existing) {
+      return created.task;
+    }
+    const task = created.task;
+    task.mode = "manual";
+    task.count = pages.length;
+    task.requirement = "手动默认分镜";
+    task.reasoning_enabled = false;
+    task.estimated_tokens = 0;
+    task.pages = pages;
+    task.status = "ready";
+    task.error = "";
+    task.error_code = "";
+    return this.writeTask(task);
+  }
+
   /** Parse a structured carousel plan and enforce the requested page count. */
   parsePlan(content, count) {
     let text = String(content || "").trim();
@@ -288,6 +378,7 @@ class CarouselRuntimeService {
     let finished = false;
     while (!finished) {
       const readResult = await reader.read();
+      this.assertTaskAvailable(task.id);
       finished = readResult.done;
       pendingText += decoder.decode(readResult.value || new Uint8Array(), { stream: !finished });
       const lines = pendingText.split(/\r?\n/);
@@ -313,6 +404,7 @@ class CarouselRuntimeService {
         }
         const estimatedTokens = Math.max(1, Math.ceil((reasoningCharacters + content.length) / 3));
         if (estimatedTokens >= Number(task.estimated_tokens || 0) + 32) {
+          this.assertTaskAvailable(task.id);
           task.estimated_tokens = estimatedTokens;
           this.writeTask(task);
           reportProgress(task);
@@ -322,6 +414,7 @@ class CarouselRuntimeService {
     if (!content) {
       throw createCarouselError("Kimi 流式响应没有最终内容。", 502, "KIMI_STREAM_EMPTY");
     }
+    this.assertTaskAvailable(task.id);
     return content;
   }
 
@@ -334,7 +427,7 @@ class CarouselRuntimeService {
     }
     const task = created.task;
     try {
-      if (task.count === 1) {
+      if (task.count === 1 && task.mode !== "advanced") {
         if (!task.requirement) {
           throw createCarouselError("双图溶图提示词不能为空。", 400, "FUSION_PROMPT_EMPTY");
         }
@@ -366,6 +459,7 @@ class CarouselRuntimeService {
       const content = [{ type: "text", text: taskPrompt + "\n\n生成数量：" + task.count + "\n市场语言：" + task.market_language + "\n用户补充要求：" + task.requirement }];
       for (let index = 0; index < task.source_image_urls.length; index += 1) {
         const image = await this.readImageSource(task.source_image_urls[index], requestId);
+        this.assertTaskAvailable(task.id);
         content.push({ type: "image_url", image_url: { url: "data:" + image.mimeType + ";base64," + image.buffer.toString("base64") } });
       }
       const reasoningEnabled = Boolean(task.reasoning_enabled);
@@ -379,6 +473,7 @@ class CarouselRuntimeService {
       };
       this.writeLog("OUTBOUND", "Kimi carousel planning POST " + endpoint, requestPayload, requestId);
       const controller = new AbortController();
+      this.planningControllers[task.id] = controller;
       const timeoutHandle = setTimeout(function abortCarouselPlanningRequest() {
         controller.abort();
       }, 300000);
@@ -391,6 +486,10 @@ class CarouselRuntimeService {
           signal: controller.signal
         });
       } catch (error) {
+        delete this.planningControllers[task.id];
+        if (this.isTaskCancelled(task.id)) {
+          throw createCarouselError("轮播任务已被放弃。", 409, "CAROUSEL_TASK_CANCELLED");
+        }
         if (error && error.name === "AbortError") {
           throw createCarouselError("Kimi 轮播规划超过五分钟。", 504, "KIMI_TIMEOUT");
         }
@@ -399,13 +498,19 @@ class CarouselRuntimeService {
         clearTimeout(timeoutHandle);
       }
       if (!response.ok) {
+        delete this.planningControllers[task.id];
         const providerText = await response.text();
         throw createCarouselError(providerText.slice(0, 300) || "Kimi 轮播规划失败。", response.status, "KIMI_HTTP_" + response.status);
       }
-      const responseContent = await this.readKimiStream(response, task, reportProgress);
-      if (!this.readTask(task.id)) {
-        throw createCarouselError("轮播任务已被清理。", 409, "CAROUSEL_TASK_CANCELLED");
+      let responseContent;
+      try {
+        responseContent = await this.readKimiStream(response, task, reportProgress);
+      } finally {
+        if (this.planningControllers[task.id] === controller) {
+          delete this.planningControllers[task.id];
+        }
       }
+      this.assertTaskAvailable(task.id);
       task.pages = this.parsePlan(responseContent, task.count);
       task.status = task.mode === "advanced" ? "awaiting_review" : "ready";
       task.error = "";
@@ -501,6 +606,9 @@ class CarouselRuntimeService {
     if (!task || !task.pages[index]) {
       throw createCarouselError("轮播分镜不存在。", 404, "CAROUSEL_PAGE_NOT_FOUND");
     }
+    if (task.pages[index].status === "generating" && task.pages[index].generation_id) {
+      throw createCarouselError("当前分镜正在生成，请等待完成后再重试。", 409, "CAROUSEL_PAGE_ALREADY_GENERATING");
+    }
     task.status = "generating";
     task.pages[index].status = "generating";
     task.pages[index].generation_id = String(generationId || "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8));
@@ -575,13 +683,27 @@ class CarouselRuntimeService {
     const generationId = "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     const task = this.markPageGenerating(taskId, pageIndex, generationId);
     const page = task.pages[Number(pageIndex)];
+    const pageRequestId = String(requestId || task.id) + "-p" + Number(pageIndex) + "-" + generationId;
+    const controller = new AbortController();
+    const controllerKey = this.getGenerationControllerKey(task.id, pageIndex, generationId);
+    this.generationControllers[controllerKey] = controller;
     try {
       const normalizedSize = this.normalizeCarouselImageSize(task.size);
+      const service = this;
       const result = await this.providers.editImages({
+        carousel_task_id: task.id,
+        carousel_page_index: Number(pageIndex),
+        generation_id: generationId,
         image_urls: task.source_image_urls.slice(),
         prompt: String(page.prompt || ""),
-        size: normalizedSize
-      }, "fusion", requestId);
+        size: normalizedSize,
+        cancel_signal: controller.signal,
+        /** Return whether the owning carousel task or generation slot has been abandoned. */
+        is_cancelled: function isCarouselPageGenerationCancelled() {
+          return service.isTaskCancelled(task.id) || !service.readTask(task.id);
+        }
+      }, "fusion", pageRequestId);
+      this.assertTaskAvailable(task.id);
       const completedTask = this.markPageSucceeded(task.id, pageIndex, result.image_url, generationId);
       if (!completedTask) {
         this.deleteGeneratedImage(result.image_url);
@@ -589,6 +711,10 @@ class CarouselRuntimeService {
       return completedTask;
     } catch (error) {
       return this.markPageFailed(task.id, pageIndex, error, generationId);
+    } finally {
+      if (this.generationControllers[controllerKey] === controller) {
+        delete this.generationControllers[controllerKey];
+      }
     }
   }
 
@@ -646,7 +772,20 @@ class CarouselRuntimeService {
 
   /** Delete one task and optionally remove its un-applied generated images. */
   deleteTask(taskId, removeImages) {
-    const task = this.readTask(taskId);
+    const safeTaskId = this.normalizeTaskId(taskId);
+    const task = this.readTask(safeTaskId);
+    this.cancelledTaskIds[safeTaskId] = true;
+    const planningController = this.planningControllers[safeTaskId];
+    if (planningController) {
+      planningController.abort();
+      delete this.planningControllers[safeTaskId];
+    }
+    this.abortGenerationControllersForTask(safeTaskId);
+    if (this.providers && typeof this.providers.cancelImageTasks === "function") {
+      this.providers.cancelImageTasks(function matchCarouselImageQueueTask(metadata) {
+        return String(metadata && metadata.carousel_task_id || "") === safeTaskId;
+      });
+    }
     if (!task) {
       return null;
     }

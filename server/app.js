@@ -26,6 +26,7 @@ const currencyControllerModule = require("./controllers/currency.controller");
 const providerControllerModule = require("./controllers/provider.controller");
 const workflowControllerModule = require("./controllers/workflow.controller");
 const diagnosticsControllerModule = require("./controllers/diagnostics.controller");
+const cloudAuthControllerModule = require("./controllers/cloud-auth.controller");
 const routeModule = require("./routes/api.routes");
 const providerRouteModule = require("./routes/provider.routes");
 const requestContextModule = require("./middleware/request-context");
@@ -104,21 +105,6 @@ function createApp() {
     writeLog: diagnostics.write.bind(diagnostics),
     appRoot: path.resolve(__dirname, "..")
   });
-  /** Start the CLIP worker during backend startup so the first UI click is not the boot path. */
-  function prewarmClipWorker() {
-    clipWorker.indexStatus()
-      .then(function handleClipWarmup(status) {
-        diagnostics.write("CLIP", "CLIP worker warmup ready", {
-          vectors: status.vectors || 0,
-          products: status.products || 0,
-          load_error: status.load_error || ""
-        }, "");
-      })
-      .catch(function handleClipWarmupError(error) {
-        diagnostics.write("CLIP", "CLIP worker warmup failed: " + error.message, null, "");
-      });
-  }
-  setTimeout(prewarmClipWorker, 500);
   const workflow = workflowServiceModule.createWorkflowService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     readConfig: configModule.readServerConfig,
@@ -161,7 +147,8 @@ function createApp() {
   const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
   const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel, directImages: directImages, skuBlendTasks: skuBlendTasks });
   const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, directImages: directImages, products: products });
-  const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics });
+  const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics, clipWorker: clipWorker });
+  const cloudAuthController = new cloudAuthControllerModule.CloudAuthController();
   const app = express();
   app.locals.diagnostics = diagnostics;
 
@@ -195,6 +182,7 @@ function createApp() {
   const businessRouteOptions = {
     productController: productController,
     configController: configController,
+    cloudAuthController: cloudAuthController,
     imageController: imageController,
     currencyController: currencyController,
     events: events

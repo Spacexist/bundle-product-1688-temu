@@ -5,6 +5,80 @@ var extensionCacheStorageKey = "autoPackingExtensionCache";
 var extensionCleanupAlarmName = "auto-packing-extension-cleanup";
 var extensionCleanupIntervalMinutes = 3 * 24 * 60;
 var unifiedWorkbenchUrl = "http://127.0.0.1:5173/?mode=realtime";
+var miaoshouCookieUrl = "https://erp.91miaoshou.com/";
+
+/** Score one Miaoshou cookie so the newest usable value wins duplicate names. */
+function scoreMiaoshouCookie(cookie) {
+  var item = cookie || {};
+  var nowSeconds = Date.now() / 1000;
+  var expiresAt = Number(item.expirationDate || 0);
+  var unexpiredScore = !expiresAt || expiresAt > nowSeconds ? 1000000000000 : 0;
+  var hostScore = String(item.domain || "").indexOf("erp.91miaoshou.com") >= 0 ? 1000000 : 0;
+  var expiryScore = Number.isFinite(expiresAt) ? expiresAt : 0;
+  return unexpiredScore + hostScore + expiryScore + String(item.path || "").length;
+}
+
+/** Return a stable Cookie header from Chrome cookie records. */
+function buildMiaoshouCookieHeader(cookies) {
+  var rows = Array.isArray(cookies) ? cookies.slice() : [];
+  rows.sort(function sortMiaoshouCookies(left, right) {
+    return scoreMiaoshouCookie(right) - scoreMiaoshouCookie(left);
+  });
+  var seen = {};
+  var parts = [];
+  for (var index = 0; index < rows.length; index += 1) {
+    var item = rows[index] || {};
+    var name = String(item.name || "").trim();
+    if (!name || Object.prototype.hasOwnProperty.call(seen, name)) {
+      continue;
+    }
+    seen[name] = true;
+    parts.push(name + "=" + String(item.value || ""));
+  }
+  return parts.join("; ");
+}
+
+/** Read Miaoshou cookies that Chrome would send to the live Miaoshou backend. */
+function readMiaoshouCookies() {
+  return new Promise(function readMiaoshouCookiesPromise(resolve, reject) {
+    chrome.cookies.getAll({ url: miaoshouCookieUrl }, function handleMiaoshouCookies(cookies) {
+      var lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      var cookieHeader = buildMiaoshouCookieHeader(cookies);
+      if (!cookieHeader) {
+        reject(new Error("没有读取到妙手后台 Cookie，请先在 Chrome 登录妙手。"));
+        return;
+      }
+      resolve(cookieHeader);
+    });
+  });
+}
+
+/** Persist the current Miaoshou Cookie header into server/cookie.json. */
+async function saveMiaoshouCookieToBackend(cookieHeader) {
+  var endpoint = await getUnifiedApiUrl("/miaoshou/cookie");
+  var response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cookie: cookieHeader })
+  });
+  var payload = await response.json().catch(function handleMiaoshouCookieJsonError() {
+    return null;
+  });
+  if (!response.ok || !payload || !payload.ok) {
+    throw new Error(payload && payload.error && payload.error.message || "后端保存妙手 Cookie 失败。");
+  }
+  return payload.data || {};
+}
+
+/** Read the latest browser Miaoshou Cookie and save it to the backend. */
+async function syncLatestMiaoshouCookieToBackend() {
+  var cookieHeader = await readMiaoshouCookies();
+  return saveMiaoshouCookieToBackend(cookieHeader);
+}
 
 /** Delete every Cache Storage entry owned by this extension. */
 async function clearExtensionCacheStorage() {
@@ -68,9 +142,9 @@ function ignoreUnifiedInjectionError() {
   return null;
 }
 
-/** Reinject the current content UI into already-open supported product tabs after an extension update. */
+/** Reinject the current content UI into already-open product and Workbench tabs after an extension update. */
 function reinjectUnifiedContentScripts() {
-  chrome.tabs.query({ url: ["https://temu.com/*", "https://*.temu.com/*", "https://detail.1688.com/offer/*"] }, function handleSupportedTabs(tabs) {
+  chrome.tabs.query({ url: ["https://temu.com/*", "https://*.temu.com/*", "https://detail.1688.com/offer/*", "http://127.0.0.1:5173/*", "http://localhost:5173/*"] }, function handleSupportedTabs(tabs) {
     var lastError = chrome.runtime.lastError;
     if (lastError || !Array.isArray(tabs)) {
       return;
@@ -206,6 +280,14 @@ function openUnifiedWorkbenchTab(preferredTabId, temuMainId) {
 
 /** Handle collection requests from either platform page. */
 chrome.runtime.onMessage.addListener(function handleUnifiedCollectionMessage(message, sender, sendResponse) {
+  if (message && message.type === "syncMiaoshouCookieToBackend") {
+    syncLatestMiaoshouCookieToBackend().then(function handleMiaoshouCookieSyncResult(result) {
+      sendResponse({ ok: true, data: result });
+    }).catch(function handleMiaoshouCookieSyncError(error) {
+      sendResponse({ ok: false, error: error.message || "同步妙手 Cookie 失败。" });
+    });
+    return true;
+  }
   if (message && message.type === "getUnifiedBindingPanelData") {
     getUnifiedBindingPanelData().then(function handleBindingPanelData(payload) {
       sendResponse({ ok: true, payload: payload });

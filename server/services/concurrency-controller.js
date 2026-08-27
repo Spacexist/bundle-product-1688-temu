@@ -44,6 +44,31 @@ class ConcurrencyController {
     });
   }
 
+  /** Remove queued tasks that match one predicate before they acquire a worker slot. */
+  cancelWhere(predicate, reason) {
+    /** Reject every task when the caller did not provide a real matcher. */
+    const matcher = typeof predicate === "function" ? predicate : function rejectEveryCancelCandidate() {
+      return false;
+    };
+    let cancelled = 0;
+    for (let index = this.pendingTasks.length - 1; index >= 0; index -= 1) {
+      const task = this.pendingTasks[index];
+      if (!matcher(task.metadata || {}, this.createTaskSnapshot(task))) {
+        continue;
+      }
+      this.pendingTasks.splice(index, 1);
+      task.state = "cancelled";
+      task.finished_at = new Date().toISOString();
+      const error = new Error(String(reason || "队列任务已取消。"));
+      error.statusCode = 409;
+      error.code = "QUEUE_TASK_CANCELLED";
+      task.reject(error);
+      cancelled += 1;
+      this.notifyChange("cancelled", task);
+    }
+    return cancelled;
+  }
+
   /** Start queued tasks until the configured limit is reached. */
   pump() {
     const concurrency = this.getConcurrency();

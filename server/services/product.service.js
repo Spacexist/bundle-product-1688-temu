@@ -557,10 +557,13 @@ class ProductService {
         error.code = "CAROUSEL_OUTPUT_EMPTY";
         throw error;
       }
+      const currentGallery = Array.isArray(found.record.gallery_image_urls) ? found.record.gallery_image_urls : [];
+      const taskSourceIndices = Array.isArray(task.source_indices) ? task.source_indices : [];
+      const resolvedSourceIndices = replaceAll ? [] : service.resolveCarouselReplacementIndices(currentGallery.length, taskSourceIndices);
       let gallery = generatedUrls.slice();
       if (!replaceAll) {
-        gallery = Array.isArray(task.gallery_snapshot) ? task.gallery_snapshot.slice() : [];
-        const sourceIndices = Array.isArray(task.source_indices) ? task.source_indices.slice() : [];
+        gallery = currentGallery.slice();
+        const sourceIndices = resolvedSourceIndices.slice();
         /** Order source positions so removal cannot shift a later target. */
         sourceIndices.sort(function sortCarouselSourceIndices(first, second) {
           return Number(first) - Number(second);
@@ -589,6 +592,34 @@ class ProductService {
       version: transaction.result.product.version
     }, requestId);
     return transaction.result;
+  }
+
+  /** Resolve saved carousel slots to the nearest distinct positions in the live gallery. */
+  resolveCarouselReplacementIndices(galleryLength, taskSourceIndices) {
+    const length = Math.max(0, Math.floor(Number(galleryLength || 0)));
+    const savedIndices = Array.isArray(taskSourceIndices) ? taskSourceIndices : [];
+    const available = [];
+    const resolved = [];
+    for (let index = 0; index < length; index += 1) {
+      available.push(index);
+    }
+    for (let sourceIndex = 0; sourceIndex < savedIndices.length && available.length; sourceIndex += 1) {
+      const numericIndex = Number(savedIndices[sourceIndex]);
+      const requestedIndex = Number.isFinite(numericIndex)
+        ? Math.max(0, Math.min(length - 1, Math.round(numericIndex)))
+        : 0;
+      let nearestAvailableIndex = 0;
+      for (let availableIndex = 1; availableIndex < available.length; availableIndex += 1) {
+        const candidateDistance = Math.abs(available[availableIndex] - requestedIndex);
+        const nearestDistance = Math.abs(available[nearestAvailableIndex] - requestedIndex);
+        if (candidateDistance < nearestDistance
+          || (candidateDistance === nearestDistance && available[availableIndex] < available[nearestAvailableIndex])) {
+          nearestAvailableIndex = availableIndex;
+        }
+      }
+      resolved.push(available.splice(nearestAvailableIndex, 1)[0]);
+    }
+    return resolved;
   }
 
   /** Persist canonical stock, weight and dimension keys for every saved SKU row. */

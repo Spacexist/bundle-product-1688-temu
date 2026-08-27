@@ -3,6 +3,9 @@ const path = require("path");
 const readline = require("readline");
 const childProcess = require("child_process");
 
+const CLIP_WARMUP_TIMEOUT_MS = 600000;
+const CLIP_ASSEMBLE_TIMEOUT_MS = 300000;
+
 /** JSON-line client for the Python CLIP worker hosted by the 3000 server. */
 class ClipWorkerService {
   /** Store config readers and initialize lazy worker state. */
@@ -16,6 +19,51 @@ class ClipWorkerService {
     this.pending = {};
     this.sequence = 0;
     this.startPromise = null;
+    this.stderrBuffer = "";
+    this.loadingLogPath = path.join(this.appRoot, "server", "logs", "clip-loading.log");
+    this.loadingStatus = {
+      status: "waiting",
+      stage: "waiting",
+      progress: 0,
+      message: "网页已优先启动，等待加载 CLIP。",
+      error: "",
+      started_at: "",
+      updated_at: new Date().toISOString()
+    };
+    this.persistLoadingProgress(this.loadingStatus);
+  }
+
+  /** Return the latest CLIP startup stage for the workbench progress bar. */
+  getLoadingStatus() {
+    return Object.assign({}, this.loadingStatus);
+  }
+
+  /** Append one reviewable CLIP startup snapshot to the dedicated disk log. */
+  persistLoadingProgress(status) {
+    try {
+      fs.mkdirSync(path.dirname(this.loadingLogPath), { recursive: true });
+      fs.appendFileSync(this.loadingLogPath, JSON.stringify(status) + "\r\n", "utf8");
+    } catch (error) {
+      // A log write failure must not prevent CLIP from loading.
+    }
+  }
+
+  /** Update, persist, and publish one real CLIP startup stage. */
+  reportLoadingProgress(stage, progress, message, status, error) {
+    const nextProgress = Math.max(0, Math.min(100, Math.round(Number(progress) || 0)));
+    const now = new Date().toISOString();
+    this.loadingStatus = {
+      status: String(status || (nextProgress >= 100 ? "ready" : "loading")),
+      stage: String(stage || "loading"),
+      progress: nextProgress,
+      message: String(message || "正在加载 CLIP。"),
+      error: String(error || ""),
+      started_at: this.loadingStatus.started_at || now,
+      updated_at: now
+    };
+    this.persistLoadingProgress(this.loadingStatus);
+    this.writeBundleLog("CLIP", "CLIP load progress", this.loadingStatus, "");
+    return this.getLoadingStatus();
   }
 
   /** Read one JSON file without surfacing optional config parse errors. */
@@ -148,12 +196,17 @@ class ClipWorkerService {
       path.join(clipDirectory, "models", "open_clip_pytorch_model.bin"),
       path.join(clipDirectory, "data", "yunqi_clip_training", "last_checkpoint.pt"),
       path.join(clipDirectory, "data", "full_listing_index", "products_listing.index"),
+      path.join(clipDirectory, "data", "full_listing_index", "progress.json"),
       path.join(clipDirectory, "data", "full_clip_index", "products_full_prices.json")
     ];
     const missing = [];
     for (let index = 0; index < requiredFiles.length; index += 1) {
       if (!fs.existsSync(requiredFiles[index])) {
         missing.push(requiredFiles[index]);
+        continue;
+      }
+      if (fs.statSync(requiredFiles[index]).size <= 0) {
+        missing.push(requiredFiles[index] + " (empty)");
       }
     }
     if (missing.length) {
@@ -161,6 +214,10 @@ class ClipWorkerService {
     }
     if (!this.hasListingMetadata(clipDirectory)) {
       throw new Error("CLIP bundle missing listing metadata runtime/original JSON.");
+    }
+    const progress = this.readJsonFile(path.join(clipDirectory, "data", "full_listing_index", "progress.json"));
+    if (String(progress.status || "") !== "complete") {
+      throw new Error("CLIP listing index is not complete: " + String(progress.completed || 0) + "/" + String(progress.total || 0));
     }
   }
 
@@ -248,7 +305,7 @@ class ClipWorkerService {
 
   /** Lazily start the hidden Python worker owned by the 3000 server. */
   async ensureStarted() {
-    if (this.child && !this.child.killed) {
+    if (this.child && !this.child.killed && this.child.exitCode === null) {
       return;
     }
     if (this.startPromise) {
@@ -256,6 +313,7 @@ class ClipWorkerService {
     }
     const service = this;
     this.startPromise = new Promise(function startClipWorker(resolve, reject) {
+      service.reportLoadingProgress("validating", 10, "正在校验 CLIP 文件。", "loading", "");
       const config = service.readConfig ? service.readConfig() : service.readJsonFile(path.join(service.appRoot, "server", "config.json"));
       const clipDirectory = service.resolveClipProjectDirectory(config);
       const workerScript = path.join(clipDirectory, "work", "stdio_listing_worker.py");
@@ -264,9 +322,11 @@ class ClipWorkerService {
         service.validateClipBundle(clipDirectory, workerScript);
         service.assertPythonCommandAccessible(pythonCommand);
       } catch (error) {
+        service.reportLoadingProgress("failed", service.loadingStatus.progress, "CLIP 文件校验失败。", "error", error.message);
         reject(error);
         return;
       }
+      service.reportLoadingProgress("starting_python", 22, "正在启动 CLIP Python。", "loading", "");
       try {
         service.child = childProcess.spawn(pythonCommand, [workerScript], {
           cwd: clipDirectory,
@@ -275,14 +335,16 @@ class ClipWorkerService {
           windowsHide: true
         });
       } catch (error) {
-        reject(service.createPythonStartError(pythonCommand, error));
+        const startError = service.createPythonStartError(pythonCommand, error);
+        service.reportLoadingProgress("failed", service.loadingStatus.progress, "CLIP Python 启动失败。", "error", startError.message);
+        reject(startError);
         return;
       }
       service.reader = readline.createInterface({ input: service.child.stdout });
       service.reader.on("line", service.handleLine.bind(service));
       service.child.stderr.on("data", function handleClipWorkerStderr(chunk) {
         if (service.writeLog) {
-          service.writeStderrLog(String(chunk || "").trim());
+          service.writeStderrChunk(String(chunk || ""));
         }
       });
       service.child.on("error", function handleClipWorkerError(error) {
@@ -291,6 +353,7 @@ class ClipWorkerService {
         service.child = null;
         service.reader = null;
         service.startPromise = null;
+        service.reportLoadingProgress("failed", service.loadingStatus.progress, "CLIP Python 运行失败。", "error", startError.message);
         reject(startError);
       });
       service.child.on("exit", function handleClipWorkerExit(code) {
@@ -299,17 +362,40 @@ class ClipWorkerService {
         service.child = null;
         service.reader = null;
         service.startPromise = null;
+        service.flushStderrBuffer();
+        service.reportLoadingProgress("failed", service.loadingStatus.progress, "CLIP Python 已退出。", "error", error.message);
       });
       service.child.once("spawn", function handleClipWorkerSpawned() {
+        service.reportLoadingProgress("importing", 32, "Python 已启动，正在导入 CLIP 依赖。", "loading", "");
         resolve();
       });
     });
-    await this.startPromise;
-    this.startPromise = null;
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
   }
 
-  /** Convert structured Python bundle stderr into regular upstream diagnostics. */
-  writeStderrLog(text) {
+  /** Buffer Python stderr chunks so progress JSON split by Windows pipes remains readable. */
+  writeStderrChunk(text) {
+    this.stderrBuffer += String(text || "");
+    const lines = this.stderrBuffer.split(/\r?\n/);
+    this.stderrBuffer = lines.pop() || "";
+    for (let index = 0; index < lines.length; index += 1) {
+      this.writeStderrLine(lines[index]);
+    }
+  }
+
+  /** Flush the final partial stderr line when Python exits. */
+  flushStderrBuffer() {
+    const text = this.stderrBuffer;
+    this.stderrBuffer = "";
+    this.writeStderrLine(text);
+  }
+
+  /** Convert one Python stderr line into a loading stage or regular diagnostic. */
+  writeStderrLine(text) {
     const message = String(text || "").trim();
     if (!message) {
       return;
@@ -318,6 +404,11 @@ class ClipWorkerService {
     if (message.indexOf(prefix) === 0) {
       try {
         const payload = JSON.parse(message.slice(prefix.length));
+        if (String(payload.message || "") === "CLIP load progress") {
+          const progress = payload.payload || {};
+          this.reportLoadingProgress(progress.stage, progress.progress, progress.message, progress.status, progress.error);
+          return;
+        }
         this.writeBundleLog("UPSTREAM", "Bundle API " + String(payload.message || ""), payload.payload || {}, "");
         return;
       } catch (error) {
@@ -349,6 +440,9 @@ class ClipWorkerService {
       /** Resolve one CLIP worker request and mirror its response into diagnostics. */
       function resolveWithLog(result) {
         service.writeBundleLog("UPSTREAM", "Bundle CLIP worker response " + action, service.summarizeWorkerResult(action, result, Date.now() - startedAt), requestId);
+        if (action === "warmup" || ((action === "search_text" || action === "assemble") && service.loadingStatus.status !== "ready")) {
+          service.reportLoadingProgress("ready", 100, "CLIP 索引和模型已就绪。", "ready", "");
+        }
         resolve(result);
       }
       /** Reject one CLIP worker request and mirror its failure into diagnostics. */
@@ -358,10 +452,22 @@ class ClipWorkerService {
           duration_ms: Date.now() - startedAt,
           error: error && error.message ? error.message : String(error || "")
         }, requestId);
+        if (action === "warmup" && service.loadingStatus.status !== "ready") {
+          service.reportLoadingProgress("failed", service.loadingStatus.progress, "CLIP 加载失败。", "error", error && error.message ? error.message : String(error || ""));
+        }
         reject(error);
       }
       service.pending[id] = { resolve: resolveWithLog, reject: rejectWithLog, timeout: timeout };
-      service.child.stdin.write(JSON.stringify(body) + "\n", "utf8");
+      try {
+        if (!service.child || !service.child.stdin || service.child.stdin.destroyed) {
+          throw new Error("CLIP worker stdin is not writable.");
+        }
+        service.child.stdin.write(JSON.stringify(body) + "\n", "utf8");
+      } catch (error) {
+        clearTimeout(timeout);
+        delete service.pending[id];
+        rejectWithLog(error);
+      }
     });
   }
 
@@ -370,14 +476,23 @@ class ClipWorkerService {
     return this.request("index_status", {}, 60000);
   }
 
+  /** Load the CLIP index and model after the browser workbench is visible. */
+  warmup() {
+    if (this.loadingStatus.status === "ready") {
+      return Promise.resolve(this.getLoadingStatus());
+    }
+    return this.request("warmup", {}, CLIP_WARMUP_TIMEOUT_MS);
+  }
+
   /** Ask the worker to search text against the CLIP listing index. */
   searchText(payload) {
-    return this.request("search_text", payload, 60000);
+    const timeoutMs = this.loadingStatus.status === "ready" ? 60000 : CLIP_WARMUP_TIMEOUT_MS;
+    return this.request("search_text", payload, timeoutMs);
   }
 
   /** Ask the worker to run Kimi prompt generation and CLIP assembly. */
   assemble(payload) {
-    return this.request("assemble", payload, 180000);
+    return this.request("assemble", payload, CLIP_ASSEMBLE_TIMEOUT_MS);
   }
 }
 

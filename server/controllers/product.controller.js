@@ -138,15 +138,19 @@ class ProductController {
   /** Generate and download the current Temu-only 妙手 ZIP on the server. */
   async exportMiaoshouZip(request, response, next) {
     try {
-      /** Set streaming ZIP headers before the first archive chunk is written. */
-      function startMiaoshouZipDownload(info) {
-        response.setHeader("Content-Type", "application/zip");
-        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(info.fileName));
-        response.setHeader("Trailer", "X-Miaoshou-Image-Failures");
-        response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, X-Miaoshou-Image-Failures, X-Miaoshou-Product-Count");
-        response.setHeader("X-Miaoshou-Product-Count", String(info.productCount));
+      const exportService = this.miaoshouExport;
+      const packageFile = await exportService.createTemuZipFile();
+      response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, X-Miaoshou-Image-Failures, X-Miaoshou-Product-Count");
+      response.setHeader("X-Miaoshou-Image-Failures", String(packageFile.result.failureCount || 0));
+      response.setHeader("X-Miaoshou-Product-Count", String(packageFile.result.productCount || 0));
+      /** Clean up the completed temporary ZIP after Express finishes sending it. */
+      function finishMiaoshouZipDownload(error) {
+        exportService.cleanupTemuZipFile(packageFile.filePath);
+        if (error && !response.headersSent) {
+          next(error);
+        }
       }
-      await this.miaoshouExport.createTemuZip(response, startMiaoshouZipDownload);
+      response.download(packageFile.filePath, packageFile.result.fileName, finishMiaoshouZipDownload);
     } catch (error) {
       if (response.headersSent) {
         response.destroy();
@@ -173,6 +177,18 @@ class ProductController {
   /** Return whether server/cookie.json contains a reusable Miaoshou Cookie. */
   getMiaoshouCookieStatus(request, response, next) {
     try {
+      const result = this.miaoshouExport.getSavedMiaoshouCookieStatus();
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Save one Miaoshou Cookie header without running an online import. */
+  saveMiaoshouCookie(request, response, next) {
+    try {
+      const input = request.validatedBody || {};
+      this.miaoshouExport.saveMiaoshouCookie(input.cookie);
       const result = this.miaoshouExport.getSavedMiaoshouCookieStatus();
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {

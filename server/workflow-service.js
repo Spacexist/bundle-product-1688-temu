@@ -850,7 +850,6 @@ class WorkflowService {
     task.status = "clip_ready";
     task.source_mode = "clip";
     task.selected_image_url = String(input.image_url || task.selected_image_url || "");
-    task.custom_prompt = keyword;
     task.manual_keyword = keyword;
     task.manual_keyword_en = String(payload.manual_keyword_en || "");
     task.clip_search_query = clipQuery;

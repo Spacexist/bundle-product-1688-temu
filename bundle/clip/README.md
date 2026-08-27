@@ -1,52 +1,163 @@
 ---
 license: apache-2.0
+language:
+  - zh
+  - en
+tags:
+  - clip
+  - faiss
+  - ecommerce
+  - image-retrieval
+  - product-search
+  - temu
+pipeline_tag: image-feature-extraction
 ---
 
-# Temu Bundle Search
+<div align="center">
 
-本仓库是一个本地商品组货检索包：图片输入后调用 Kimi 生成组货方向，再用训练好的 CLIP / FAISS listing 索引召回 Temu 商品。仓库包含运行所需的代码、模型、索引和 metadata，大文件通过 Hugging Face Git LFS 存储。
+# Bundle CLIP
 
-## 包含内容
+### Temu product retrieval pack for local bundle-building workflows
+
+<p>
+  <img alt="CLIP" src="https://img.shields.io/badge/CLIP-OpenCLIP-111827?style=for-the-badge">
+  <img alt="FAISS" src="https://img.shields.io/badge/FAISS-Listing%20Index-2563eb?style=for-the-badge">
+  <img alt="Local" src="https://img.shields.io/badge/Run-Local%209990-f97316?style=for-the-badge">
+  <img alt="License" src="https://img.shields.io/badge/License-Apache--2.0-10b981?style=for-the-badge">
+</p>
+
+**Image in. Product ideas out.**
+
+This repository packages a local CLIP + FAISS retrieval service for ecommerce bundle discovery.
+
+</div>
+
+---
+
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/bundle-clip-search.png" alt="Bundle CLIP local listing search UI" width="92%">
+</p>
+
+<p align="center">
+  <em>Local listing search page served by the bundled 9990 runtime.</em>
+</p>
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/images/smart-workflow.png" alt="Auto Bundle smart workflow">
+    </td>
+    <td width="50%">
+      <img src="docs/images/workbench-overview.png" alt="Temu and 1688 workbench overview">
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><strong>Smart Bundle Workflow</strong></td>
+    <td align="center"><strong>Integrated Workbench</strong></td>
+  </tr>
+</table>
+
+## What This Is
+
+`bundle-clip` is a self-contained local retrieval bundle used by the Auto Bundle workbench. It combines:
+
+| Layer | Role |
+| --- | --- |
+| Kimi planning | Turns an input product image into bundle-search directions. |
+| OpenCLIP encoder | Embeds image and text prompts into the same semantic space. |
+| FAISS listing index | Retrieves high-similarity Temu listings from the prepared metadata. |
+| Local web UI | Serves a review page at `http://127.0.0.1:9990/`. |
+
+The pack is designed for fast local review, private experimentation, and offline-ish product matching after the LFS assets are downloaded.
+
+## Repository Layout
 
 ```text
-app/listing_search.html                         # 9990 前端页面
-work/full_listing_server.py                     # 纯 listing CLIP + Kimi 组货服务
-work/full_clip_server.py                        # 旧版 image/listing CLIP 服务
-work/build_full_listing_index.py                # listing 索引构建脚本
-models/open_clip_pytorch_model.bin              # OpenCLIP 基础权重
-data/yunqi_clip_training/last_checkpoint.pt     # 训练 checkpoint
-data/full_listing_index/products_listing.index  # FAISS listing 索引
-data/full_listing_index/products_listing_embeddings.npy
-data/full_listing_index/products_listing_meta.json
-data/full_clip_index/products_full_prices.json
-config.example.json                             # 配置模板
+bundle-clip/
+├─ app/
+│  └─ listing_search.html
+├─ docs/
+│  └─ images/
+├─ work/
+│  ├─ full_listing_server.py
+│  ├─ stdio_listing_worker.py
+│  ├─ full_clip_server.py
+│  └─ build_full_listing_index.py
+├─ models/
+│  └─ open_clip_pytorch_model.bin
+├─ data/
+│  ├─ yunqi_clip_training/
+│  │  └─ last_checkpoint.pt
+│  ├─ full_listing_index/
+│  │  ├─ products_listing.index
+│  │  ├─ products_listing_meta.runtime.json
+│  │  ├─ cleaning_report.json
+│  │  └─ progress.json
+│  └─ full_clip_index/
+│     └─ products_full_prices.json
+├─ config.example.json
+├─ .gitattributes
+└─ README.md
 ```
 
-## 下载
+## Included Assets
 
-需要安装 Git LFS：
+| Asset | Purpose |
+| --- | --- |
+| `models/open_clip_pytorch_model.bin` | Base OpenCLIP model weights. |
+| `data/yunqi_clip_training/last_checkpoint.pt` | Fine-tuned checkpoint for the bundle-search domain. |
+| `data/full_listing_index/products_listing.index` | FAISS index for listing retrieval. |
+| `data/full_listing_index/products_listing_meta.runtime.json` | Runtime metadata used to render product cards. |
+| `data/full_clip_index/products_full_prices.json` | Price metadata used by the local search UI. |
+
+Large files are tracked with Git LFS. Run `git lfs pull` after cloning.
+
+## Clone & Update
+
+Yes, you can clone this repository directly. The only catch is that the model weights and FAISS index are stored with Git LFS, so a complete first-time setup should be:
 
 ```powershell
 git lfs install
-git clone https://huggingface.co/mikaassa/temu-for-bundle
-cd temu-for-bundle
+git clone https://huggingface.co/mikaassa/bundle-clip
+cd bundle-clip
 git lfs pull
 ```
 
-## 配置 Kimi
+If Git LFS is missing, the large assets will look like tiny text pointer files and the server will fail when loading the model or index.
 
-复制配置模板：
+To update an existing local copy later:
 
 ```powershell
-copy config.example.json config.json
+cd bundle-clip
+git pull
+git lfs pull
 ```
 
-编辑 `config.json`：
+## Quick Start
+
+### 1. Clone With LFS
+
+```powershell
+git lfs install
+git clone https://huggingface.co/mikaassa/bundle-clip
+cd bundle-clip
+git lfs pull
+```
+
+### 2. Create Local Config
+
+```powershell
+Copy-Item config.example.json config.json
+```
+
+Fill in your private Kimi or Moonshot key:
 
 ```json
 {
   "kimi": {
-    "api_key": "你的 Kimi / Moonshot API Key",
+    "api_key": "YOUR_KIMI_API_KEY",
     "endpoint": "https://api.moonshot.cn/v1/chat/completions",
     "model": "kimi-k2.6",
     "temperature": 0.6,
@@ -55,47 +166,63 @@ copy config.example.json config.json
 }
 ```
 
-`config.json` 已被 `.gitignore` 忽略，不要提交真实 API key。
+`config.json` is ignored by Git. Keep real API keys local.
 
-也可以使用环境变量覆盖：
-
-```powershell
-$env:MOONSHOT_API_KEY="你的 key"
-$env:KIMI_ENDPOINT="https://api.moonshot.cn/v1/chat/completions"
-$env:KIMI_MODEL="kimi-k2.6"
-```
-
-## 启动 9990 服务
-
-建议使用已有 PyTorch / FAISS / OpenCLIP 环境。如果本机环境已经装好依赖：
+### 3. Start The Local Service
 
 ```powershell
-cd temu-for-bundle
 python .\work\full_listing_server.py
 ```
 
-然后打开：
+Open:
 
 ```text
 http://127.0.0.1:9990/
 ```
 
-## 页面流程
+## Workflow
 
-```text
-图片 -> Kimi 生成 10 个组货方向 -> 英文 listing prompt -> FAISS/CLIP 召回 -> 商品卡片
+```mermaid
+flowchart LR
+  A[Product image] --> B[Kimi bundle directions]
+  B --> C[English listing prompt]
+  C --> D[OpenCLIP embedding]
+  D --> E[FAISS nearest-neighbor search]
+  E --> F[Temu product cards]
 ```
 
-前端支持两个模式：
+The local UI supports two review paths:
 
-- 图片组货：上传商品图片，调用 Kimi 后查 CLIP 索引
-- 直接 CLIP：手动输入 listing / prompt，不调用 Kimi
+| Mode | Use Case |
+| --- | --- |
+| Image bundle search | Upload a product image, let Kimi produce bundle directions, then retrieve matching listings. |
+| Direct CLIP search | Enter a manual listing keyword or prompt and search the index directly. |
 
-商品主图会从 Excel metadata 中记录的 MAINIMAGE CDN 地址加载；CDN 失败的图片会被前端过滤掉。
+## Runtime Notes
 
-## 注意事项
+- Default local port: `9990`
+- Main service entry: `work/full_listing_server.py`
+- Workbench worker entry: `work/stdio_listing_worker.py`
+- Public page: `app/listing_search.html`
+- Main metadata image field: `MAINIMAGE`
 
-- 大文件在 Hugging Face LFS 中，clone 后必须执行 `git lfs pull`
-- 不要把 `config.json` 提交到仓库
-- 当前包面向本地运行，不是公网部署版本
-- 如果路径不同，服务会优先使用仓库内 `data/` 和 `models/`，否则才回退到历史本地路径
+The service prefers repository-local `data/` and `models/` paths first. Older absolute-path fallbacks are only used when local assets are missing.
+
+## Safety
+
+- Do not commit `config.json`, `.env`, logs, or local cache output.
+- API keys should be supplied through `config.json` or environment variables only.
+- This repository is a local runtime pack, not a public hosted inference endpoint.
+- Product metadata and retrieval quality depend on the bundled index snapshot.
+
+## Environment Overrides
+
+```powershell
+$env:MOONSHOT_API_KEY="YOUR_KIMI_API_KEY"
+$env:KIMI_ENDPOINT="https://api.moonshot.cn/v1/chat/completions"
+$env:KIMI_MODEL="kimi-k2.6"
+```
+
+## License
+
+Released under the Apache 2.0 license. Check upstream model and data-source terms before redistribution or commercial deployment.

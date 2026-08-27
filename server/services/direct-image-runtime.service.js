@@ -19,6 +19,8 @@ class DirectImageRuntimeService {
     this.taskScope = settings.taskScope === "sku" ? "sku" : "product";
     this.providers = settings.providers;
     this.images = settings.images;
+    this.activeControllers = Object.create(null);
+    this.cancelledTaskIds = Object.create(null);
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     this.recoverInterruptedTasks();
   }
@@ -31,6 +33,18 @@ class DirectImageRuntimeService {
   /** Return the JSON path for one direct-image task. */
   getTaskPath(taskId) {
     return path.join(this.runtimeDirectory, this.normalizeTaskId(taskId) + ".json");
+  }
+
+  /** Return whether one direct-image task was abandoned during this server process. */
+  isTaskCancelled(taskId) {
+    return Boolean(this.cancelledTaskIds[this.normalizeTaskId(taskId)]);
+  }
+
+  /** Stop direct-image processing when the task no longer owns its result. */
+  assertTaskAvailable(taskId) {
+    if (this.isTaskCancelled(taskId) || !this.readTask(taskId)) {
+      throw createDirectImageError("单结果图片任务已被放弃。", 409, "DIRECT_IMAGE_TASK_CANCELLED");
+    }
   }
 
   /** Read one persisted direct-image task without exposing malformed JSON. */
@@ -52,6 +66,9 @@ class DirectImageRuntimeService {
     const target = task && typeof task === "object" ? task : null;
     if (!target || !target.id) {
       throw createDirectImageError("单结果图片任务缺少 ID。", 500, "DIRECT_IMAGE_TASK_INVALID");
+    }
+    if (this.isTaskCancelled(target.id)) {
+      throw createDirectImageError("单结果图片任务已被放弃。", 409, "DIRECT_IMAGE_TASK_CANCELLED");
     }
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
     target.updated_at = new Date().toISOString();
@@ -131,6 +148,7 @@ class DirectImageRuntimeService {
       size: String(source.size || "1024x1024"),
       status: "queued",
       image_url: "",
+      image_ready: false,
       undo_token: "",
       error: "",
       error_code: "",
@@ -142,42 +160,78 @@ class DirectImageRuntimeService {
     return { task: task, existing: false };
   }
 
+  /** Return whether one generated task image is available from the local cache. */
+  isGeneratedImageReady(imageUrl) {
+    const value = String(imageUrl || "").trim();
+    if (!value) {
+      return false;
+    }
+    if (this.images && typeof this.images.localUrlExists === "function") {
+      if (typeof this.images.isLocalImageUrl === "function" && !this.images.isLocalImageUrl(value)) {
+        return false;
+      }
+      return this.images.localUrlExists(value);
+    }
+    return value.indexOf("/api/v1/cache/image/") === 0;
+  }
+
   /** Start one persisted direct-image task and retain its eventual provider result. */
   async startTask(taskId, requestId) {
     const task = this.readTask(taskId);
-    if (!task || task.status === "generating" || task.status === "succeeded") {
+    if (!task || this.isTaskCancelled(taskId) || task.status === "generating" || task.status === "succeeded") {
       return task;
     }
     task.status = "generating";
+    task.image_ready = false;
     task.error = "";
     task.error_code = "";
     this.writeTask(task);
+    const controller = new AbortController();
+    this.activeControllers[task.id] = controller;
     try {
+      const service = this;
       const result = await this.providers.editImages({
+        direct_task_id: task.id,
         image_urls: task.source_image_urls,
         prompt: task.prompt,
-        size: task.size
+        size: task.size,
+        cancel_signal: controller.signal,
+        /** Return whether the owning direct-image task has been abandoned. */
+        is_cancelled: function isDirectImageTaskCancelled() {
+          return service.isTaskCancelled(task.id) || !service.readTask(task.id);
+        }
       }, task.mode, requestId);
+      this.assertTaskAvailable(task.id);
       const currentTask = this.readTask(task.id);
       if (!currentTask) {
         this.deleteGeneratedImage(result.image_url);
         return null;
       }
+      if (!this.isGeneratedImageReady(result.image_url)) {
+        this.deleteGeneratedImage(result.image_url);
+        throw createDirectImageError("图片生成完成，但本地缓存尚未写入，请重新生成。", 502, "DIRECT_IMAGE_CACHE_NOT_READY");
+      }
       currentTask.status = "succeeded";
       currentTask.image_url = String(result.image_url || "");
+      currentTask.image_ready = true;
       currentTask.undo_token = String(result.undo_token || "");
       currentTask.error = "";
       currentTask.error_code = "";
       return this.writeTask(currentTask);
     } catch (error) {
       const failedTask = this.readTask(task.id);
-      if (!failedTask) {
+      if (!failedTask || this.isTaskCancelled(task.id)) {
         return null;
       }
       failedTask.status = "failed";
+      failedTask.image_ready = false;
       failedTask.error = String(error && error.message || "图片生成失败。");
       failedTask.error_code = String(error && error.code || "DIRECT_IMAGE_GENERATION_FAILED");
       return this.writeTask(failedTask);
+    } finally {
+      if (this.activeControllers[task.id] === controller) {
+        delete this.activeControllers[task.id];
+      }
     }
   }
 
@@ -231,8 +285,20 @@ class DirectImageRuntimeService {
 
   /** Delete one retained task and optionally remove its unreferenced generated image. */
   deleteTask(taskId, removeImage) {
-    const task = this.readTask(taskId);
-    const filePath = this.getTaskPath(taskId);
+    const safeTaskId = this.normalizeTaskId(taskId);
+    const task = this.readTask(safeTaskId);
+    const filePath = this.getTaskPath(safeTaskId);
+    this.cancelledTaskIds[safeTaskId] = true;
+    const controller = this.activeControllers[safeTaskId];
+    if (controller) {
+      controller.abort();
+      delete this.activeControllers[safeTaskId];
+    }
+    if (this.providers && typeof this.providers.cancelImageTasks === "function") {
+      this.providers.cancelImageTasks(function matchDirectImageQueueTask(metadata) {
+        return String(metadata && metadata.direct_task_id || "") === safeTaskId;
+      });
+    }
     if (task && fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }

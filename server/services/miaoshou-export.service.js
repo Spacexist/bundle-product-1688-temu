@@ -2,7 +2,6 @@ const archiver = require("archiver");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const stream = require("stream");
 const XLSX = require("xlsx");
 
 const MIAOSHOU_BASE_URL = "https://erp.91miaoshou.com";
@@ -11,7 +10,6 @@ const MIAOSHOU_GET_STS_PATH = "/api/app_media/app_attach_file/getOssUploadTempFi
 const MIAOSHOU_PROCESS_PATH = "/api/move/common_collect_box/processImportCopyV2";
 const MIAOSHOU_APP_SIGN_AES_KEY = "c70528119f323ee2";
 const MIAOSHOU_APP_SIGN_REPLACE_KEY = "50fb8857276b7c76b871754755571d76";
-const MIAOSHOU_COOKIE_EXPIRY_SKEW_MS = 60000;
 
 /** Return an array or a safe empty list for one cache field. */
 function asArray(value) {
@@ -43,6 +41,27 @@ function parseSpecValue(value, fallbackName) {
     return { name: raw.slice(0, separatorIndex).trim() || fallbackName, value: raw.slice(separatorIndex + 1).trim() };
   }
   return { name: fallbackName, value: raw };
+}
+
+/** Read the first explicit SKU specification name from current rows before using a default header. */
+function readSkuSpecHeader(skuRows, fieldName, fallbackName) {
+  const rows = asArray(skuRows);
+  for (let index = 0; index < rows.length; index += 1) {
+    const parsed = parseSpecValue(rows[index] && rows[index][fieldName], fallbackName);
+    if (parsed.value && parsed.name && parsed.name !== fallbackName) {
+      return parsed.name;
+    }
+  }
+  return fallbackName;
+}
+
+/** Build a Miaoshou-supported SKU header while keeping the user's current specification name. */
+function formatSkuSpecHeader(skuRows, fieldName, fallbackName, specIndex) {
+  const specName = readSkuSpecHeader(skuRows, fieldName, fallbackName);
+  if (!specName || specName === fallbackName) {
+    return fallbackName;
+  }
+  return "SKU规格" + specIndex + "（" + specName + "）";
 }
 
 /** Preserve numeric prices while leaving non-numeric source text unchanged. */
@@ -94,11 +113,11 @@ function formatMiaoshouDimensions(sku) {
   const lengthText = length === undefined || length === null ? "" : String(length);
   const widthText = width === undefined || width === null ? "" : String(width);
   const heightText = height === undefined || height === null ? "" : String(height);
-  return [lengthText, widthText, heightText].join("*");
+  return [lengthText, widthText, heightText].join("；");
 }
 
-/** Join Temu attributes into the description column expected by 妙手. */
-function buildMiaoshouDescription(value) {
+/** Format Temu attributes into the standard Miaoshou attributes column format (Key:Value;Key:Value). */
+function buildMiaoshouAttributes(value) {
   const rows = asArray(value);
   const result = [];
   for (let index = 0; index < rows.length; index += 1) {
@@ -117,7 +136,7 @@ function buildMiaoshouDescription(value) {
       }
     }
     if (key && readableValues.length) {
-      result.push(key + "：" + readableValues.join("、"));
+      result.push(key + ":" + readableValues.join("、"));
     } else if (readableValues.length) {
       result.push(readableValues.join("、"));
     }
@@ -135,6 +154,14 @@ function isTemuImage(value) {
     && source.indexOf("1688.com") < 0
     && source.indexOf("alicdn.com") < 0
     && source.indexOf("taobao.com") < 0;
+}
+
+/** Return whether one export image is allowed for its target Miaoshou folder. */
+function isMiaoshouExportImage(value, kind) {
+  if (String(kind || "") === "sku") {
+    return Boolean(String(value || "").trim());
+  }
+  return isTemuImage(value);
 }
 
 /** Collect unique Temu image URLs while keeping the original order. */
@@ -157,10 +184,42 @@ function collectImageUrls(primary, values) {
   return result;
 }
 
+/** Collect SKU image URLs and keep the current SKU main image first for Miaoshou matching. */
+function collectSkuImageUrls(sku) {
+  const source = sku && typeof sku === "object" ? sku : {};
+  const result = [];
+  const primary = String(source.sku_image_url || source.imageUrl || source.thumbUrl || "").trim();
+  if (primary && result.indexOf(primary) < 0) {
+    result.push(primary);
+  }
+  const stored = readImageUrls(source.sku_image_urls);
+  for (let index = 0; index < stored.length; index += 1) {
+    const value = String(stored[index] || "").trim();
+    if (value && result.indexOf(value) < 0) {
+      result.push(value);
+    }
+  }
+  return result;
+}
+
 /** Convert a product or SKU label into a safe Windows ZIP entry name. */
 function safeMiaoshouName(value, fallback) {
   const text = String(value || fallback || "产品素材包").replace(/[\\/:*?"<>|]/g, "_").trim();
   return (text || fallback || "产品素材包").slice(0, 80);
+}
+
+/** Reserve a Miaoshou SKU-image basename that follows the color_1.jpg rule. */
+function reserveMiaoshouSkuImageName(value, usedCounts) {
+  const counts = usedCounts && typeof usedCounts === "object" ? usedCounts : {};
+  const baseName = safeMiaoshouName(value, "SKU").slice(0, 70) || "SKU";
+  counts[baseName] = Number(counts[baseName] || 0) + 1;
+  return baseName + "_" + counts[baseName];
+}
+
+/** Create a stable content hash for one exported image buffer. */
+function hashMiaoshouImage(image) {
+  const source = image && image.buffer ? image.buffer : Buffer.alloc(0);
+  return crypto.createHash("sha256").update(source).digest("hex");
 }
 
 /** Clean a browser Cookie header before it is saved or sent upstream. */
@@ -229,15 +288,13 @@ function readMiaoshouCookieExpiresAt(cookie) {
   return new Date(seconds * 1000).toISOString();
 }
 
-/** Summarize whether one Miaoshou Cookie exists and is locally expired. */
+/** Summarize one Miaoshou Cookie without treating short JWT expiry as final login failure. */
 function createMiaoshouCookieStatus(cookie) {
   const normalizedCookie = normalizeMiaoshouCookie(cookie);
   const expiresAt = readMiaoshouCookieExpiresAt(normalizedCookie);
-  const expiresTime = expiresAt ? Date.parse(expiresAt) : 0;
-  const expired = Boolean(expiresTime && Date.now() + MIAOSHOU_COOKIE_EXPIRY_SKEW_MS >= expiresTime);
   return {
     hasCookie: Boolean(normalizedCookie),
-    expired: expired,
+    expired: false,
     expiresAt: expiresAt
   };
 }
@@ -269,7 +326,7 @@ function isMiaoshouLoginFailure(payload, statusCode) {
 
 /** Create the standard frontend-readable error for expired Miaoshou cookies. */
 function createMiaoshouLoginError(details) {
-  return createMiaoshouError("妙手 Cookie 已过期或无效，请重新复制 Cookie 后再试。", 401, details || null);
+  return createMiaoshouError("妙手 Cookie 已过期或无效，请重新登录妙手后再试。", 401, details || null);
 }
 
 /** Decode the dynamic Miaoshou x-app-zebra signing rule using Node crypto. */
@@ -427,10 +484,6 @@ class MiaoshouExportService {
     if (!normalizedCookie) {
       throw createMiaoshouError("请先输入妙手 Cookie。", 400, null);
     }
-    const status = createMiaoshouCookieStatus(normalizedCookie);
-    if (status.expired) {
-      throw createMiaoshouLoginError({ expires_at: status.expiresAt });
-    }
     fs.mkdirSync(path.dirname(this.cookieFilePath), { recursive: true });
     fs.writeFileSync(this.cookieFilePath, JSON.stringify({
       updated_at: new Date().toISOString(),
@@ -475,31 +528,30 @@ class MiaoshouExportService {
     if (!savedCookie) {
       throw createMiaoshouError("server/cookie.json 中没有可用 Cookie，请先粘贴一次妙手 Cookie。", 400, null);
     }
-    const status = createMiaoshouCookieStatus(savedCookie);
-    if (status.expired) {
-      throw createMiaoshouLoginError({ expires_at: status.expiresAt });
-    }
     return savedCookie;
   }
 
   /** Build one 妙手-compatible workbook from a Temu ViewModel record. */
   buildWorkbook(record) {
     const item = record || {};
-    const headers = ["* 产品标题", "货币类型", "货源链接", "货源平台", "产品主编号", "详情描述", "货源类目", "属性", "SKU规格1", "SKU规格2", "平台SKU", "* SKU售价", "SKU库存", "SKU重量(KG)", "SKU尺寸(CM)"];
+    const sourceRows = asArray(item.sku);
+    const firstSpecHeader = formatSkuSpecHeader(sourceRows, "SubSku1", "SKU规格1", 1);
+    const secondSpecHeader = formatSkuSpecHeader(sourceRows, "SubSku2", "SKU规格2", 2);
+    const headers = ["* 产品标题", "货币类型", "货源链接", "货源平台", "产品主编号", "详情描述", "货源类目", "属性", firstSpecHeader, secondSpecHeader, "平台SKU", "* SKU售价", "SKU库存", "SKU重量(KG)", "SKU尺寸(CM)"];
     const note = "注意事项：同一个商品多个SKU时，SPU级信息只填写第一行；图片通过素材包目录上传。";
     const rows = [[note], headers];
-    const sourceRows = asArray(item.sku);
     const skuRows = sourceRows.length ? sourceRows : [{ sku_id: item.product_id || item.main_id, sku_price: "", sku_stock: 0, sku_weight: 0 }];
-    const description = buildMiaoshouDescription(item.attributes_json);
+    const attributes = buildMiaoshouAttributes(item.attributes_json);
+    const description = String(item.product_description || item.description || "");
     const productId = String(item.product_id || item.main_id || "");
     for (let index = 0; index < skuRows.length; index += 1) {
       const sku = skuRows[index] || {};
       const firstSpec = parseSpecValue(sku.SubSku1 || sku.subSku1, "SubSku1");
       const secondSpec = parseSpecValue(sku.SubSku2 || sku.subSku2, "SubSku2");
-      const platformSku = String(sku.sku_id || sku.skuId || (productId ? productId + "-" + (index + 1) : String(item.main_id || "") + "-" + (index + 1)));
+      const platformSku = [firstSpec.value, secondSpec.value].filter(Boolean).join("-") || String(sku.sku_id || sku.skuId || (productId ? productId + "-" + (index + 1) : index + 1));
       const productFields = index === 0
-        ? [String(item.product_name || ""), "CNY", String(item.page_url || ""), "Temu", productId, description, String(item.product_category || ""), ""]
-        : ["", "", "", "", "", "", "", ""];
+        ? [String(item.product_name || ""), "CNY", String(item.page_url || ""), "Temu", productId, description, String(item.product_category || ""), attributes]
+        : [null, null, null, null, null, null, null, null];
       rows.push(productFields.concat([
         firstSpec.value,
         secondSpec.value,
@@ -521,15 +573,16 @@ class MiaoshouExportService {
     return XLSX.write(workbook, { bookType: "xlsx", type: "buffer" });
   }
 
-  /** Read one Temu source image through the server-side cache. */
+  /** Read one export image through the server-side cache for its Miaoshou folder. */
   async readExportImage(source, kind) {
     const value = String(source || "").trim();
-    if (!isTemuImage(value)) {
+    if (!isMiaoshouExportImage(value, kind)) {
       return null;
     }
     let localUrl = value;
     if (!this.images.isLocalImageUrl(value)) {
-      localUrl = await this.images.cacheImage(value, "temu", kind, false);
+      const imagePlatform = String(kind || "") === "sku" && !isTemuImage(value) ? "1688" : "temu";
+      localUrl = await this.images.cacheImage(value, imagePlatform, kind, false);
     }
     const image = this.images.readLocalImage(localUrl);
     if (!image) {
@@ -538,13 +591,27 @@ class MiaoshouExportService {
     return image;
   }
 
-  /** Create a standard ZIP stream and pipe output directly to the download response. */
+  /** Create a standard ZIP stream and resolve only after its output stream is flushed. */
   createArchive(output) {
     const archive = archiver("zip", { store: true });
     const completion = new Promise(function createArchivePromise(resolve, reject) {
+      let archiveEnded = false;
+      let outputFinished = !output || typeof output.once !== "function";
+      /** Resolve once both archiver and its destination stream are complete. */
+      function resolveIfFinished() {
+        if (archiveEnded && outputFinished) {
+          resolve();
+        }
+      }
       /** Resolve after the standard ZIP stream writes its end record. */
       function handleArchiveEnd() {
-        resolve();
+        archiveEnded = true;
+        resolveIfFinished();
+      }
+      /** Resolve after the destination stream has flushed the complete ZIP. */
+      function handleOutputFinish() {
+        outputFinished = true;
+        resolveIfFinished();
       }
       /** Reject when the ZIP stream reports a generation error. */
       function handleArchiveError(error) {
@@ -552,6 +619,10 @@ class MiaoshouExportService {
       }
       archive.on("end", handleArchiveEnd);
       archive.on("error", handleArchiveError);
+      if (output && typeof output.once === "function") {
+        output.once("finish", handleOutputFinish);
+        output.once("error", handleArchiveError);
+      }
     });
     if (output && typeof archive.pipe === "function") {
       archive.pipe(output);
@@ -604,12 +675,11 @@ class MiaoshouExportService {
     }
     const archiveState = this.createArchive(output);
     const archive = archiveState.archive;
-    this.addFolder(archive, packageName);
     for (let productIndex = 0; productIndex < records.length; productIndex += 1) {
       const record = records[productIndex] || {};
-      const productName = safeMiaoshouName(record.product_name, "Temu商品");
-      const productCode = safeMiaoshouName(record.product_id || record.main_id, String(productIndex + 1));
-      const productRoot = packageName + "/" + productName + "_" + productCode;
+      const productIndexNumber = productIndex + 1;
+      const productCode = safeMiaoshouName(record.product_id || record.main_id, String(productIndexNumber));
+      const productRoot = "产品素材" + productIndexNumber + "_" + productCode;
       archive.append(this.buildWorkbook(record), { name: productRoot + "/导入产品模板.xlsx", mode: "0644" });
       this.addFolder(archive, productRoot);
       this.addFolder(archive, productRoot + "/产品主图");
@@ -634,24 +704,37 @@ class MiaoshouExportService {
         await this.addImage(archive, productRoot + "/详情图/详情图_" + (imageIndex + 1), detailImages[imageIndex], "detail", failures);
       }
 
-      const exportedSkuKeys = [];
+      const exportedSkuImageCounts = {};
+      const exportedSkuImageHashes = {};
       const skuRows = asArray(record.sku);
       for (let skuIndex = 0; skuIndex < skuRows.length; skuIndex += 1) {
         const sku = skuRows[skuIndex] || {};
         const firstSpec = parseSpecValue(sku.SubSku1 || sku.subSku1, "SKU");
         const skuKey = firstSpec.value || String(sku.sku_id || sku.skuId || skuIndex + 1);
-        if (exportedSkuKeys.indexOf(skuKey) >= 0) {
-          continue;
-        }
-        const skuImages = collectImageUrls("", sku.sku_image_urls);
-        if (!skuImages.length && sku.sku_image_url) {
-          skuImages.push(String(sku.sku_image_url));
-        }
+        const skuImages = collectSkuImageUrls(sku);
         if (!skuImages.length) {
           continue;
         }
-        exportedSkuKeys.push(skuKey);
-        await this.addImage(archive, productRoot + "/SKU图/" + safeMiaoshouName(skuKey, "SKU") + "_" + exportedSkuKeys.length, skuImages[0], "sku", failures);
+        const skuImageSource = String(skuImages[0] || "").trim();
+        try {
+          const image = await this.readExportImage(skuImageSource, "sku");
+          if (!image) {
+            continue;
+          }
+          const skuImageHash = hashMiaoshouImage(image);
+          const skuImageBaseName = safeMiaoshouName(skuKey, "SKU").slice(0, 70) || "SKU";
+          if (!exportedSkuImageHashes[skuImageBaseName]) {
+            exportedSkuImageHashes[skuImageBaseName] = {};
+          }
+          if (exportedSkuImageHashes[skuImageBaseName][skuImageHash]) {
+            continue;
+          }
+          exportedSkuImageHashes[skuImageBaseName][skuImageHash] = true;
+          const skuImageName = reserveMiaoshouSkuImageName(skuKey, exportedSkuImageCounts);
+          archive.append(image.buffer, { name: productRoot + "/SKU图/" + skuImageName + image.extension, mode: "0644" });
+        } catch (error) {
+          failures.push(skuImageSource);
+        }
       }
     }
 
@@ -663,15 +746,31 @@ class MiaoshouExportService {
     return { fileName: fileName, productCount: records.length, failureCount: failures.length };
   }
 
-  /** Generate the current Temu ZIP in memory for direct online import. */
-  async createTemuZipBuffer() {
-    const chunks = [];
-    const output = new stream.PassThrough();
-    output.on("data", function collectMiaoshouZipChunk(chunk) {
-      chunks.push(Buffer.from(chunk));
-    });
+  /** Generate the current Temu ZIP through the same file stream shape as the download path. */
+  async createTemuZipFile() {
+    const outputDirectory = path.join(this.cacheDirectory, "runtime", "miaoshou-online");
+    fs.mkdirSync(outputDirectory, { recursive: true });
+    const filePath = path.join(outputDirectory, "miaoshou-import-" + Date.now() + "-" + crypto.randomUUID() + ".zip");
+    const output = fs.createWriteStream(filePath);
     const result = await this.createTemuZip(output, function ignoreMiaoshouZipStart() {});
-    return { buffer: Buffer.concat(chunks), result: result };
+    const size = fs.existsSync(filePath) ? fs.statSync(filePath).size : 0;
+    if (size <= 0) {
+      throw createMiaoshouError("妙手 ZIP 生成失败：临时 ZIP 文件为空。", 500, null);
+    }
+    return { filePath: filePath, result: result, size: size };
+  }
+
+  /** Remove one temporary online-import ZIP after Miaoshou has accepted or rejected it. */
+  cleanupTemuZipFile(filePath) {
+    const value = String(filePath || "");
+    if (!value) {
+      return;
+    }
+    try {
+      fs.unlinkSync(value);
+    } catch (error) {
+      // Temporary ZIP cleanup must not hide the real import result.
+    }
   }
 
   /** Request fresh OSS upload credentials from Miaoshou. */
@@ -757,17 +856,23 @@ class MiaoshouExportService {
   async importTemuOnline(options) {
     const settings = options || {};
     const cookie = this.resolveMiaoshouCookie(settings.cookie);
-    const zip = await this.createTemuZipBuffer();
-    const ossPath = await this.putMiaoshouOss(cookie, zip.buffer);
-    const importPayload = await this.processMiaoshouImport(cookie, ossPath, zip.result.fileName, settings.autoFetch !== false);
-    return {
-      fileName: zip.result.fileName,
-      productCount: zip.result.productCount,
-      failureCount: zip.result.failureCount,
-      ossPath: ossPath,
-      importResult: importPayload.result || "success",
-      importTaskId: importPayload.commonCollectBoxImportTaskId || importPayload.importTaskId || ""
-    };
+    const zip = await this.createTemuZipFile();
+    try {
+      const zipBuffer = fs.readFileSync(zip.filePath);
+      const ossPath = await this.putMiaoshouOss(cookie, zipBuffer);
+      const importPayload = await this.processMiaoshouImport(cookie, ossPath, zip.result.fileName, settings.autoFetch !== false);
+      return {
+        fileName: zip.result.fileName,
+        productCount: zip.result.productCount,
+        failureCount: zip.result.failureCount,
+        zipSize: zip.size,
+        ossPath: ossPath,
+        importResult: importPayload.result || "success",
+        importTaskId: importPayload.commonCollectBoxImportTaskId || importPayload.importTaskId || ""
+      };
+    } finally {
+      this.cleanupTemuZipFile(zip.filePath);
+    }
   }
 }
 

@@ -4,6 +4,9 @@
     "port": 3000,
     "corsOrigins": ["http://127.0.0.1:5173", "http://localhost:5173", "chrome-extension://*"]
   },
+  "cloudAuth": {
+    "workerUrl": "https://bundle-1688-temu-auth.changkaishen7788.workers.dev"
+  },
   "storage": {
     "cacheDirectory": "D:/自动组货/cache",
     "imageDirectory": "D:/自动组货/cache/image",

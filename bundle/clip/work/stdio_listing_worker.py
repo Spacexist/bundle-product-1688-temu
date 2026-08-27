@@ -13,6 +13,7 @@ from full_listing_server import (
     search_listing_index,
     build_status_payload,
     load_index_runtime,
+    load_model_runtime,
     RUNTIME_CACHE,
     KIMI_CONFIG,
     KIMI_MODEL,
@@ -61,6 +62,17 @@ def handle_index_status(_payload):
     except Exception as error:
         status["load_error"] = str(error)
     return status
+
+
+def handle_warmup(_payload):
+    """Load the listing index and trained text model before the first search."""
+    load_index_runtime()
+    load_model_runtime()
+    return {
+        "vectors": RUNTIME_CACHE["index"].ntotal,
+        "products": len(RUNTIME_CACHE["products"]),
+        "model_ready": RUNTIME_CACHE["model"] is not None,
+    }
 
 
 def handle_search_text(payload):
@@ -138,6 +150,8 @@ def dispatch(payload):
     action = str(payload.get("action", "")).strip()
     if action == "index_status":
         return handle_index_status(payload)
+    if action == "warmup":
+        return handle_warmup(payload)
     if action == "search_text":
         return handle_search_text(payload)
     if action == "assemble":

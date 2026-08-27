@@ -32,6 +32,7 @@ function createProviderRouter(options) {
   router.post("/workflow/prompts", validationModule.validate(schemaModule.workflowPromptSchema, "body"), workflow.generatePrompts.bind(workflow));
   router.get("/workflow/carousel", workflow.getCarouselTasks.bind(workflow));
   router.post("/workflow/carousel/plan", validationModule.validate(schemaModule.carouselWorkflowPromptSchema, "body"), workflow.startCarouselPlan.bind(workflow));
+  router.post("/workflow/carousel/manual", validationModule.validate(schemaModule.carouselManualPromptSchema, "body"), workflow.startManualCarouselPlan.bind(workflow));
   router.get("/workflow/carousel/product/:temuMainId", workflow.getCarouselTask.bind(workflow));
   router.patch("/workflow/carousel/:taskId", validationModule.validate(schemaModule.carouselPlanUpdateSchema, "body"), workflow.updateCarouselTask.bind(workflow));
   router.patch("/workflow/carousel/:taskId/pages/:pageIndex", validationModule.validate(schemaModule.carouselPageUpdateSchema, "body"), workflow.updateCarouselPage.bind(workflow));
@@ -43,6 +44,8 @@ function createProviderRouter(options) {
 
   router.get("/logs", diagnostics.getLogs.bind(diagnostics));
   router.get("/logs/events", diagnostics.connectLogs.bind(diagnostics));
+  router.get("/clip/status", diagnostics.getClipStatus.bind(diagnostics));
+  router.post("/clip/warmup", diagnostics.warmClip.bind(diagnostics));
   router.get("/queue", diagnostics.getQueue.bind(diagnostics));
   router.get("/queue/events", diagnostics.connectQueue.bind(diagnostics));
   return router;

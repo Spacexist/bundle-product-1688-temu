@@ -1,6 +1,7 @@
 cache/
 web/cache.json
 node_modules/
+cloudflare/node_modules/
 /config.json
 server/config.json
 server/cookie.json
@@ -18,3 +19,9 @@ bundle/_delete_pending_python_gpu/
 __pycache__/
 test_*.py
 build/
+runtime/*credential*
+runtime/cloud-config-state.json
+cloudflare/.npm-cache/
+cloudflare/.wrangler/
+cloudflare/.wrangler-config/
+cloudflare/.dev.vars

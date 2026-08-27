@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -412,6 +413,33 @@ def normalize_storage_path(value: Any) -> Path:
     return Path(text).resolve()
 
 
+def has_usable_storage_drive(path: Path) -> bool:
+    """Return whether the configured storage drive exists on this Windows machine."""
+    if os.name != "nt":
+        return True
+    anchor = str(path.anchor or "")
+    if not anchor or not anchor.endswith("\\") or not anchor[1:2] == ":":
+        return True
+    return Path(anchor).exists()
+
+
+def build_project_storage_paths(project_root: Path) -> tuple[Path, Path, Path]:
+    """Return the project-local storage fallback used when an external drive is missing."""
+    cache_dir = (project_root / "runtime" / "cache").resolve()
+    return (cache_dir, cache_dir / "image", cache_dir / "history")
+
+
+def repair_storage_to_project_cache(project_root: Path, config: dict[str, Any], storage: dict[str, Any]) -> tuple[Path, Path, Path]:
+    """Persist a project-local storage fallback without touching provider secrets."""
+    cache_dir, image_dir, history_dir = build_project_storage_paths(project_root)
+    storage["cacheDirectory"] = str(cache_dir)
+    storage["imageDirectory"] = str(image_dir)
+    storage["historyDirectory"] = str(history_dir)
+    write_json(project_root / "server" / "config.json", config)
+    print_line("FIX", f"Storage drive missing; switched cache to project runtime: {cache_dir}")
+    return (cache_dir, image_dir, history_dir)
+
+
 def is_inside(parent: Path, child: Path) -> bool:
     """Return whether child is equal to or below parent after path resolution."""
     try:
@@ -447,6 +475,10 @@ def ensure_storage(project_root: Path, config: dict[str, Any], repair: bool) -> 
     cache_dir = normalize_storage_path(storage.get("cacheDirectory"))
     image_dir = normalize_storage_path(storage.get("imageDirectory"))
     history_dir = normalize_storage_path(storage.get("historyDirectory"))
+    if not has_usable_storage_drive(cache_dir):
+        if not repair:
+            raise ValueError(f"Configured cache drive is missing: {cache_dir.anchor}")
+        cache_dir, image_dir, history_dir = repair_storage_to_project_cache(project_root, config, storage)
     if not is_inside(cache_dir, image_dir) or not is_inside(cache_dir, history_dir):
         raise ValueError("imageDirectory and historyDirectory must be inside cacheDirectory.")
     if repair:
@@ -578,6 +610,16 @@ def list_pids_on_port(port: int) -> set[int]:
     return pids
 
 
+def wait_for_port_pid_release(port: int, pid: int, timeout_seconds: float = 3.0) -> bool:
+    """Wait until one terminated process no longer owns the startup port."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if pid not in list_pids_on_port(port):
+            return True
+        time.sleep(0.1)
+    return pid not in list_pids_on_port(port)
+
+
 def kill_ports(ports: list[int]) -> None:
     """Stop stale local services bound to the configured startup ports."""
     current_pid = os.getpid()
@@ -589,7 +631,19 @@ def kill_ports(ports: list[int]) -> None:
         for pid in sorted(pids):
             if pid == current_pid:
                 continue
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, shell=False)
+            completed = subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                shell=False,
+            )
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout).strip()
+                raise RuntimeError(f"Failed to stop PID {pid} on port {port}: {detail}")
+            if not wait_for_port_pid_release(port, pid):
+                raise RuntimeError(f"PID {pid} still owns port {port} after taskkill.")
             print_line("FIX", f"Killed PID {pid} on port {port}.")
 
 
@@ -837,10 +891,20 @@ def check_clip_bundle(project_root: Path, config: dict[str, Any]) -> None:
         clip_root / "models" / "open_clip_pytorch_model.bin",
         clip_root / "data" / "yunqi_clip_training" / "last_checkpoint.pt",
         clip_root / "data" / "full_listing_index" / "products_listing.index",
+        clip_root / "data" / "full_listing_index" / "progress.json",
         clip_root / "data" / "full_clip_index" / "products_full_prices.json",
     ]
     for path in required:
         require_nonempty_file(path, "CLIP file")
+    metadata_paths = [
+        clip_root / "data" / "full_listing_index" / "products_listing_meta.runtime.json",
+        clip_root / "data" / "full_listing_index" / "products_listing_meta.json",
+    ]
+    if not any(path.exists() and path.stat().st_size > 0 for path in metadata_paths):
+        raise FileNotFoundError("CLIP listing metadata runtime/original JSON is missing.")
+    progress = load_json(clip_root / "data" / "full_listing_index" / "progress.json")
+    if str(progress.get("status", "")) != "complete":
+        raise RuntimeError("CLIP listing index is not complete: " + str(progress.get("completed", 0)) + "/" + str(progress.get("total", 0)))
     check_python_clip_environment(python_command, clip_root)
     print_line("OK", "CLIP bundle and Python environment are ready.")
 
@@ -886,6 +950,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--install", action="store_true", help="Run npm install when node_modules is missing.")
     parser.add_argument("--kill-ports", default="", help="Comma separated ports to free before startup.")
     parser.add_argument("--skip-clip-check", action="store_true", help="Skip optional CLIP bundle checks.")
+    parser.add_argument("--quick-start", action="store_true", help="Skip heavyweight scans that CLIP validates lazily.")
     parser.add_argument("--benchmark-clip-cpu", action="store_true", help="Benchmark bundled CLIP with CUDA disabled.")
     return parser
 
@@ -896,7 +961,7 @@ def main() -> int:
     args = parser.parse_args()
     project_root = resolve_project_root(args.project_root)
     print_line("INFO", f"Project: {project_root}")
-    if args.repair:
+    if args.repair and not args.quick_start:
         removed, failed = remove_windows_zone_identifier_streams(project_root)
         if removed:
             print_line("FIX", "Removed Windows download blocking marks: " + str(removed))
@@ -905,9 +970,10 @@ def main() -> int:
     config = ensure_private_config(project_root, args.repair)
     ensure_storage(project_root, config, args.repair)
     ensure_node_modules(project_root, args.install)
-    check_no_gpu_runtime(project_root)
+    if not args.quick_start:
+        check_no_gpu_runtime(project_root)
     check_project_files(project_root)
-    if not args.skip_clip_check:
+    if not args.skip_clip_check and not args.quick_start:
         check_clip_bundle(project_root, config)
     if args.benchmark_clip_cpu:
         benchmark_clip_cpu(project_root, config)

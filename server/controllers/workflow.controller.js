@@ -148,9 +148,16 @@ class WorkflowController {
   startCarouselPlan(request, response, next) {
     try {
       const task = this.carousel.startPlanning(request.validatedBody, request.requestId);
-      if (this.directImages) {
-        this.directImages.deleteTasksForProduct(request.validatedBody.temu_main_id, true);
-      }
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Create one ready carousel task from manually configured storyboard prompts. */
+  startManualCarouselPlan(request, response, next) {
+    try {
+      const task = this.carousel.createManualTask(request.validatedBody);
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

@@ -1,10 +1,57 @@
 const fs = require("fs");
 const path = require("path");
 
+const projectRoot = path.resolve(__dirname, "..", "..");
 const configPath = path.resolve(__dirname, "..", "config.json");
+const exampleConfigPath = path.resolve(__dirname, "..", "config.example.json");
+
+/** Ensure first-run installs have a private config file before the server reads it. */
+function ensureServerConfigFile() {
+  if (fs.existsSync(configPath)) {
+    return;
+  }
+  if (!fs.existsSync(exampleConfigPath)) {
+    return;
+  }
+  fs.copyFileSync(exampleConfigPath, configPath);
+}
+
+/** Return whether one absolute Windows drive root exists on this machine. */
+function hasUsableDriveRoot(filePath) {
+  if (process.platform !== "win32") {
+    return true;
+  }
+  const resolved = path.resolve(String(filePath || ""));
+  const root = path.parse(resolved).root;
+  return !/^[a-z]:\\$/i.test(root) || fs.existsSync(root);
+}
+
+/** Return storage paths that fall back to a project-local cache when a drive is missing. */
+function normalizeStorage(storage) {
+  const source = storage && typeof storage === "object" ? storage : {};
+  const configuredCacheDirectory = String(source.cacheDirectory || "D:/自动组货/cache");
+  const configuredImageDirectory = String(source.imageDirectory || "D:/自动组货/cache/image");
+  const configuredHistoryDirectory = String(source.historyDirectory || "D:/自动组货/cache/history");
+  if (hasUsableDriveRoot(configuredCacheDirectory)) {
+    return {
+      cacheDirectory: configuredCacheDirectory,
+      imageDirectory: configuredImageDirectory,
+      historyDirectory: configuredHistoryDirectory,
+      historyLimit: Number(source.historyLimit || 200)
+    };
+  }
+  const fallbackCacheDirectory = path.join(projectRoot, "runtime", "cache");
+  return {
+    cacheDirectory: fallbackCacheDirectory,
+    imageDirectory: path.join(fallbackCacheDirectory, "image"),
+    historyDirectory: path.join(fallbackCacheDirectory, "history"),
+    historyLimit: Number(source.historyLimit || 200)
+  };
+}
 
 /** Read the private server configuration and apply local-only defaults. */
 function readServerConfig() {
+  ensureServerConfigFile();
   let source = {};
   if (fs.existsSync(configPath)) {
     source = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -20,14 +67,11 @@ function readServerConfig() {
       ? server.corsOrigins
       : ["http://127.0.0.1:5173", "http://localhost:5173", "chrome-extension://*"]
   };
-  source.storage = {
-    cacheDirectory: String(storage.cacheDirectory || "D:/自动组货/cache"),
-    imageDirectory: String(storage.imageDirectory || "D:/自动组货/cache/image"),
-    historyDirectory: String(storage.historyDirectory || "D:/自动组货/cache/history"),
-    historyLimit: Number(storage.historyLimit || 200)
-  };
+  source.storage = normalizeStorage(storage);
   source.workflow = {
     default_mode: String(workflow.default_mode || "clip") === "legacy" ? "legacy" : "clip",
+    clip_project_directory: String(workflow.clip_project_directory || "bundle/clip"),
+    clip_python_command: String(workflow.clip_python_command || "bundle/python-runtime/python.exe"),
     clip_candidate_count: Math.max(1, Math.min(Number(workflow.clip_candidate_count || 10), 40)),
     legacy_candidate_count: Math.max(1, Math.min(Number(workflow.legacy_candidate_count || 4), 10)),
     clip_kimi_system_prompt: String(workflow.clip_kimi_system_prompt || ""),
@@ -106,6 +150,7 @@ function maskSecret(value) {
 }
 
 module.exports = {
+  ensureServerConfigFile: ensureServerConfigFile,
   readServerConfig: readServerConfig,
   writeServerConfig: writeServerConfig,
   createPublicServerConfig: createPublicServerConfig

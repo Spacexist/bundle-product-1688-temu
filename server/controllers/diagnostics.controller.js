@@ -4,6 +4,30 @@ class DiagnosticsController {
   constructor(options) {
     const settings = options || {};
     this.diagnostics = settings.diagnostics;
+    this.clipWorker = settings.clipWorker;
+  }
+
+  /** Return the latest real CLIP loading stage for the workbench progress bar. */
+  getClipStatus(request, response) {
+    response.json({
+      ok: true,
+      data: { status: this.clipWorker.getLoadingStatus() },
+      error: null,
+      meta: { request_id: request.requestId || "" }
+    });
+  }
+
+  /** Start CLIP loading in the background without delaying the HTTP response. */
+  warmClip(request, response) {
+    this.clipWorker.warmup().catch(function retainClipWarmupFailureInServiceLog() {
+      return;
+    });
+    response.status(202).json({
+      ok: true,
+      data: { status: this.clipWorker.getLoadingStatus() },
+      error: null,
+      meta: { request_id: request.requestId || "" }
+    });
   }
 
   /** Return the bounded in-memory server log history. */

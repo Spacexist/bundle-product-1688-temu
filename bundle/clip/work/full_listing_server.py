@@ -229,11 +229,13 @@ def load_model_runtime():
         return
     if not BASE_MODEL_PATH.exists() or not TRAINED_CHECKPOINT_PATH.exists():
         raise FileNotFoundError("Base model or trained checkpoint is missing")
+    write_bundle_log("CLIP load progress", {"stage": "model_base", "progress": 78, "message": "正在载入 CLIP 基础模型。", "status": "loading", "error": ""})
     device = torch.device("cpu")
     model, _, _ = open_clip.create_model_and_transforms(
         MODEL_NAME,
         pretrained=str(BASE_MODEL_PATH),
     )
+    write_bundle_log("CLIP load progress", {"stage": "model_checkpoint", "progress": 87, "message": "正在载入 CLIP 训练权重。", "status": "loading", "error": ""})
     checkpoint = torch.load(TRAINED_CHECKPOINT_PATH, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model"])
     model = model.to(device)
@@ -241,6 +243,7 @@ def load_model_runtime():
     RUNTIME_CACHE["model"] = model
     RUNTIME_CACHE["tokenizer"] = open_clip.get_tokenizer(MODEL_NAME)
     RUNTIME_CACHE["device"] = device
+    write_bundle_log("CLIP load progress", {"stage": "model_ready", "progress": 96, "message": "CLIP 模型已载入，正在完成初始化。", "status": "loading", "error": ""})
 
 
 def load_index_runtime():
@@ -257,8 +260,11 @@ def load_index_runtime():
     cached_mtime = RUNTIME_CACHE.get("index_mtime")
     if RUNTIME_CACHE["index"] is not None and cached_mtime == index_mtime:
         return
+    write_bundle_log("CLIP load progress", {"stage": "index", "progress": 46, "message": "正在载入 FAISS 商品索引。", "status": "loading", "error": ""})
     RUNTIME_CACHE["index"] = read_faiss_index_file(INDEX_PATH)
+    write_bundle_log("CLIP load progress", {"stage": "metadata", "progress": 60, "message": "正在载入商品元数据。", "status": "loading", "error": ""})
     RUNTIME_CACHE["products"] = normalize_product_metadata_rows(read_json_file(metadata_path, []))
+    write_bundle_log("CLIP load progress", {"stage": "prices", "progress": 70, "message": "正在载入价格数据。", "status": "loading", "error": ""})
     RUNTIME_CACHE["prices"] = read_json_file(PRICE_METADATA_PATH, {})
     RUNTIME_CACHE["index_mtime"] = index_mtime
     if RUNTIME_CACHE["index"].ntotal != len(RUNTIME_CACHE["products"]):

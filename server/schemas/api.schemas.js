@@ -25,11 +25,24 @@ const configUpdateSchema = z.object({
   kimi_apikey: z.string().optional()
 });
 
+const defaultPromptPageSchema = z.object({
+  purpose: z.string().trim().max(500).optional(),
+  prompt: z.string().trim().min(1).max(10000)
+});
+
+const defaultPromptUpdateSchema = z.object({
+  pages: z.array(defaultPromptPageSchema).min(1).max(10)
+});
+
 const jsonImportSchema = z.object({ json_text: z.string().min(2) });
 
 const miaoshouImportSchema = z.object({
   cookie: z.string().trim().max(50000).optional(),
   auto_fetch: z.boolean().optional()
+});
+
+const miaoshouCookieSchema = z.object({
+  cookie: z.string().trim().min(1).max(50000)
 });
 
 const imageCacheSchema = z.object({
@@ -155,6 +168,15 @@ const carouselWorkflowPromptSchema = z.object({
   size: z.string().optional()
 });
 
+const carouselManualPromptSchema = carouselWorkflowPromptSchema.omit({
+  count: true,
+  prompt: true,
+  advanced: true,
+  reasoning_enabled: true
+}).extend({
+  pages: z.array(defaultPromptPageSchema).min(1).max(10)
+});
+
 const workflowPromptSchema = z.union([packingWorkflowPromptSchema, carouselWorkflowPromptSchema]);
 
 const carouselPlanUpdateSchema = z.object({
@@ -196,8 +218,10 @@ module.exports = {
   collectionSchema: collectionSchema,
   undoSchema: undoSchema,
   configUpdateSchema: configUpdateSchema,
+  defaultPromptUpdateSchema: defaultPromptUpdateSchema,
   jsonImportSchema: jsonImportSchema,
   miaoshouImportSchema: miaoshouImportSchema,
+  miaoshouCookieSchema: miaoshouCookieSchema,
   imageCacheSchema: imageCacheSchema,
   imageSearchSchema: imageSearchSchema,
   dollarTransferSchema: dollarTransferSchema,
@@ -213,6 +237,7 @@ module.exports = {
   clipWorkflowAssembleSchema: clipWorkflowAssembleSchema,
   clipWorkflowSearchSchema: clipWorkflowSearchSchema,
   carouselWorkflowPromptSchema: carouselWorkflowPromptSchema,
+  carouselManualPromptSchema: carouselManualPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
   carouselPageUpdateSchema: carouselPageUpdateSchema,
   carouselGenerationSchema: carouselGenerationSchema,
