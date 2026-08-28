@@ -1,0 +1,15 @@
+name = "bundle-1688-temu-auth"
+main = "src/worker.js"
+compatibility_date = "2026-07-28"
+account_id = "3d4fd5fed941eccb2957335e8cb7c60f"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "BUNDLE_1688_TEMU_VAULT"
+id = "2381164cbbb444a792b77bc5d582c3ec"
+
+[[d1_databases]]
+binding = "BUNDLE_1688_TEMU_AUDIT"
+database_name = "bundle-1688-temu-audit"
+database_id = "a3fc182d-0a4c-4045-94fc-cc7c5250ebf9"
+migrations_dir = "migrations"

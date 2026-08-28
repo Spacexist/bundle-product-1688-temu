@@ -124,6 +124,33 @@ class ProductController {
     }
   }
 
+  /** Restore one extension-exported JSON batch through sequential text chunks. */
+  async restoreJsonChunk(request, response, next) {
+    try {
+      const result = await this.products.restoreJsonChunk({
+        upload_id: request.get("X-Restore-Upload-Id"),
+        file_name: request.get("X-Restore-File-Name"),
+        chunk_index: Number(request.get("X-Restore-Chunk-Index")),
+        total_chunks: Number(request.get("X-Restore-Total-Chunks")),
+        chunk_base64: String(request.body || "")
+      }, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Restore the next prepared backup record batch and report progress. */
+  async restoreJsonBatch(request, response, next) {
+    try {
+      const input = request.body && typeof request.body === "object" ? request.body : {};
+      const result = await this.products.restoreJsonBatch(input, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Download the current backend-produced ViewModel as JSON. */
   exportJson(request, response, next) {
     try {
@@ -138,20 +165,60 @@ class ProductController {
   /** Generate and download the current Temu-only 妙手 ZIP on the server. */
   async exportMiaoshouZip(request, response, next) {
     try {
-      /** Set streaming ZIP headers before the first archive chunk is written. */
-      function startMiaoshouZipDownload(info) {
-        response.setHeader("Content-Type", "application/zip");
-        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + encodeURIComponent(info.fileName));
-        response.setHeader("Trailer", "X-Miaoshou-Image-Failures");
-        response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, X-Miaoshou-Image-Failures, X-Miaoshou-Product-Count");
-        response.setHeader("X-Miaoshou-Product-Count", String(info.productCount));
+      const exportService = this.miaoshouExport;
+      const packageFile = await exportService.createTemuZipFile();
+      response.setHeader("Access-Control-Expose-Headers", "Content-Disposition, X-Miaoshou-Image-Failures, X-Miaoshou-Product-Count");
+      response.setHeader("X-Miaoshou-Image-Failures", String(packageFile.result.failureCount || 0));
+      response.setHeader("X-Miaoshou-Product-Count", String(packageFile.result.productCount || 0));
+      /** Clean up the completed temporary ZIP after Express finishes sending it. */
+      function finishMiaoshouZipDownload(error) {
+        exportService.cleanupTemuZipFile(packageFile.filePath);
+        if (error && !response.headersSent) {
+          next(error);
+        }
       }
-      await this.miaoshouExport.createTemuZip(response, startMiaoshouZipDownload);
+      response.download(packageFile.filePath, packageFile.result.fileName, finishMiaoshouZipDownload);
     } catch (error) {
       if (response.headersSent) {
         response.destroy();
         return;
       }
+      next(error);
+    }
+  }
+
+  /** Upload the current Temu-only 妙手 ZIP directly into Miaoshou's import flow. */
+  async importMiaoshouOnline(request, response, next) {
+    try {
+      const input = request.validatedBody || {};
+      const result = await this.miaoshouExport.importTemuOnline({
+        cookie: input.cookie,
+        autoFetch: input.auto_fetch !== false
+      });
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return whether server/cookie.json contains a reusable Miaoshou Cookie. */
+  getMiaoshouCookieStatus(request, response, next) {
+    try {
+      const result = this.miaoshouExport.getSavedMiaoshouCookieStatus();
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Save one Miaoshou Cookie header without running an online import. */
+  saveMiaoshouCookie(request, response, next) {
+    try {
+      const input = request.validatedBody || {};
+      this.miaoshouExport.saveMiaoshouCookie(input.cookie);
+      const result = this.miaoshouExport.getSavedMiaoshouCookieStatus();
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
       next(error);
     }
   }

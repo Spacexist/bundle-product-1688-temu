@@ -71,7 +71,14 @@ button:disabled {
 }
 
 .batch-info span { color: #4f6fff; font-size: 14px; font-weight: 800; }
-.status { display: none; }
+.status {
+  display: none;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.status:not(:empty) { display: block; }
 
 .status.success {
   color: #17833b;

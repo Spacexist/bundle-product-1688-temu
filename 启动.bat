@@ -1,83 +1,85 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
+cls
+title Auto Bundle Startup
 
-rem Always run from the directory that contains this file.
-cd /d "%~dp0"
-if errorlevel 1 goto :path_error
+set "PROJECT_ROOT=%~dp0"
+set "PROJECT_ROOT_ARG=%PROJECT_ROOT%."
+cd /d "%PROJECT_ROOT%"
 
-set "NODE_HOME=%~dp0runtime\node"
-set "NODE_EXE=%NODE_HOME%\node.exe"
-set "NPM_CMD=%NODE_HOME%\npm.cmd"
+set "NODE_EXE=%PROJECT_ROOT%runtime\node\node.exe"
+set "NPM_CMD=%PROJECT_ROOT%runtime\node\npm.cmd"
+set "PYTHON_EXE=%PROJECT_ROOT%bundle\python-runtime\python.exe"
+set "PYTHONPATH=%PROJECT_ROOT%bundle\python-cpu\Lib\site-packages;%PYTHONPATH%"
+set "DOCTOR_EXE=%PROJECT_ROOT%env-doctor.exe"
+set "DOCTOR_PY=%PROJECT_ROOT%env_doctor.py"
 
-rem Use the bundled Node runtime. Quoted paths support spaces and Chinese names.
-if not exist "%NODE_EXE%" goto :node_error
-if not exist "%NPM_CMD%" goto :node_error
-if not exist "%~dp0package.json" goto :project_error
-set "PATH=%NODE_HOME%;%PATH%"
+if not exist "%NODE_EXE%" set "NODE_EXE=node"
+if not exist "%NPM_CMD%" set "NPM_CMD=npm"
+if not exist "%PYTHON_EXE%" set "PYTHON_EXE=python"
 
-rem Install dependencies only when the transferred folder does not contain them.
-if not exist "%~dp0node_modules\.package-lock.json" (
-  echo [SETUP] Installing project dependencies...
-  call "%NPM_CMD%" install
-  if errorlevel 1 goto :install_error
-)
+rem Disable QuickEdit for this console so mouse selection cannot pause startup.
+"%PYTHON_EXE%" -c "import ctypes,operator;k=ctypes.windll.kernel32;h=k.GetStdHandle(-10);m=ctypes.c_uint();ok=k.GetConsoleMode(h,ctypes.byref(m));ok and k.SetConsoleMode(h,operator.or_(operator.and_(m.value,0xffffffbf),0x80))" >nul 2>&1
 
-echo [START] Bundled Node version:
-"%NODE_EXE%" -v
-if errorlevel 1 goto :node_error
-if /i "%~1"=="--check" (
-  echo [OK] Startup environment check passed.
+"%NODE_EXE%" "server\scripts\desktop-launcher.js"
+if errorlevel 1 echo [Auto Bundle] Warning: desktop shortcut could not be checked.
+
+"%NODE_EXE%" "server\scripts\start-local-services.js" --probe >nul 2>&1
+if not errorlevel 1 (
+  echo [Auto Bundle] Services already running. Opening workbench now.
+  start "" "http://127.0.0.1:5173"
+  echo Opened http://127.0.0.1:5173
+  endlocal
   exit /b 0
 )
 
-rem Stop stale API and Vite listeners before starting a fresh local service pair.
-echo [CLEANUP] Checking ports 3000 and 5173 for old services...
-for %%G in (3000 5173) do (
-  for /f "tokens=5" %%P in ('netstat -ano -p tcp ^| findstr /R /C:":%%G .*LISTENING"') do (
-    echo [CLEANUP] Releasing port %%G from PID %%P...
-    taskkill /PID %%P /T /F >nul 2>&1
-  )
-)
-ping 127.0.0.1 -n 2 >nul
-for %%G in (3000 5173) do (
-  for /f "tokens=5" %%P in ('netstat -ano -p tcp ^| findstr /R /C:":%%G .*LISTENING"') do goto :port_cleanup_error
-)
-
-echo [START] Open http://127.0.0.1:5173 if the browser does not open.
-
-rem Open the browser after the local services have had time to start.
-start "" powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://127.0.0.1:5173'"
-call "%NPM_CMD%" run dev
-set "APP_EXIT_CODE=%ERRORLEVEL%"
-
 echo.
-if not "%APP_EXIT_CODE%"=="0" echo [ERROR] The service stopped with exit code %APP_EXIT_CODE%.
-if "%APP_EXIT_CODE%"=="0" echo [INFO] The service has stopped.
-pause
-exit /b %APP_EXIT_CODE%
-
-:path_error
-echo [ERROR] Cannot open the project directory.
-goto :fatal_exit
-
-:node_error
-echo [ERROR] Bundled Node is missing or cannot run.
-echo Expected file: "%~dp0runtime\node\node.exe"
-goto :fatal_exit
-
-:project_error
-echo [ERROR] package.json is missing from the project directory.
-goto :fatal_exit
-
-:install_error
-echo [ERROR] npm install failed. Check the network connection and try again.
-goto :fatal_exit
-
-:port_cleanup_error
-echo [ERROR] Failed to stop an old service on port 3000 or 5173.
-goto :fatal_exit
-
-:fatal_exit
+echo [Auto Bundle] CLI startup
+echo Project: %PROJECT_ROOT%
+echo Node: %NODE_EXE%
+echo NPM:  %NPM_CMD%
 echo.
-pause
-exit /b 1
+
+call :progress "###-------" "30%%" "Running fast startup checks..."
+set "DOCTOR_MODE="
+if exist "%PYTHON_EXE%" if exist "%DOCTOR_PY%" set "DOCTOR_MODE=python"
+if not defined DOCTOR_MODE if exist "%DOCTOR_EXE%" set "DOCTOR_MODE=exe"
+
+if "%DOCTOR_MODE%"=="python" (
+  "%PYTHON_EXE%" "%DOCTOR_PY%" --project-root "%PROJECT_ROOT_ARG%" --repair --install --quick-start --kill-ports 3000,5173,9990
+)
+if "%DOCTOR_MODE%"=="exe" (
+  "%DOCTOR_EXE%" --project-root "%PROJECT_ROOT_ARG%" --repair --install --skip-clip-check --kill-ports 3000,5173,9990
+)
+if not defined DOCTOR_MODE (
+  "%PYTHON_EXE%" "%DOCTOR_PY%" --project-root "%PROJECT_ROOT_ARG%" --repair --install --quick-start --kill-ports 3000,5173,9990
+)
+if errorlevel 1 (
+  echo.
+  echo [Auto Bundle] Startup failed. Check the error above.
+  pause
+  endlocal
+  exit /b 1
+)
+
+call :progress "#######---" "70%%" "Starting backend and workbench..."
+"%NODE_EXE%" "server\scripts\start-local-services.js"
+if errorlevel 1 (
+  echo.
+  echo [Auto Bundle] Startup failed. Check the error above.
+  pause
+  endlocal
+  exit /b 1
+)
+
+call :progress "##########" "100%%" "Startup succeeded."
+start "" "http://127.0.0.1:5173"
+echo Opened http://127.0.0.1:5173
+endlocal
+exit /b 0
+
+rem Render one startup progress bar line in plain cmd-compatible text.
+:progress
+echo.
+echo Progress: [%~1] %~2 - %~3
+exit /b 0

@@ -10,6 +10,7 @@ function createApiRouter(options) {
   const config = settings.configController;
   const images = settings.imageController;
   const currency = settings.currencyController;
+  const cloudAuth = settings.cloudAuthController;
 
   /** Return API health without touching persistence. */
   function getHealth(request, response) {
@@ -38,6 +39,9 @@ function createApiRouter(options) {
   }
 
   router.get("/health", getHealth);
+  router.get("/cloud-auth/status", cloudAuth.getStatus.bind(cloudAuth));
+  router.post("/cloud-auth/login", cloudAuth.login.bind(cloudAuth));
+  router.delete("/cloud-auth/credential", cloudAuth.clearCredential.bind(cloudAuth));
   router.get("/workbench", products.getWorkbench.bind(products));
   router.post("/workbench/focus", validationModule.validate(schemaModule.workbenchFocusSchema, "body"), focusWorkbench);
   router.delete("/products", products.clearAll.bind(products));
@@ -45,8 +49,13 @@ function createApiRouter(options) {
   router.delete("/products/:platform/:platformId", products.deleteOne.bind(products));
   router.post("/imports/json", validationModule.validate(schemaModule.jsonImportSchema, "body"), products.importJson.bind(products));
   router.post("/restore", validationModule.validate(schemaModule.jsonImportSchema, "body"), products.restoreJson.bind(products));
+  router.post("/restore/chunk", express.text({ type: "*/*", limit: "2mb" }), products.restoreJsonChunk.bind(products));
+  router.post("/restore/batch", products.restoreJsonBatch.bind(products));
   router.get("/exports/json", products.exportJson.bind(products));
   router.get("/zip", products.exportMiaoshouZip.bind(products));
+  router.get("/miaoshou/cookie", products.getMiaoshouCookieStatus.bind(products));
+  router.post("/miaoshou/cookie", validationModule.validate(schemaModule.miaoshouCookieSchema, "body"), products.saveMiaoshouCookie.bind(products));
+  router.post("/miaoshou/import", validationModule.validate(schemaModule.miaoshouImportSchema, "body"), products.importMiaoshouOnline.bind(products));
   router.post("/products/collect", validationModule.validate(schemaModule.collectionSchema, "body"), products.collect.bind(products));
   router.patch(
     "/products/:platform/:platformId/modules/:module",
@@ -63,6 +72,8 @@ function createApiRouter(options) {
   router.get("/events", connectEvents);
   router.get("/config", config.getPublicConfig.bind(config));
   router.put("/config/secrets", validationModule.validate(schemaModule.configUpdateSchema, "body"), config.updateSecrets.bind(config));
+  router.get("/config/default-prompts", config.getDefaultPrompts.bind(config));
+  router.put("/config/default-prompts", validationModule.validate(schemaModule.defaultPromptUpdateSchema, "body"), config.updateDefaultPrompts.bind(config));
   router.post("/DollarTransfer", validationModule.validate(schemaModule.dollarTransferSchema, "body"), currency.convert.bind(currency));
   router.post("/cache/images", validationModule.validate(schemaModule.imageCacheSchema, "body"), images.cacheImage.bind(images));
   router.post("/images/search-1688", validationModule.validate(schemaModule.imageSearchSchema, "body"), images.search1688.bind(images));

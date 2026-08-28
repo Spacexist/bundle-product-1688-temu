@@ -1,9 +1,11 @@
 var jsonExportButton = document.getElementById("jsonExportButton");
+var miaoshouCookieButton = document.getElementById("miaoshouCookieButton");
 var clearBatchButton = document.getElementById("clearBatchButton");
 var batchCountElement = document.getElementById("batchCount");
 var statusElement = document.getElementById("status");
 var popupConfigPromise = null;
 var extensionCacheStorageKey = "autoPackingExtensionCache";
+var miaoshouCookieUrl = "https://erp.91miaoshou.com/";
 
 /** Read packaged extension configuration once for popup API calls. */
 function getPopupConfig() {
@@ -22,13 +24,96 @@ function getPopupApiUrl(pathname) {
   });
 }
 
+/** Score one Miaoshou cookie so the newest usable value wins duplicate names. */
+function scoreMiaoshouCookie(cookie) {
+  var item = cookie || {};
+  var nowSeconds = Date.now() / 1000;
+  var expiresAt = Number(item.expirationDate || 0);
+  var unexpiredScore = !expiresAt || expiresAt > nowSeconds ? 1000000000000 : 0;
+  var hostScore = String(item.domain || "").indexOf("erp.91miaoshou.com") >= 0 ? 1000000 : 0;
+  var expiryScore = Number.isFinite(expiresAt) ? expiresAt : 0;
+  return unexpiredScore + hostScore + expiryScore + String(item.path || "").length;
+}
+
+/** Return a stable Cookie header from Chrome cookie records. */
+function buildMiaoshouCookieHeader(cookies) {
+  var rows = Array.isArray(cookies) ? cookies.slice() : [];
+  rows.sort(function sortMiaoshouCookies(left, right) {
+    return scoreMiaoshouCookie(right) - scoreMiaoshouCookie(left);
+  });
+  var seen = {};
+  var parts = [];
+  for (var index = 0; index < rows.length; index += 1) {
+    var item = rows[index] || {};
+    var name = String(item.name || "").trim();
+    if (!name || Object.prototype.hasOwnProperty.call(seen, name)) {
+      continue;
+    }
+    seen[name] = true;
+    parts.push(name + "=" + String(item.value || ""));
+  }
+  return parts.join("; ");
+}
+
+/** Read Miaoshou cookies that Chrome would send to the live Miaoshou backend. */
+function readMiaoshouCookies() {
+  return new Promise(function readMiaoshouCookiesPromise(resolve, reject) {
+    chrome.cookies.getAll({ url: miaoshouCookieUrl }, function handleMiaoshouCookies(cookies) {
+      var lastError = chrome.runtime.lastError;
+      if (lastError) {
+        reject(new Error(lastError.message));
+        return;
+      }
+      var cookieHeader = buildMiaoshouCookieHeader(cookies);
+      if (!cookieHeader) {
+        reject(new Error("没有读取到妙手后台 Cookie，请先在 Chrome 登录妙手。"));
+        return;
+      }
+      resolve(cookieHeader);
+    });
+  });
+}
+
+/** Persist the current Miaoshou Cookie header into server/cookie.json. */
+async function saveMiaoshouCookieToBackend(cookieHeader) {
+  var endpoint = await getPopupApiUrl("/miaoshou/cookie");
+  var response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cookie: cookieHeader })
+  });
+  var payload = await response.json().catch(function handleMiaoshouCookieJsonError() {
+    return null;
+  });
+  if (!response.ok || !payload || !payload.ok) {
+    throw new Error(payload && payload.error && payload.error.message || "后端保存妙手 Cookie 失败。");
+  }
+  return payload.data || {};
+}
+
 document.addEventListener("DOMContentLoaded", initializePopup);
 
 /** 初始化扩展弹窗。 */
 function initializePopup() {
+  miaoshouCookieButton.addEventListener("click", handleMiaoshouCookieSyncClick);
   jsonExportButton.addEventListener("click", handleJsonExportClick);
   clearBatchButton.addEventListener("click", handleClearBatchClick);
   refreshBatchCount();
+}
+
+/** Handle the popup button that exports Miaoshou cookies to the backend. */
+async function handleMiaoshouCookieSyncClick() {
+  miaoshouCookieButton.disabled = true;
+  setStatus("正在读取 Chrome 最新妙手 Cookie…", "");
+  try {
+    var cookieHeader = await readMiaoshouCookies();
+    await saveMiaoshouCookieToBackend(cookieHeader);
+    setStatus("最新妙手 Cookie 已写入后端，导入时由妙手接口实时校验。", "success");
+  } catch (error) {
+    setStatus(error.message || "同步妙手 Cookie 失败。", "error");
+  } finally {
+    miaoshouCookieButton.disabled = false;
+  }
 }
 
 /** 处理“采集并加入批次”按钮。 */

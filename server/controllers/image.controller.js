@@ -35,7 +35,7 @@ class ImageController {
       const input = request.validatedBody;
       const result = await this.imageSearch.search1688(input);
       if (this.workflow && input.temu_main_id) {
-        this.workflow.setActiveTemuMainId(input.temu_main_id, request.requestId);
+        this.workflow.setActiveTemuMainId(input.temu_main_id, request.requestId, input.source_mode);
       }
       response.json({
         ok: true,

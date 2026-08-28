@@ -12,6 +12,11 @@ class ImageTaskQueue {
     return this.controller.run(execute, metadata);
   }
 
+  /** Cancel queued image tasks that match one metadata predicate. */
+  cancelWhere(predicate, reason) {
+    return this.controller.cancelWhere(predicate, reason);
+  }
+
   /** Return image queue state for diagnostics. */
   getSnapshot() {
     return this.controller.getSnapshot();

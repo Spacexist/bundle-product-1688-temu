@@ -6,8 +6,8 @@ class CacheRepository {
   /** Resolve cache and history paths from server configuration. */
   constructor(options) {
     const settings = options || {};
-    this.cacheDirectory = path.resolve(__dirname, "..", settings.cacheDirectory || "../../cache");
-    this.historyDirectory = path.resolve(__dirname, "..", settings.historyDirectory || "../../cache/history");
+    this.cacheDirectory = path.resolve(__dirname, "..", settings.cacheDirectory || "D:/自动组货/cache");
+    this.historyDirectory = path.resolve(__dirname, "..", settings.historyDirectory || "D:/自动组货/cache/history");
     this.cacheFilePath = path.join(this.cacheDirectory, "cache.json");
     this.historyLimit = Number(settings.historyLimit || 200);
     this.writeQueue = Promise.resolve();

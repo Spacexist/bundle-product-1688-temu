@@ -1,8 +1,12 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
-/** Keep one synchronous image generation request bounded to five minutes. */
-const WORKFLOW_GENERATION_TIMEOUT_MS = 300000;
+/** Keep one synchronous image generation request bounded by local config. */
+const DEFAULT_IMAGE_TIMEOUT_MS = 300000;
+
+/** Keep manual CLIP keyword translation from delaying the user's search too long. */
+const CLIP_KEYWORD_TRANSLATE_TIMEOUT_MS = 3500;
 
 /** Create one workflow error carrying its HTTP status and stable error code. */
 function createWorkflowError(message, statusCode, code) {
@@ -10,6 +14,113 @@ function createWorkflowError(message, statusCode, code) {
   error.statusCode = Number(statusCode || 500);
   error.code = String(code || "WORKFLOW_ERROR");
   return error;
+}
+
+/** Return whether a manual keyword contains Chinese text that benefits from EN CLIP search. */
+function containsChineseText(value) {
+  return /[\u3400-\u9fff]/.test(String(value || ""));
+}
+
+/** Extract one translated text string from the googletrans-compatible response shape. */
+function readGoogletransText(payload) {
+  if (!Array.isArray(payload) || !Array.isArray(payload[0])) {
+    return "";
+  }
+  const chunks = [];
+  for (let index = 0; index < payload[0].length; index += 1) {
+    const item = payload[0][index];
+    if (Array.isArray(item) && item[0]) {
+      chunks.push(String(item[0]));
+    }
+  }
+  return chunks.join("").trim();
+}
+
+/** Extract one translated text string from the Baidu translate response shape. */
+function readBaiduTranslateText(payload) {
+  const results = payload && Array.isArray(payload.trans_result) ? payload.trans_result : [];
+  const chunks = [];
+  for (let index = 0; index < results.length; index += 1) {
+    const item = results[index] || {};
+    if (item.dst) {
+      chunks.push(String(item.dst));
+    }
+  }
+  return chunks.join(" ").trim();
+}
+
+/** Create one MD5 signature required by Baidu translate API. */
+function createBaiduTranslateSign(appid, text, salt, secretKey) {
+  return crypto.createHash("md5").update(String(appid) + String(text) + String(salt) + String(secretKey), "utf8").digest("hex");
+}
+
+/** Translate one manual CLIP keyword to English through Baidu translate API. */
+async function translateKeywordWithBaidu(keyword, settings) {
+  const text = String(keyword || "").trim();
+  const appid = String(settings && (settings.baidu_appid || settings.appid) || process.env.BAIDU_TRANSLATE_APPID || "").trim();
+  const secretKey = String(settings && (settings.baidu_secret_key || settings.secret_key) || process.env.BAIDU_TRANSLATE_SECRET_KEY || "").trim();
+  if (!text || !appid || !secretKey || typeof fetch !== "function") {
+    return "";
+  }
+  const timeoutMs = Math.max(800, Number(settings && settings.timeout_ms || 1500));
+  const controller = new AbortController();
+  const timer = setTimeout(function abortBaiduTranslateKeywordRequest() {
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const salt = String(Date.now());
+    const body = new URLSearchParams({
+      q: text,
+      from: "auto",
+      to: "en",
+      appid: appid,
+      salt: salt,
+      sign: createBaiduTranslateSign(appid, text, salt, secretKey)
+    });
+    const response = await fetch("https://fanyi-api.baidu.com/api/trans/vip/translate", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString()
+    });
+    if (!response.ok) {
+      return "";
+    }
+    const payload = await response.json();
+    if (payload && payload.error_code) {
+      return "";
+    }
+    return readBaiduTranslateText(payload);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Translate one manual CLIP keyword to English through Google's googletrans endpoint. */
+async function translateKeywordWithGoogletrans(keyword, timeoutMs) {
+  const text = String(keyword || "").trim();
+  if (!text || typeof fetch !== "function") {
+    return "";
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(function abortGoogletransKeywordRequest() {
+    controller.abort();
+  }, Math.max(1000, Number(timeoutMs || CLIP_KEYWORD_TRANSLATE_TIMEOUT_MS)));
+  try {
+    const url = "https://translate.googleapis.com/translate_a/single"
+      + "?client=gtx&sl=auto&tl=en&dt=t&q=" + encodeURIComponent(text);
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { "User-Agent": "Mozilla/5.0 AutoBundle/1.0" }
+    });
+    if (!response.ok) {
+      return "";
+    }
+    return readGoogletransText(await response.json());
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Read one generated image from common OpenAI-compatible response fields. */
@@ -44,6 +155,13 @@ function readWorkflowProviderError(payload, fallbackText) {
   }
   const text = String(fallbackText || "").trim();
   return text ? text.slice(0, 300) : "上游服务请求失败。";
+}
+
+/** Return the configured timeout for image generation calls. */
+function normalizeWorkflowImageTimeoutMs(config) {
+  const source = config && config.image && typeof config.image === "object" ? config.image : config || {};
+  const timeoutMs = Number(source.image_timeout_ms || source.timeout_ms || DEFAULT_IMAGE_TIMEOUT_MS);
+  return Math.max(10000, Math.min(timeoutMs, 900000));
 }
 
 /** Preserve one valid upstream HTTP error status for the workflow API. */
@@ -127,18 +245,21 @@ class WorkflowService {
   constructor(options) {
     const settings = options || {};
     this.filePath = path.join(settings.cacheDirectory, "workflows.json");
+    this.stateFilePath = path.join(settings.cacheDirectory, "workflow-state.json");
     this.readConfig = settings.readConfig;
     this.getKimiEndpoint = settings.getKimiEndpoint;
     this.compactValue = settings.compactValue;
     this.readImageSource = settings.readImageSource;
     this.cacheGeneratedImage = settings.cacheGeneratedImage;
     this.imageTaskQueue = settings.imageTaskQueue;
+    this.clipWorker = settings.clipWorker;
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
     this.publishEvent = settings.publishEvent;
     this.generationQueue = [];
     this.generationQueueActive = false;
     this.recoverInterruptedTasks();
+    this.reconcileTemporaryStates();
   }
 
   /** Return the default persistent workflow payload. */
@@ -147,6 +268,7 @@ class WorkflowService {
       version: "1.0",
       updated_at: "",
       active_temu_main_id: "",
+      active_source_mode: "",
       tasks: {}
     };
   }
@@ -171,6 +293,131 @@ class WorkflowService {
     }
   }
 
+  /** Return the default payload for refresh-safe temporary workflow phases. */
+  createEmptyTemporaryStatePayload() {
+    return {
+      version: "1.0",
+      updated_at: "",
+      tasks: {}
+    };
+  }
+
+  /** Read temporary workflow phases without exposing malformed state files. */
+  readTemporaryStatePayload() {
+    if (!fs.existsSync(this.stateFilePath)) {
+      return this.createEmptyTemporaryStatePayload();
+    }
+    try {
+      const content = fs.readFileSync(this.stateFilePath, "utf8");
+      const payload = JSON.parse(content);
+      if (!payload || typeof payload !== "object") {
+        return this.createEmptyTemporaryStatePayload();
+      }
+      if (!payload.tasks || typeof payload.tasks !== "object") {
+        payload.tasks = {};
+      }
+      return payload;
+    } catch (error) {
+      return this.createEmptyTemporaryStatePayload();
+    }
+  }
+
+  /** Atomically persist temporary workflow phases and notify connected workbenches. */
+  writeTemporaryStatePayload(payload, requestId) {
+    const state = payload && typeof payload === "object" ? payload : this.createEmptyTemporaryStatePayload();
+    state.updated_at = this.formatTime(new Date());
+    fs.mkdirSync(path.dirname(this.stateFilePath), { recursive: true });
+    const temporaryPath = this.stateFilePath + "." + process.pid + "." + Date.now() + ".tmp";
+    fs.writeFileSync(temporaryPath, JSON.stringify(state, null, 2), "utf8");
+    try {
+      fs.renameSync(temporaryPath, this.stateFilePath);
+    } catch (error) {
+      fs.copyFileSync(temporaryPath, this.stateFilePath);
+      fs.unlinkSync(temporaryPath);
+    }
+    if (typeof this.publishEvent === "function") {
+      this.publishEvent({
+        resource: "workflow",
+        action: "state_updated",
+        ids: [],
+        version: Date.now()
+      }, requestId);
+    }
+    return state;
+  }
+
+  /** Persist one product's temporary workflow phase independently from business results. */
+  setTemporaryState(temuMainId, status, error, errorCode, requestId, mode) {
+    const key = String(temuMainId || "").trim();
+    if (!key) {
+      return null;
+    }
+    const taskKey = this.buildTaskKey(key, mode || "legacy");
+    const payload = this.readTemporaryStatePayload();
+    payload.tasks[taskKey] = {
+      temu_main_id: key,
+      source_mode: this.normalizeTaskMode(mode || "legacy"),
+      status: String(status || "idle"),
+      error: String(error || ""),
+      error_code: String(errorCode || ""),
+      updated_at: this.formatTime(new Date())
+    };
+    this.writeTemporaryStatePayload(payload, requestId);
+    return payload.tasks[taskKey];
+  }
+
+  /** Convert one durable workflow result into its matching non-busy UI phase. */
+  inferTemporaryStateStatus(task) {
+    const status = String(task && task.status || "idle");
+    if (status === "generating") {
+      return "generating";
+    }
+    if (status === "generation_error" || status === "search_error") {
+      return "error";
+    }
+    if (status === "prompts_ready") {
+      return "prompts_ready";
+    }
+    if (status === "clip_ready" || status === "images_ready" || status === "completed") {
+      return "ready";
+    }
+    return "idle";
+  }
+
+  /** Rebuild missing or interrupted temporary phases from durable workflow tasks at startup. */
+  reconcileTemporaryStates() {
+    const workflow = this.readPayload();
+    const workflowTasks = workflow && workflow.tasks && typeof workflow.tasks === "object" ? workflow.tasks : {};
+    const state = this.readTemporaryStatePayload();
+    const reconciledTasks = {};
+    const taskKeys = Object.keys(workflowTasks);
+    for (let index = 0; index < taskKeys.length; index += 1) {
+      const key = String(taskKeys[index]);
+      const task = workflowTasks[key] || {};
+      const temuMainId = String(task.temu_main_id || key).split("::")[0];
+      const sourceMode = this.normalizeTaskMode(task.source_mode || (key.indexOf("::clip") >= 0 ? "clip" : "legacy"));
+      const status = this.inferTemporaryStateStatus(task);
+      reconciledTasks[key] = {
+        temu_main_id: temuMainId,
+        source_mode: sourceMode,
+        status: status,
+        error: status === "error" ? String(task.error || "") : "",
+        error_code: status === "error" ? String(task.error_code || "") : "",
+        updated_at: this.formatTime(new Date())
+      };
+    }
+    state.tasks = reconciledTasks;
+    this.writeTemporaryStatePayload(state, "");
+  }
+
+  /** Return durable workflow results together with their independent temporary phases. */
+  readWorkflowSnapshot() {
+    return {
+      workflow: this.readPayload(),
+      state: this.readTemporaryStatePayload()
+    };
+  }
+
   /** Persist all tasks for direct HTTP responses and later GET requests. */
   writePayload(payload, requestId) {
     const state = payload && typeof payload === "object" ? payload : this.createEmptyPayload();
@@ -179,16 +426,31 @@ class WorkflowService {
     return state;
   }
 
-  /** Return or create one task for a Temu main identifier. */
-  getOrCreateTask(payload, temuMainId) {
+  /** Normalize one workflow mode string for durable task separation. */
+  normalizeTaskMode(mode) {
+    return String(mode || "") === "clip" ? "clip" : "legacy";
+  }
+
+  /** Build one durable task key from the Temu id and workflow mode. */
+  buildTaskKey(temuMainId, mode) {
+    const key = String(temuMainId || "").trim();
+    const sourceMode = this.normalizeTaskMode(mode);
+    return key ? key + "::" + sourceMode : "";
+  }
+
+  /** Return or create one mode-specific task for a Temu main identifier. */
+  getOrCreateTask(payload, temuMainId, mode) {
     const state = payload && typeof payload === "object" ? payload : this.createEmptyPayload();
     const key = String(temuMainId || "").trim();
+    const sourceMode = this.normalizeTaskMode(mode);
+    const taskKey = this.buildTaskKey(key, sourceMode);
     if (!state.tasks || typeof state.tasks !== "object") {
       state.tasks = {};
     }
-    if (!state.tasks[key] || typeof state.tasks[key] !== "object") {
-      state.tasks[key] = {
+    if (!state.tasks[taskKey] || typeof state.tasks[taskKey] !== "object") {
+      state.tasks[taskKey] = {
         temu_main_id: key,
+        source_mode: sourceMode,
         status: "idle",
         selected_image_url: "",
         custom_prompt: "",
@@ -201,30 +463,447 @@ class WorkflowService {
         error: ""
       };
     }
-    return state.tasks[key];
+    state.tasks[taskKey].temu_main_id = key;
+    state.tasks[taskKey].source_mode = sourceMode;
+    return state.tasks[taskKey];
+  }
+
+  /** Return one existing mode-specific task without creating cross-mode data. */
+  findTask(payload, temuMainId, mode) {
+    const state = payload && typeof payload === "object" ? payload : this.createEmptyPayload();
+    const key = String(temuMainId || "").trim();
+    const tasks = state.tasks && typeof state.tasks === "object" ? state.tasks : {};
+    if (!key) {
+      return null;
+    }
+    if (mode) {
+      const sourceMode = this.normalizeTaskMode(mode);
+      const separatedTask = tasks[this.buildTaskKey(key, sourceMode)];
+      if (separatedTask && typeof separatedTask === "object") {
+        separatedTask.source_mode = sourceMode;
+        return separatedTask;
+      }
+      const nakedTask = tasks[key];
+      const nakedMode = nakedTask && nakedTask.source_mode ? this.normalizeTaskMode(nakedTask.source_mode) : "legacy";
+      return nakedTask && nakedMode === sourceMode ? nakedTask : null;
+    }
+    return tasks[this.buildTaskKey(key, "clip")] || tasks[this.buildTaskKey(key, "legacy")] || tasks[key] || null;
   }
 
   /** Return the public active-task payload used by the browser extension. */
   getActivePayload() {
     const workflow = this.readPayload();
     const activeTemuMainId = String(workflow.active_temu_main_id || "");
-    const activeTask = activeTemuMainId && workflow.tasks ? workflow.tasks[activeTemuMainId] : null;
+    const activeSourceMode = this.normalizeTaskMode(workflow.active_source_mode || "legacy");
+    const activeTask = activeTemuMainId ? this.findTask(workflow, activeTemuMainId, activeSourceMode) : null;
     return {
       ok: true,
       active_temu_main_id: activeTemuMainId,
+      active_source_mode: activeSourceMode,
       task: activeTask
     };
   }
 
   /** Persist the Temu product that the 1688 extension should keep selected. */
-  setActiveTemuMainId(temuMainId, requestId) {
+  setActiveTemuMainId(temuMainId, requestId, mode) {
     const key = String(temuMainId || "").trim();
     if (!key) {
       return;
     }
     const workflow = this.readPayload();
     workflow.active_temu_main_id = key;
+    workflow.active_source_mode = this.normalizeTaskMode(mode || "legacy");
     this.writePayload(workflow, requestId);
+  }
+
+  /** Return workflow settings with defaults already supplied by config-loader. */
+  getWorkflowSettings(config) {
+    const source = config && config.workflow && typeof config.workflow === "object" ? config.workflow : {};
+    return {
+      clip_candidate_count: Math.max(1, Math.min(Number(source.clip_candidate_count || 10), 40)),
+      legacy_candidate_count: Math.max(1, Math.min(Number(source.legacy_candidate_count || 4), 10)),
+      clip_kimi_system_prompt: String(source.clip_kimi_system_prompt || ""),
+      clip_kimi_prompt: String(source.clip_kimi_prompt || "")
+    };
+  }
+
+  /** Read a clear CLIP service error from its JSON or text response. */
+  readClipProviderError(payload, fallbackText) {
+    if (payload && payload.error) {
+      if (payload.error && typeof payload.error === "object" && payload.error.message) {
+        return String(payload.error.message).slice(0, 300);
+      }
+      return String(payload.error).slice(0, 300);
+    }
+    const text = String(fallbackText || "").trim();
+    return text ? text.slice(0, 300) : "CLIP 组货服务请求失败。";
+  }
+
+  /** Normalize one value for duplicate detection across CLIP prompt groups. */
+  normalizeClipDuplicateValue(value) {
+    return String(value || "").trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  /** Build duplicate-detection keys for one CLIP product. */
+  buildClipDuplicateKeys(product) {
+    const source = product && typeof product === "object" ? product : {};
+    const keys = [];
+    const productId = this.normalizeClipDuplicateValue(source.id || source.product_id || source.offer_id || source.item_id);
+    const imageUrl = this.normalizeClipDuplicateValue(source.img_url || source.image_url || source.MAINIMAGE || source.local_img);
+    const familyKey = this.normalizeClipDuplicateValue(source.family_key || source.listing_key);
+    const title = this.normalizeClipDuplicateValue(source.title || source.listing_text || source.title_en);
+    if (productId) {
+      keys.push("id:" + productId);
+    }
+    if (imageUrl) {
+      keys.push("image:" + imageUrl);
+    }
+    if (familyKey) {
+      keys.push("family:" + familyKey);
+    }
+    if (title) {
+      keys.push("title:" + title);
+    }
+    return keys;
+  }
+
+  /** Return whether one CLIP product has already appeared in the candidate list. */
+  isDuplicateClipProduct(product, seenKeys) {
+    const keys = this.buildClipDuplicateKeys(product);
+    for (let index = 0; index < keys.length; index += 1) {
+      if (seenKeys[keys[index]]) {
+        return true;
+      }
+    }
+    for (let index = 0; index < keys.length; index += 1) {
+      seenKeys[keys[index]] = true;
+    }
+    return false;
+  }
+
+  /** Convert one CLIP product result into the existing workflow candidate shape. */
+  normalizeClipCandidate(product, index, manualKeyword, manualQuery) {
+    const source = product && typeof product === "object" ? product : {};
+    const title = String(source.title || source.listing_text || source.title_en || source.search_prompt || "CLIP 候选商品").trim();
+    const keyword = String(manualKeyword || "").trim();
+    const query = String(manualQuery || "").trim();
+    const promptText = String(source.search_prompt || query || keyword || title).trim();
+    const promptTextEn = String(source.search_prompt_en || query || keyword).trim();
+    const rawPrice = source.price_usd === undefined || source.price_usd === null ? source.price : source.price_usd;
+    const numericPrice = Number(rawPrice);
+    const priceLabel = rawPrice === undefined || rawPrice === null || rawPrice === ""
+      ? ""
+      : Number.isFinite(numericPrice) ? "$" + numericPrice.toFixed(2) : String(rawPrice).trim();
+    const rawSales = source.sales_total === undefined || source.sales_total === null ? source.sales : source.sales_total;
+    const salesLabel = rawSales === undefined || rawSales === null || rawSales === "" ? "" : "销量 " + String(rawSales).trim();
+    return {
+      relation: "组货方向 " + (index + 1),
+      product_name: title,
+      product_intro: promptText,
+      prompt: promptText,
+      clip_prompt_en: promptTextEn,
+      price_label: priceLabel,
+      sales_label: salesLabel,
+      image_url: String(source.img_url || source.image_url || source.MAINIMAGE || ""),
+      status: "generated",
+      source_mode: "clip",
+      clip_product: source,
+      error: "",
+      error_code: "",
+      error_status: 0,
+      search_url: "",
+      search_status: "",
+      search_error: ""
+    };
+  }
+
+  /** Convert a CLIP assemble payload into the candidate list shown by the workbench. */
+  normalizeClipCandidates(payload, limit, manualKeyword, manualQuery) {
+    const candidates = [];
+    const seenKeys = {};
+    const results = payload && Array.isArray(payload.results) ? payload.results : [];
+    for (let index = 0; index < results.length; index += 1) {
+      if (candidates.length >= limit) {
+        break;
+      }
+      const result = results[index];
+      const candidate = this.normalizeClipCandidate(result, candidates.length, manualKeyword, manualQuery);
+      if (!candidate.image_url) {
+        continue;
+      }
+      if (this.isDuplicateClipProduct(result, seenKeys)) {
+        continue;
+      }
+      candidates.push(candidate);
+    }
+    return candidates;
+  }
+
+  /** Resolve translation provider settings used by manual CLIP keyword search. */
+  getClipTranslationSettings(config) {
+    const workflow = config && config.workflow && typeof config.workflow === "object" ? config.workflow : {};
+    const source = workflow.clip_translation && typeof workflow.clip_translation === "object" ? workflow.clip_translation : {};
+    const provider = String(source.provider || "baidu").trim().toLowerCase();
+    return {
+      provider: provider === "google" ? "google" : "baidu",
+      baidu_appid: String(source.baidu_appid || source.appid || process.env.BAIDU_TRANSLATE_APPID || "").trim(),
+      baidu_secret_key: String(source.baidu_secret_key || source.secret_key || process.env.BAIDU_TRANSLATE_SECRET_KEY || "").trim(),
+      timeout_ms: Math.max(800, Number(source.timeout_ms || 1500)),
+      google_timeout_ms: Math.max(1000, Number(source.google_timeout_ms || CLIP_KEYWORD_TRANSLATE_TIMEOUT_MS))
+    };
+  }
+
+  /** Translate one manual CLIP keyword with the configured provider. */
+  async translateManualClipKeyword(keyword, settings, requestId) {
+    const provider = settings && settings.provider === "google" ? "google" : "baidu";
+    if (provider === "google") {
+      return {
+        provider: "google",
+        text: await translateKeywordWithGoogletrans(keyword, settings.google_timeout_ms)
+      };
+    }
+    if (!settings.baidu_appid || !settings.baidu_secret_key) {
+      this.writeLog("UPSTREAM", "Baidu keyword translation skipped", {
+        reason: "missing_baidu_translate_credentials"
+      }, requestId);
+      return { provider: "baidu", text: "" };
+    }
+    return {
+      provider: "baidu",
+      text: await translateKeywordWithBaidu(keyword, settings)
+    };
+  }
+
+  /** Resolve the actual CLIP query for one manual keyword, translating Chinese to English when possible. */
+  async resolveManualClipQuery(keyword, requestId, config) {
+    const originalKeyword = String(keyword || "").trim();
+    if (!containsChineseText(originalKeyword)) {
+      return {
+        original_keyword: originalKeyword,
+        query: originalKeyword,
+        translated_keyword: "",
+        translation_status: "skipped",
+        translation_provider: "none"
+      };
+    }
+    const settings = this.getClipTranslationSettings(config);
+    try {
+      const result = await this.translateManualClipKeyword(originalKeyword, settings, requestId);
+      const translated = String(result.text || "").trim();
+      if (!translated || containsChineseText(translated)) {
+        this.writeLog("UPSTREAM", "CLIP keyword translation fallback", {
+          provider: result.provider,
+          keyword: originalKeyword,
+          translated_keyword: translated,
+          reason: translated ? "translated_text_still_chinese" : "empty_translation"
+        }, requestId);
+        return {
+          original_keyword: originalKeyword,
+          query: originalKeyword,
+          translated_keyword: "",
+          translation_status: "empty_fallback",
+          translation_provider: result.provider
+        };
+      }
+      this.writeLog("UPSTREAM", "CLIP keyword translation success", {
+        provider: result.provider,
+        keyword: originalKeyword,
+        translated_keyword: translated
+      }, requestId);
+      return {
+        original_keyword: originalKeyword,
+        query: translated,
+        translated_keyword: translated,
+        translation_status: "translated",
+        translation_provider: result.provider
+      };
+    } catch (error) {
+      this.writeLog("UPSTREAM", "CLIP keyword translation fallback", {
+        provider: settings.provider,
+        keyword: originalKeyword,
+        error: error && error.message ? error.message : String(error || "")
+      }, requestId);
+      return {
+        original_keyword: originalKeyword,
+        query: originalKeyword,
+        translated_keyword: "",
+        translation_status: "error_fallback",
+        translation_provider: settings.provider
+      };
+    }
+  }
+
+  /** Ask the local CLIP service to generate and search real listing candidates. */
+  async requestClipAssemble(input, requestId) {
+    const config = this.readConfig();
+    const workflow = this.getWorkflowSettings(config);
+    const imageUrl = String(input.image_url || "").trim();
+    const sourceImage = await this.readImageSource(imageUrl, requestId);
+    const recallPerPrompt = 1;
+    const systemPrompt = String(workflow.clip_kimi_system_prompt || "").trim();
+    const customPrompt = String(input.custom_prompt || workflow.clip_kimi_prompt || "").trim();
+    this.writeLog("OUTBOUND", "CLIP workflow assemble worker", {
+      top_k: recallPerPrompt,
+      candidate_count: workflow.clip_candidate_count,
+      image_bytes: sourceImage.buffer.length
+    }, requestId);
+    if (!this.clipWorker) {
+      throw createWorkflowError("CLIP worker 未初始化。", 500, "CLIP_WORKER_MISSING");
+    }
+    try {
+      return await this.clipWorker.assemble({
+        request_id: requestId,
+        image_base64: sourceImage.buffer.toString("base64"),
+        top_k: recallPerPrompt,
+        kimi_system_prompt: systemPrompt,
+        kimi_prompt: customPrompt,
+        min_price: input.min_price,
+        max_price: input.max_price,
+        listing: this.compactValue(input.product || {}, 0)
+      });
+    } catch (error) {
+      throw createWorkflowError("CLIP 组货 worker 失败：" + (error.message || "未知错误。"), 502, "CLIP_WORKER_ERROR");
+    }
+  }
+
+  /** Search the local CLIP listing index with one manual keyword. */
+  async requestClipTextSearch(input, requestId) {
+    const config = this.readConfig();
+    const keyword = String(input.keyword || "").trim();
+    const queryInfo = await this.resolveManualClipQuery(keyword, requestId, config);
+    this.writeLog("OUTBOUND", "CLIP workflow text search worker", {
+      keyword: keyword,
+      query: queryInfo.query,
+      translated_keyword: queryInfo.translated_keyword,
+      translation_status: queryInfo.translation_status,
+      translation_provider: queryInfo.translation_provider,
+      top_k: 10
+    }, requestId);
+    if (!this.clipWorker) {
+      throw createWorkflowError("CLIP worker 未初始化。", 500, "CLIP_WORKER_MISSING");
+    }
+    try {
+      const payload = await this.clipWorker.searchText({
+        request_id: requestId,
+        query: queryInfo.query,
+        top_k: 10,
+        min_price: input.min_price,
+        max_price: input.max_price
+      });
+      payload.manual_keyword = keyword;
+      payload.manual_keyword_en = queryInfo.translated_keyword || "";
+      payload.clip_query = queryInfo.query;
+      payload.translation_status = queryInfo.translation_status;
+      payload.translation_provider = queryInfo.translation_provider;
+      return payload;
+    } catch (error) {
+      throw createWorkflowError("CLIP 手动匹配 worker 失败：" + (error.message || "未知错误。"), 502, "CLIP_SEARCH_WORKER_ERROR");
+    }
+  }
+
+  /** Generate real-product candidates through the local CLIP listing service. */
+  async assembleClip(input, requestId) {
+    const temuMainId = String(input.temu_main_id || "").trim();
+    const imageUrl = String(input.image_url || "").trim();
+    if (!temuMainId || !imageUrl) {
+      throw createWorkflowError("请选择 Temu 商品及分析主图。", 400);
+    }
+    const config = this.readConfig();
+    const workflowConfig = this.getWorkflowSettings(config);
+    const payload = await this.requestClipAssemble(input, requestId);
+    const candidates = this.normalizeClipCandidates(payload, workflowConfig.clip_candidate_count);
+    if (!candidates.length) {
+      throw createWorkflowError("CLIP 未返回可展示的候选商品。", 502, "CLIP_EMPTY_RESULTS");
+    }
+    const workflow = this.readPayload();
+    const task = this.getOrCreateTask(workflow, temuMainId, "clip");
+    task.status = "clip_ready";
+    task.source_mode = "clip";
+    task.selected_image_url = imageUrl;
+    task.custom_prompt = String(input.custom_prompt || workflowConfig.clip_kimi_prompt || "");
+    task.prompts = candidates;
+    task.selected_result_index = -1;
+    task.search_url = "";
+    task.search_offers = [];
+    task.error = "";
+    task.error_code = "";
+    task.error_status = 0;
+    this.writePayload(workflow, requestId);
+    return { ok: true, task: task };
+  }
+
+  /** Search and persist two manual keyword CLIP candidates for one Temu item. */
+  async searchClip(input, requestId) {
+    const temuMainId = String(input.temu_main_id || "").trim();
+    const keyword = String(input.keyword || "").trim();
+    if (!temuMainId || !keyword) {
+      throw createWorkflowError("请输入手动匹配 keyword。", 400);
+    }
+    const payload = await this.requestClipTextSearch(input, requestId);
+    const clipQuery = String(payload.clip_query || keyword);
+    const candidates = this.normalizeClipCandidates(payload, 2, keyword, clipQuery);
+    if (!candidates.length) {
+      throw createWorkflowError("CLIP 未返回可展示的手动匹配商品。", 502, "CLIP_SEARCH_EMPTY_RESULTS");
+    }
+    const workflow = this.readPayload();
+    const task = this.getOrCreateTask(workflow, temuMainId, "clip");
+    task.status = "clip_ready";
+    task.source_mode = "clip";
+    task.selected_image_url = String(input.image_url || task.selected_image_url || "");
+    task.manual_keyword = keyword;
+    task.manual_keyword_en = String(payload.manual_keyword_en || "");
+    task.clip_search_query = clipQuery;
+    task.clip_translation_status = String(payload.translation_status || "skipped");
+    task.clip_translation_provider = String(payload.translation_provider || "");
+    task.prompts = candidates;
+    task.selected_result_index = -1;
+    task.search_url = "";
+    task.search_offers = [];
+    task.error = "";
+    task.error_code = "";
+    task.error_status = 0;
+    this.writePayload(workflow, requestId);
+    return { ok: true, task: task };
+  }
+
+  /** Search CLIP top 10 directly with one English listing keyword. */
+  async searchClipTop10(input, requestId) {
+    const keyword = String(input.keyword || "").trim();
+    if (!keyword) {
+      throw createWorkflowError("请输入 CLIP 英文检索关键词。", 400);
+    }
+    this.writeLog("OUTBOUND", "CLIP workflow top10 text worker", {
+      query: keyword,
+      top_k: 10
+    }, requestId);
+    if (!this.clipWorker) {
+      throw createWorkflowError("CLIP worker 未初始化。", 500, "CLIP_WORKER_MISSING");
+    }
+    let payload = {};
+    try {
+      payload = await this.clipWorker.searchText({
+        request_id: requestId,
+        query: keyword,
+        top_k: 10,
+        min_price: input.min_price,
+        max_price: input.max_price
+      });
+    } catch (error) {
+      throw createWorkflowError("CLIP Top10 worker 失败：" + (error.message || "未知错误。"), 502, "CLIP_TOP10_WORKER_ERROR");
+    }
+    const candidates = this.normalizeClipCandidates(payload, 10, keyword, keyword);
+    if (!candidates.length) {
+      throw createWorkflowError("CLIP Top10 未返回可展示的候选商品。", 502, "CLIP_TOP10_EMPTY_RESULTS");
+    }
+    for (let index = 0; index < candidates.length; index += 1) {
+      candidates[index].relation = "CLIP Top " + (index + 1);
+      candidates[index].product_intro = candidates[index].product_name || candidates[index].product_intro;
+      candidates[index].prompt = keyword;
+      candidates[index].clip_prompt_en = keyword;
+      candidates[index].clip_top10 = true;
+      candidates[index].clip_top10_query = keyword;
+    }
+    return { ok: true, query: keyword, candidates: candidates };
   }
 
   /** Ask Kimi for four white-background products related to one Temu item. */
@@ -305,7 +984,7 @@ class WorkflowService {
     const message = choices.length && choices[0].message ? choices[0].message : {};
     const prompts = parseWorkflowPromptContent(message.content);
     const workflow = this.readPayload();
-    const task = this.getOrCreateTask(workflow, temuMainId);
+    const task = this.getOrCreateTask(workflow, temuMainId, "legacy");
     task.status = "prompts_ready";
     task.selected_image_url = imageUrl;
     task.custom_prompt = customPrompt;
@@ -329,16 +1008,17 @@ class WorkflowService {
     const providerRequestPayload = {
       model: String(config.model || "gpt-image-2"),
       prompt: String(prompt || "").trim(),
-      size: String(config.generation_size || "1024x1024"),
+      size: "1024x1024",
       quality: normalizeWorkflowImageQuality(config.quality),
       n: 1
     };
     this.writeLog("OUTBOUND", "BeeAPI generation POST " + endpoint, providerRequestPayload, requestId);
     const controller = new AbortController();
-    /** Abort one BeeAPI generation request after five minutes. */
+    const timeoutMs = normalizeWorkflowImageTimeoutMs(config);
+    /** Abort one BeeAPI generation request after the configured image timeout. */
     const timeoutHandle = setTimeout(function abortWorkflowGenerationRequest() {
       controller.abort();
-    }, WORKFLOW_GENERATION_TIMEOUT_MS);
+    }, timeoutMs);
     let providerResponse;
     let providerText;
     try {
@@ -354,7 +1034,7 @@ class WorkflowService {
       providerText = await providerResponse.text();
     } catch (error) {
       if (error && error.name === "AbortError") {
-        throw createWorkflowError("BeeAPI 生图请求超过五分钟。", 504, "BEEAPI_TIMEOUT");
+        throw createWorkflowError("BeeAPI 生图请求超过配置超时时间。", 504, "BEEAPI_TIMEOUT");
       }
       throw createWorkflowError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502, "BEEAPI_NETWORK_ERROR");
     } finally {
@@ -490,7 +1170,7 @@ class WorkflowService {
   /** Persist one candidate image state without overwriting other candidates. */
   persistGeneratedImageState(temuMainId, index, updates, requestId) {
     const workflow = this.readPayload();
-    const task = workflow.tasks && workflow.tasks[temuMainId];
+    const task = this.findTask(workflow, temuMainId, "legacy");
     const prompts = task && Array.isArray(task.prompts) ? task.prompts : [];
     const item = prompts[index];
     if (!item) {
@@ -550,7 +1230,7 @@ class WorkflowService {
       const config = this.readConfig();
       const requestedPrompts = Array.isArray(promptSnapshot) ? promptSnapshot : [];
       const workflow = this.readPayload();
-      const task = workflow.tasks && workflow.tasks[temuMainId];
+      const task = this.findTask(workflow, temuMainId, "legacy");
       if (!task || !Array.isArray(task.prompts)) {
         return { task: null, results: [] };
       }
@@ -564,7 +1244,7 @@ class WorkflowService {
       for (let requestIndex = 0; requestIndex < requestedIndexes.length; requestIndex += 1) {
         const index = requestedIndexes[requestIndex];
         const currentWorkflow = this.readPayload();
-        const currentTask = currentWorkflow.tasks && currentWorkflow.tasks[temuMainId];
+        const currentTask = this.findTask(currentWorkflow, temuMainId, "legacy");
         const item = currentTask && currentTask.prompts ? currentTask.prompts[index] : null;
         if (!item) {
           continue;
@@ -596,7 +1276,7 @@ class WorkflowService {
         }
       }
       const finalWorkflow = this.readPayload();
-      const finalTask = finalWorkflow.tasks && finalWorkflow.tasks[temuMainId];
+      const finalTask = this.findTask(finalWorkflow, temuMainId, "legacy");
       if (!finalTask) {
         return;
       }
@@ -619,16 +1299,31 @@ class WorkflowService {
         finalTask.error_status = hasGeneratedImage ? 0 : lastErrorStatus || 500;
       }
       this.writePayload(finalWorkflow, requestId);
+      let temporaryStatus = "ready";
+      if (finalTask.status === "generating") {
+        temporaryStatus = "generating";
+      } else if (finalTask.status === "generation_error") {
+        temporaryStatus = "error";
+      }
+      this.setTemporaryState(
+        temuMainId,
+        temporaryStatus,
+        finalTask.error,
+        finalTask.error_code,
+        requestId,
+        "legacy"
+      );
       return { task: finalTask, results: results };
     } catch (error) {
       const failedWorkflow = this.readPayload();
-      const failedTask = failedWorkflow.tasks && failedWorkflow.tasks[temuMainId];
+      const failedTask = this.findTask(failedWorkflow, temuMainId, "legacy");
       if (failedTask && !this.hasPendingGeneration(temuMainId)) {
         failedTask.status = "generation_error";
         failedTask.error = error.message || "后台生图失败。";
         failedTask.error_code = String(error.code || "WORKFLOW_GENERATION_ERROR");
         failedTask.error_status = Number(error.statusCode || 500);
         this.writePayload(failedWorkflow, requestId);
+        this.setTemporaryState(temuMainId, "error", failedTask.error, failedTask.error_code, requestId, "legacy");
         return { task: failedTask, results: [] };
       }
       throw error;
@@ -639,7 +1334,7 @@ class WorkflowService {
   async generateImages(input, requestId) {
     const temuMainId = String(input.temu_main_id || "").trim();
     const workflow = this.readPayload();
-    const task = workflow.tasks && workflow.tasks[temuMainId];
+    const task = this.findTask(workflow, temuMainId, "legacy");
     if (!temuMainId || !task || !Array.isArray(task.prompts) || task.prompts.length !== 4) {
       throw createWorkflowError("请先为当前 Temu 商品生成四组提示词。", 400);
     }
@@ -684,6 +1379,7 @@ class WorkflowService {
       promptSnapshot[index] = task.prompts[index].prompt;
     }
     this.writePayload(workflow, requestId);
+    this.setTemporaryState(temuMainId, "generating", "", "", requestId, "legacy");
     return this.scheduleImageGeneration(temuMainId, requestedIndex, requestId, promptSnapshot);
   }
 
@@ -694,13 +1390,16 @@ class WorkflowService {
     if (!temuMainId) {
       throw createWorkflowError("请选择需要绑定的 Temu 商品。", 400);
     }
-    const task = this.getOrCreateTask(workflow, temuMainId);
+    const requestedMode = input.source_mode ? this.normalizeTaskMode(input.source_mode) : this.normalizeTaskMode(workflow.active_source_mode || "clip");
+    const task = this.findTask(workflow, temuMainId, requestedMode) || this.getOrCreateTask(workflow, temuMainId, requestedMode);
     task.status = "completed";
     task.bound_ali_main_id = String(input.ali_main_id || "");
     task.bound_ali_platform_id = String(input.ali_platform_id || "");
     task.error = "";
     workflow.active_temu_main_id = "";
+    workflow.active_source_mode = "";
     this.writePayload(workflow, requestId);
+    this.setTemporaryState(temuMainId, "ready", "", "", requestId, task.source_mode);
     return { ok: true, task: task };
   }
 }

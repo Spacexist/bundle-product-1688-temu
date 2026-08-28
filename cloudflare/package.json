@@ -1,0 +1,12 @@
+{
+  "name": "bundle-1688-temu-auth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.27.0"
+  }
+}

@@ -318,6 +318,29 @@ class CurrencyService {
     return Math.round(Number(value) * 100) / 100;
   }
 
+  /** Return the first decimal-looking amount embedded in one visible price label. */
+  readPriceTextAmount(value) {
+    const text = String(value || "").replace(/,/g, "").trim();
+    const match = /(?:CA|C|US|HK|A|S)?\$?\s*([0-9]+(?:\.[0-9]+)?)/i.exec(text);
+    return match ? Number(match[1]) : NaN;
+  }
+
+  /** Convert Temu integer-cent prices into major currency units when needed. */
+  normalizeTemuPriceAmount(value, fallbackText) {
+    if (value === null || value === undefined || value === "") {
+      return NaN;
+    }
+    const textAmount = this.readPriceTextAmount(fallbackText);
+    if (Number.isFinite(textAmount) && textAmount > 0) {
+      return textAmount;
+    }
+    const numberValue = Number(String(value).replace(/,/g, "").trim());
+    if (!Number.isFinite(numberValue)) {
+      return NaN;
+    }
+    return Math.abs(numberValue) >= 100 ? numberValue / 100 : numberValue;
+  }
+
   /** Convert every numeric token in one SKU price while preserving ranges and labels. */
   formatConvertedPrice(value, multiplier) {
     if (value === null || value === undefined || value === "") {
@@ -343,15 +366,54 @@ class CurrencyService {
       return value;
     }
     converted += text.slice(cursor);
-    const hasCurrencyMarker = /USD|JPY|CAD|EUR|GBP|HKD|KRW|AUD|SGD|美元|日元|円|加拿大元|加元|欧元|英镑|港币|韩元|澳元|新加坡元|\$|€|£|₩|元|¥|￥/i.test(text);
-    if (hasCurrencyMarker) {
-      return "¥" + converted.replace(/USD|JPY|CAD|EUR|GBP|HKD|KRW|AUD|SGD|美元|日元|円|加拿大元|加元|欧元|英镑|港币|韩元|澳元|新加坡元|\$|€|£|₩|元|¥|￥/gi, "").trim();
+    return converted.replace(/CA\$|C\$|US\$|HK\$|A\$|S\$|USD|JPY|CAD|EUR|GBP|HKD|KRW|AUD|SGD|美元|日元|円|加拿大元|加元|欧元|英镑|港币|韩元|澳元|新加坡元|\$|€|£|₩|元|¥|￥/gi, "").trim();
+  }
+
+  /** Normalize one Temu SKU row from raw cent values into RMB display fields. */
+  convertTemuSkuRow(row, multiplier) {
+    const source = row && typeof row === "object" ? row : {};
+    const priceText = source.normalPriceStr || source.priceStr || source.price || "";
+    const saleAmount = this.normalizeTemuPriceAmount(
+      source.sku_price !== undefined ? source.sku_price : source.salePrice !== undefined ? source.salePrice : source.normalPrice,
+      priceText
+    );
+    const originalAmount = this.normalizeTemuPriceAmount(
+      source.sku_original_price !== undefined ? source.sku_original_price : source.normalPrice !== undefined ? source.normalPrice : source.price,
+      priceText
+    );
+    if (Number.isFinite(saleAmount)) {
+      source.sku_price = this.roundPrice(saleAmount * multiplier);
+      source.salePrice = source.sku_price;
     }
-    return converted;
+    if (Number.isFinite(originalAmount)) {
+      source.sku_original_price = this.roundPrice(originalAmount * multiplier);
+      source.normalPrice = source.sku_original_price;
+    }
+    if (source.normalPriceStr !== undefined) {
+      source.normalPriceStr = Number.isFinite(originalAmount)
+        ? this.roundPrice(originalAmount * multiplier).toFixed(2)
+        : this.formatConvertedPrice(source.normalPriceStr, multiplier);
+    }
+    if (source.price !== undefined) {
+      source.price = this.formatConvertedPrice(source.price, multiplier);
+    }
+    return source;
+  }
+
+  /** Convert Temu rows with their platform-specific minor-unit price fields. */
+  convertTemuSkuRows(rows, multiplier) {
+    const target = Array.isArray(rows) ? rows : [];
+    for (let rowIndex = 0; rowIndex < target.length; rowIndex += 1) {
+      this.convertTemuSkuRow(target[rowIndex], multiplier);
+    }
+    return target;
   }
 
   /** Convert all supported price fields on one array of SKU rows. */
-  convertSkuRows(rows, multiplier) {
+  convertSkuRows(rows, multiplier, platform) {
+    if (String(platform || "").toLowerCase() === "temu") {
+      return this.convertTemuSkuRows(rows, multiplier);
+    }
     const target = Array.isArray(rows) ? rows : [];
     const fields = ["sku_price", "sku_original_price", "price", "originalPrice", "discountPrice", "promotionPrice", "salePrice", "normalPrice", "normalPriceStr", "multiPrice"];
     for (let rowIndex = 0; rowIndex < target.length; rowIndex += 1) {
@@ -431,7 +493,7 @@ class CurrencyService {
       arrays.push(goods.sku);
     }
     for (let arrayIndex = 0; arrayIndex < arrays.length; arrayIndex += 1) {
-      this.convertSkuRows(arrays[arrayIndex], multiplier);
+      this.convertSkuRows(arrays[arrayIndex], multiplier, platform);
     }
     target.original_currency = target.original_currency || originalCurrency;
     target.currency = "CNY";

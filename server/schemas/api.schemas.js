@@ -25,7 +25,25 @@ const configUpdateSchema = z.object({
   kimi_apikey: z.string().optional()
 });
 
+const defaultPromptPageSchema = z.object({
+  purpose: z.string().trim().max(500).optional(),
+  prompt: z.string().trim().min(1).max(10000)
+});
+
+const defaultPromptUpdateSchema = z.object({
+  pages: z.array(defaultPromptPageSchema).min(1).max(10)
+});
+
 const jsonImportSchema = z.object({ json_text: z.string().min(2) });
+
+const miaoshouImportSchema = z.object({
+  cookie: z.string().trim().max(50000).optional(),
+  auto_fetch: z.boolean().optional()
+});
+
+const miaoshouCookieSchema = z.object({
+  cookie: z.string().trim().min(1).max(50000)
+});
 
 const imageCacheSchema = z.object({
   source: z.string().min(1),
@@ -35,8 +53,8 @@ const imageCacheSchema = z.object({
 });
 
 const imageSearchSchema = z.union([
-  z.object({ image_url: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional() }),
-  z.object({ source: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional() })
+  z.object({ image_url: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional(), source_mode: z.enum(["clip", "legacy"]).optional() }),
+  z.object({ source: z.string().min(1), temu_main_id: z.union([z.string(), z.number()]).optional(), source_mode: z.enum(["clip", "legacy"]).optional() })
 ]);
 
 const replaceSkuSchema = z.object({
@@ -91,10 +109,10 @@ const directImageTaskSchema = z.object({
   client_task_id: z.string().regex(/^direct-[a-zA-Z0-9-]+$/),
   temu_main_id: z.union([z.string(), z.number()]).transform(String),
   temu_platform_id: z.union([z.string(), z.number()]).transform(String).optional(),
-  mode: z.enum(["edit", "fusion"]),
-  image_urls: z.array(z.string().min(1)).min(1).max(2),
+  mode: z.literal("edit"),
+  image_urls: z.array(z.string().min(1)).length(1),
   source_type: z.enum(["gallery", "detail"]),
-  source_indices: z.array(z.number().int().nonnegative()).max(2).optional(),
+  source_indices: z.array(z.number().int().nonnegative()).max(1).optional(),
   detail_index: z.number().int().min(-1).optional(),
   prompt: z.string().min(1),
   size: z.string().optional()
@@ -118,6 +136,29 @@ const packingWorkflowPromptSchema = z.object({
   product: z.record(z.string(), z.unknown())
 });
 
+const clipWorkflowAssembleSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]),
+  image_url: z.string().min(1),
+  custom_prompt: z.string().trim().max(10000).optional(),
+  product: z.record(z.string(), z.unknown()).optional(),
+  min_price: z.union([z.string(), z.number()]).optional(),
+  max_price: z.union([z.string(), z.number()]).optional()
+});
+
+const clipWorkflowSearchSchema = z.object({
+  temu_main_id: z.union([z.string(), z.number()]),
+  image_url: z.string().optional(),
+  keyword: z.string().trim().min(1).max(500),
+  min_price: z.union([z.string(), z.number()]).optional(),
+  max_price: z.union([z.string(), z.number()]).optional()
+});
+
+const clipWorkflowTop10Schema = z.object({
+  keyword: z.string().trim().min(1).max(500),
+  min_price: z.union([z.string(), z.number()]).optional(),
+  max_price: z.union([z.string(), z.number()]).optional()
+});
+
 const carouselWorkflowPromptSchema = z.object({
   mode: z.literal("carousel"),
   temu_main_id: z.union([z.string(), z.number()]),
@@ -125,12 +166,21 @@ const carouselWorkflowPromptSchema = z.object({
   image_urls: z.array(z.string().min(1)).length(2),
   source_indices: z.array(z.number().int().nonnegative()).length(2),
   gallery_snapshot: z.array(z.string()),
-  count: z.number().int().min(2).max(10),
+  count: z.number().int().min(1).max(10),
   market_language: z.string().min(1).max(100),
   prompt: z.string().max(5000).optional(),
   advanced: z.boolean().optional(),
   reasoning_enabled: z.boolean().optional(),
   size: z.string().optional()
+});
+
+const carouselManualPromptSchema = carouselWorkflowPromptSchema.omit({
+  count: true,
+  prompt: true,
+  advanced: true,
+  reasoning_enabled: true
+}).extend({
+  pages: z.array(defaultPromptPageSchema).min(1).max(10)
 });
 
 const workflowPromptSchema = z.union([packingWorkflowPromptSchema, carouselWorkflowPromptSchema]);
@@ -162,6 +212,7 @@ const workflowGenerateSchema = z.object({
 const workflowCompleteSchema = z.object({
   temu_main_id: z.union([z.string(), z.number()]).optional(),
   temu_platform_id: z.union([z.string(), z.number()]).optional(),
+  source_mode: z.enum(["clip", "legacy"]).optional(),
   ali_main_id: z.union([z.string(), z.number()]),
   ali_platform_id: z.union([z.string(), z.number()]).optional()
 });
@@ -173,7 +224,10 @@ module.exports = {
   collectionSchema: collectionSchema,
   undoSchema: undoSchema,
   configUpdateSchema: configUpdateSchema,
+  defaultPromptUpdateSchema: defaultPromptUpdateSchema,
   jsonImportSchema: jsonImportSchema,
+  miaoshouImportSchema: miaoshouImportSchema,
+  miaoshouCookieSchema: miaoshouCookieSchema,
   imageCacheSchema: imageCacheSchema,
   imageSearchSchema: imageSearchSchema,
   dollarTransferSchema: dollarTransferSchema,
@@ -186,7 +240,11 @@ module.exports = {
   directImageTaskSchema: directImageTaskSchema,
   skuBlendTaskSchema: skuBlendTaskSchema,
   workflowPromptSchema: workflowPromptSchema,
+  clipWorkflowAssembleSchema: clipWorkflowAssembleSchema,
+  clipWorkflowSearchSchema: clipWorkflowSearchSchema,
+  clipWorkflowTop10Schema: clipWorkflowTop10Schema,
   carouselWorkflowPromptSchema: carouselWorkflowPromptSchema,
+  carouselManualPromptSchema: carouselManualPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
   carouselPageUpdateSchema: carouselPageUpdateSchema,
   carouselGenerationSchema: carouselGenerationSchema,

@@ -1,19 +1,23 @@
 {
   "manifest_version": 3,
   "name": "自动组货采集器",
-  "version": "3.1.1",
+  "version": "3.1.3",
   "description": "统一采集 Temu 和 1688 商品、SKU、图片与店铺数据，分别保存到扩展 cache 和 Server cache。",
   "permissions": [
     "activeTab",
     "scripting",
     "downloads",
     "storage",
-    "alarms"
+    "alarms",
+    "cookies"
   ],
   "host_permissions": [
     "https://temu.com/*",
     "https://*.temu.com/*",
     "https://detail.1688.com/*",
+    "https://91miaoshou.com/*",
+    "https://erp.91miaoshou.com/*",
+    "https://*.91miaoshou.com/*",
     "http://127.0.0.1:5173/*",
     "http://localhost:5173/*",
     "http://127.0.0.1:3000/*",
@@ -45,6 +49,14 @@
       ],
       "js": ["content.js"],
       "css": ["content.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "http://127.0.0.1:5173/*",
+        "http://localhost:5173/*"
+      ],
+      "js": ["content.js"],
       "run_at": "document_idle"
     }
   ]

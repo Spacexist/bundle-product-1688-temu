@@ -20,11 +20,13 @@ const imageCacheModule = require("./services/image-cache.service");
 const miaoshouExportModule = require("./services/miaoshou-export.service");
 const imageSearchModule = require("./services/image-search.service");
 const currencyModule = require("./services/currency.service");
+const clipWorkerModule = require("./services/clip-worker.service");
 const configControllerModule = require("./controllers/config.controller");
 const currencyControllerModule = require("./controllers/currency.controller");
 const providerControllerModule = require("./controllers/provider.controller");
 const workflowControllerModule = require("./controllers/workflow.controller");
 const diagnosticsControllerModule = require("./controllers/diagnostics.controller");
+const cloudAuthControllerModule = require("./controllers/cloud-auth.controller");
 const routeModule = require("./routes/api.routes");
 const providerRouteModule = require("./routes/provider.routes");
 const requestContextModule = require("./middleware/request-context");
@@ -88,13 +90,20 @@ function createApp() {
   });
   const directImages = new directImageRuntimeModule.DirectImageRuntimeService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
-    providers: providers
+    providers: providers,
+    images: images
   });
   const skuBlendTasks = new directImageRuntimeModule.DirectImageRuntimeService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     providers: providers,
+    images: images,
     runtimeName: "sku-blend",
     taskScope: "sku"
+  });
+  const clipWorker = new clipWorkerModule.ClipWorkerService({
+    readConfig: configModule.readServerConfig,
+    writeLog: diagnostics.write.bind(diagnostics),
+    appRoot: path.resolve(__dirname, "..")
   });
   const workflow = workflowServiceModule.createWorkflowService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
@@ -107,6 +116,7 @@ function createApp() {
       return images.cacheGeneratedImage(source);
     },
     imageTaskQueue: imageTaskQueue,
+    clipWorker: clipWorker,
     writeLog: diagnostics.write.bind(diagnostics),
     formatTime: diagnostics.formatTime.bind(diagnostics),
     publishEvent: events.publish.bind(events)
@@ -136,8 +146,9 @@ function createApp() {
   const configController = new configControllerModule.ConfigController();
   const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
   const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel, directImages: directImages, skuBlendTasks: skuBlendTasks });
-  const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, products: products });
-  const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics });
+  const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, directImages: directImages, products: products });
+  const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics, clipWorker: clipWorker });
+  const cloudAuthController = new cloudAuthControllerModule.CloudAuthController();
   const app = express();
   app.locals.diagnostics = diagnostics;
 
@@ -171,6 +182,7 @@ function createApp() {
   const businessRouteOptions = {
     productController: productController,
     configController: configController,
+    cloudAuthController: cloudAuthController,
     imageController: imageController,
     currencyController: currencyController,
     events: events

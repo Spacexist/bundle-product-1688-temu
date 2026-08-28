@@ -44,24 +44,29 @@ class ProviderController {
     const input = request.validatedBody;
     const taskId = String(input.carousel_task_id || "");
     const pageIndex = Number(input.carousel_page_index);
+    let generationId = "";
+    let pageStarted = false;
     try {
       if (taskId && this.carousel) {
         const carouselTask = this.carousel.markPageGenerating(taskId, pageIndex);
+        generationId = String(carouselTask.pages[pageIndex].generation_id || "");
+        pageStarted = true;
         input.image_urls = carouselTask.source_image_urls.slice();
         input.prompt = String(carouselTask.pages[pageIndex].prompt || "");
-        input.size = String(carouselTask.size || "1k");
+        input.size = String(carouselTask.size || "1024x1024");
+        input.generation_id = generationId;
       }
       const result = await this.providers.editImages(input, "fusion", request.requestId);
       if (taskId && this.carousel) {
-        const task = this.carousel.markPageSucceeded(taskId, pageIndex, result.image_url);
+        const task = this.carousel.markPageSucceeded(taskId, pageIndex, result.image_url, generationId);
         if (!task) {
           this.carousel.deleteGeneratedImage(result.image_url);
         }
       }
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
-      if (taskId && this.carousel) {
-        this.carousel.markPageFailed(taskId, pageIndex, error);
+      if (taskId && this.carousel && pageStarted) {
+        this.carousel.markPageFailed(taskId, pageIndex, error, generationId);
       }
       next(error);
     }

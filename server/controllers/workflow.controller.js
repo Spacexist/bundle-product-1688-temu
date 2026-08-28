@@ -9,13 +9,14 @@ class WorkflowController {
     this.workflow = settings.workflow;
     this.binding = settings.binding;
     this.carousel = settings.carousel;
+    this.directImages = settings.directImages;
     this.products = settings.products;
   }
 
   /** Return the persisted intelligent-packing state. */
   getWorkflow(request, response, next) {
     try {
-      response.json({ ok: true, data: this.workflow.readPayload(), error: null, meta: { request_id: request.requestId } });
+      response.json({ ok: true, data: this.workflow.readWorkflowSnapshot(), error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
     }
@@ -29,6 +30,7 @@ class WorkflowController {
         ok: true,
         data: {
           active_temu_main_id: String(active.active_temu_main_id || ""),
+          active_source_mode: String(active.active_source_mode || ""),
           task: active.task || null
         },
         error: null,
@@ -45,9 +47,51 @@ class WorkflowController {
       await this.generateCarouselPrompts(request, response);
       return;
     }
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
     try {
+      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId, "legacy");
       const result = await this.workflow.generatePrompts(request.validatedBody, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "prompts_ready", "", "", request.requestId, "legacy");
       response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "legacy");
+      next(error);
+    }
+  }
+
+  /** Generate CLIP-backed real-product candidates through the local listing service. */
+  async assembleClip(request, response, next) {
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
+    try {
+      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId, "clip");
+      const result = await this.workflow.assembleClip(request.validatedBody, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "ready", "", "", request.requestId, "clip");
+      response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "clip");
+      next(error);
+    }
+  }
+
+  /** Search CLIP directly with one user-entered keyword and persist two candidates. */
+  async searchClip(request, response, next) {
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
+    try {
+      this.workflow.setTemporaryState(temuMainId, "analyzing", "", "", request.requestId, "clip");
+      const result = await this.workflow.searchClip(request.validatedBody, request.requestId);
+      this.workflow.setTemporaryState(temuMainId, "ready", "", "", request.requestId, "clip");
+      response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "clip");
+      next(error);
+    }
+  }
+
+  /** Search CLIP top 10 directly from one English candidate keyword. */
+  async searchClipTop10(request, response, next) {
+    try {
+      const result = await this.workflow.searchClipTop10(request.validatedBody, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
     }
@@ -120,6 +164,16 @@ class WorkflowController {
     }
   }
 
+  /** Create one ready carousel task from manually configured storyboard prompts. */
+  startManualCarouselPlan(request, response, next) {
+    try {
+      const task = this.carousel.createManualTask(request.validatedBody);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Save advanced-mode page edits and release the task for generation. */
   updateCarouselTask(request, response, next) {
     try {
@@ -180,6 +234,7 @@ class WorkflowController {
 
   /** Generate all or one intelligent-packing candidate image and wait for its result. */
   async generateImages(request, response, next) {
+    const temuMainId = String(request.validatedBody.temu_main_id || "");
     try {
       if (request && typeof request.setTimeout === "function") {
         request.setTimeout(WORKFLOW_GENERATION_TIMEOUT_MS);
@@ -190,6 +245,7 @@ class WorkflowController {
       const result = await this.workflow.generateImages(request.validatedBody, request.requestId);
       response.json({ ok: true, data: { task: result.task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
+      this.workflow.setTemporaryState(temuMainId, "error", error.message, error.code, request.requestId, "legacy");
       next(error);
     }
   }

@@ -32,9 +32,9 @@ function getCurrentUnifiedPlatform() {
 /** Return the button label for the current platform. */
 function getUnifiedButtonText(platform, action) {
   if (platform === "1688" && action === "replaceSku") {
-    return "1688\n替换 SKU";
+    return "替换 SKU";
   }
-  return platform === "1688" ? "1688\n绑定" : "Temu\n采集";
+  return platform === "1688" ? "1688 绑定" : "Temu 采集";
 }
 
 /** Render the floating collector button with one lifecycle status. */
@@ -545,11 +545,39 @@ function observeUnifiedProductNavigation() {
   }, 1000);
 }
 
+/** Return true when this content script is running inside the local Workbench. */
+function isUnifiedLocalWorkbenchPage() {
+  return location.origin === "http://127.0.0.1:5173" || location.origin === "http://localhost:5173";
+}
+
+/** Relay local Workbench Cookie-sync requests to the extension background worker. */
+function handleUnifiedWorkbenchBridgeMessage(event) {
+  if (!isUnifiedLocalWorkbenchPage() || event.source !== window) {
+    return;
+  }
+  var message = event.data && typeof event.data === "object" ? event.data : {};
+  if (message.type !== "autoPackingSyncMiaoshouCookie") {
+    return;
+  }
+  var requestId = String(message.requestId || "");
+  chrome.runtime.sendMessage({ type: "syncMiaoshouCookieToBackend" }, function handleMiaoshouCookieBridgeResponse(response) {
+    var lastError = chrome.runtime.lastError;
+    window.postMessage({
+      type: "autoPackingMiaoshouCookieSynced",
+      requestId: requestId,
+      ok: Boolean(response && response.ok && !lastError),
+      data: response && response.data || null,
+      error: lastError ? lastError.message : response && response.error || ""
+    }, location.origin);
+  });
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initializeUnifiedCollectorButton);
 } else {
   initializeUnifiedCollectorButton();
 }
 chrome.runtime.onMessage.addListener(handleUnifiedCollectionStatusMessage);
+window.addEventListener("message", handleUnifiedWorkbenchBridgeMessage);
 initializeUnifiedBindingPanel();
 observeUnifiedProductNavigation();

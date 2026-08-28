@@ -4,6 +4,7 @@ function attachRequestContext(request, response, next) {
   const method = String(request.method || "GET").toUpperCase();
   if (pathname === "/api/v1/logs"
     || pathname === "/api/v1/logs/events"
+    || pathname === "/api/v1/clip/status"
     || pathname === "/api/v1/queue"
     || pathname === "/api/v1/queue/events") {
     next();
@@ -31,6 +32,9 @@ function attachRequestContext(request, response, next) {
   };
   if (diagnostics && typeof diagnostics.write === "function") {
     diagnostics.write("RECEIVE", request.method + " " + request.originalUrl, {
+      source: getRequestSource(request),
+      target: "Local API " + request.method + " " + request.originalUrl,
+      upload: createRequestUploadSummary(request),
       query: request.query,
       body: request.body || null
     }, requestId);
@@ -41,6 +45,8 @@ function attachRequestContext(request, response, next) {
       return;
     }
     diagnostics.write("SEND", request.method + " " + request.originalUrl + " -> " + response.statusCode, {
+      source: "Local API " + request.method + " " + request.originalUrl,
+      target: getRequestSource(request),
       status: response.statusCode,
       duration_ms: Date.now() - startedAt,
       body: request.responsePayload === undefined ? null : request.responsePayload
@@ -48,6 +54,36 @@ function attachRequestContext(request, response, next) {
   }
   response.on("finish", logCompletedResponse);
   next();
+}
+
+/** Return the browser, extension, or client origin visible to the local API. */
+function getRequestSource(request) {
+  const headers = request && request.headers ? request.headers : {};
+  const origin = headers.origin || headers.referer || headers.referrer || "";
+  const address = request && (request.ip || request.socket && request.socket.remoteAddress) || "";
+  return String(origin || address || "local client");
+}
+
+/** Summarize one incoming upload without retaining bulky request details. */
+function createRequestUploadSummary(request) {
+  const headers = request && request.headers ? request.headers : {};
+  const body = request && request.body;
+  const summary = {
+    content_type: String(headers["content-type"] || ""),
+    content_length: String(headers["content-length"] || ""),
+    has_body: body !== undefined && body !== null
+  };
+  if (Array.isArray(body)) {
+    summary.body_type = "array";
+    summary.item_count = body.length;
+  } else if (body && typeof body === "object") {
+    summary.body_type = "object";
+    summary.fields = Object.keys(body).slice(0, 30);
+    summary.field_count = Object.keys(body).length;
+  } else {
+    summary.body_type = typeof body;
+  }
+  return summary;
 }
 
 /** Replace one oversized workbench response with the fields useful for diagnostics. */
