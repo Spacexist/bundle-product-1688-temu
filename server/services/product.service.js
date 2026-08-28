@@ -1,3 +1,6 @@
+const fs = require("fs");
+const path = require("path");
+
 /** Product application service that owns mutations, versions and undo behavior. */
 class ProductService {
   /** Store repository, ViewModel and event dependencies. */
@@ -7,6 +10,7 @@ class ProductService {
     this.viewModels = settings.viewModels;
     this.events = settings.events;
     this.images = settings.images;
+    this.restoreUploadDirectory = path.join(this.repository.cacheDirectory, "runtime", "restore-upload");
   }
 
   /** Return the full workbench ViewModel. */
@@ -35,9 +39,16 @@ class ProductService {
         throw missingError;
       }
       service.repository.createHistorySnapshot(found.record, "delete");
+      const deletedRecord = found.record;
       payload.records.splice(found.index, 1);
-      return null;
+      return { deletedRecord: deletedRecord };
     });
+    if (this.images && typeof this.images.deleteProductCache === "function") {
+      this.images.deleteProductCache(transaction.result.deletedRecord);
+    }
+    if (this.images && typeof this.images.rebuildReferenceIndex === "function") {
+      this.images.rebuildReferenceIndex(transaction.payload.records);
+    }
     this.events.publish({
       resource: "product",
       action: "deleted",
@@ -65,8 +76,17 @@ class ProductService {
         service.repository.createHistorySnapshot({ platform: platform, platform_id: "all", records: deletedRecords }, "clear_platform");
       }
       payload.records = retainedRecords;
-      return null;
+      return { deletedRecords: deletedRecords };
     });
+    if (this.images && typeof this.images.deleteProductCache === "function") {
+      const deletedRecords = transaction.result.deletedRecords || [];
+      for (let index = 0; index < deletedRecords.length; index += 1) {
+        this.images.deleteProductCache(deletedRecords[index]);
+      }
+    }
+    if (this.images && typeof this.images.rebuildReferenceIndex === "function") {
+      this.images.rebuildReferenceIndex(transaction.payload.records);
+    }
     this.events.publish({
       resource: "product",
       action: "platform_cleared",
@@ -121,6 +141,246 @@ class ProductService {
     return this.importJson(input, requestId);
   }
 
+  /** Normalize a browser-created restore upload id for filesystem use. */
+  normalizeRestoreUploadId(uploadId) {
+    return String(uploadId || "").replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 80);
+  }
+
+  /** Resolve the temporary files used by one chunked restore upload. */
+  getRestoreUploadPaths(uploadId) {
+    const safeUploadId = this.normalizeRestoreUploadId(uploadId);
+    if (!safeUploadId) {
+      const uploadError = new Error("恢复上传编号无效。");
+      uploadError.statusCode = 400;
+      throw uploadError;
+    }
+    fs.mkdirSync(this.restoreUploadDirectory, { recursive: true });
+    return {
+      uploadId: safeUploadId,
+      payloadPath: path.join(this.restoreUploadDirectory, safeUploadId + ".json.part"),
+      metaPath: path.join(this.restoreUploadDirectory, safeUploadId + ".meta.json"),
+      dataPath: path.join(this.restoreUploadDirectory, safeUploadId + ".data.json"),
+      recordsDirectory: path.join(this.restoreUploadDirectory, safeUploadId + "-records")
+    };
+  }
+
+  /** Read the current chunked restore upload metadata. */
+  readRestoreUploadMeta(metaPath) {
+    if (!fs.existsSync(metaPath)) {
+      return null;
+    }
+    try {
+      const payload = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+      return payload && typeof payload === "object" ? payload : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /** Persist the current chunked restore upload metadata. */
+  writeRestoreUploadMeta(metaPath, meta) {
+    fs.writeFileSync(metaPath, JSON.stringify(meta || {}, null, 2), "utf8");
+  }
+
+  /** Remove temporary chunked restore files after success or restart. */
+  cleanupRestoreUpload(paths) {
+    const targets = paths && typeof paths === "object" ? [paths.payloadPath, paths.metaPath, paths.dataPath] : [];
+    for (let index = 0; index < targets.length; index += 1) {
+      if (targets[index] && fs.existsSync(targets[index])) {
+        fs.unlinkSync(targets[index]);
+      }
+    }
+    if (paths && paths.recordsDirectory && fs.existsSync(paths.recordsDirectory)) {
+      fs.rmSync(paths.recordsDirectory, { recursive: true, force: true });
+    }
+  }
+
+  /** Return the stable temporary filename for one prepared restore record. */
+  getRestoreRecordPath(paths, recordIndex) {
+    return path.join(paths.recordsDirectory, String(recordIndex).padStart(8, "0") + ".json");
+  }
+
+  /** Parse the uploaded JSON once and prepare per-record restore work files. */
+  prepareRestoreUpload(paths, meta) {
+    let imported;
+    try {
+      imported = JSON.parse(fs.readFileSync(paths.payloadPath, "utf8"));
+    } catch (error) {
+      this.cleanupRestoreUpload(paths);
+      const parseError = new Error("导入文件不是有效 JSON。");
+      parseError.statusCode = 400;
+      throw parseError;
+    }
+    const records = Array.isArray(imported)
+      ? imported
+      : imported && Array.isArray(imported.records) ? imported.records : [];
+    if (!records.length) {
+      this.cleanupRestoreUpload(paths);
+      const emptyError = new Error("JSON 中没有找到商品数组。");
+      emptyError.statusCode = 400;
+      throw emptyError;
+    }
+    if (fs.existsSync(paths.recordsDirectory)) {
+      fs.rmSync(paths.recordsDirectory, { recursive: true, force: true });
+    }
+    fs.mkdirSync(paths.recordsDirectory, { recursive: true });
+    for (let recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
+      fs.writeFileSync(this.getRestoreRecordPath(paths, recordIndex), JSON.stringify(records[recordIndex] || {}, null, 2), "utf8");
+    }
+    const importedPayload = imported && typeof imported === "object" && !Array.isArray(imported) ? imported : {};
+    const restoreData = {};
+    if (Object.prototype.hasOwnProperty.call(importedPayload, "mappings")) {
+      restoreData.mappings = importedPayload.mappings;
+    }
+    if (Object.prototype.hasOwnProperty.call(importedPayload, "update_instruction")) {
+      restoreData.update_instruction = importedPayload.update_instruction;
+    }
+    fs.writeFileSync(paths.dataPath, JSON.stringify(restoreData, null, 2), "utf8");
+    fs.unlinkSync(paths.payloadPath);
+    const preparedMeta = Object.assign({}, meta, {
+      prepared: true,
+      restore_started: false,
+      total_records: records.length,
+      next_record_index: 0,
+      updated_at: new Date().toISOString()
+    });
+    this.writeRestoreUploadMeta(paths.metaPath, preparedMeta);
+    return preparedMeta;
+  }
+
+  /** Read one prepared restore record from its temporary file. */
+  readPreparedRestoreRecord(paths, recordIndex) {
+    return JSON.parse(fs.readFileSync(this.getRestoreRecordPath(paths, recordIndex), "utf8"));
+  }
+
+  /** Read optional non-record fields retained from the original restore JSON. */
+  readPreparedRestoreData(paths) {
+    if (!fs.existsSync(paths.dataPath)) {
+      return {};
+    }
+    try {
+      const payload = JSON.parse(fs.readFileSync(paths.dataPath, "utf8"));
+      return payload && typeof payload === "object" ? payload : {};
+    } catch (error) {
+      return {};
+    }
+  }
+
+  /** Append one base64 restore chunk and prepare record batches after the final chunk. */
+  async restoreJsonChunk(input, requestId) {
+    const chunkIndex = Number(input && input.chunk_index);
+    const totalChunks = Number(input && input.total_chunks);
+    if (!Number.isInteger(chunkIndex) || !Number.isInteger(totalChunks) || totalChunks < 1 || chunkIndex < 0 || chunkIndex >= totalChunks) {
+      const chunkError = new Error("恢复分片序号无效。");
+      chunkError.statusCode = 400;
+      throw chunkError;
+    }
+    const paths = this.getRestoreUploadPaths(input.upload_id);
+    if (chunkIndex === 0) {
+      this.cleanupRestoreUpload(paths);
+    }
+    const meta = this.readRestoreUploadMeta(paths.metaPath) || {
+      upload_id: paths.uploadId,
+      total_chunks: totalChunks,
+      next_index: 0,
+      file_name: String(input.file_name || ""),
+      created_at: new Date().toISOString()
+    };
+    if (Number(meta.total_chunks) !== totalChunks || Number(meta.next_index) !== chunkIndex) {
+      const orderError = new Error("恢复分片顺序不一致，请重新选择备份文件。");
+      orderError.statusCode = 409;
+      throw orderError;
+    }
+    const chunkBuffer = Buffer.from(String(input.chunk_base64 || ""), "base64");
+    if (!chunkBuffer.length) {
+      const emptyError = new Error("恢复分片内容为空。");
+      emptyError.statusCode = 400;
+      throw emptyError;
+    }
+    fs.appendFileSync(paths.payloadPath, chunkBuffer);
+    meta.next_index = chunkIndex + 1;
+    meta.updated_at = new Date().toISOString();
+    this.writeRestoreUploadMeta(paths.metaPath, meta);
+    if (meta.next_index < totalChunks) {
+      return {
+        done: false,
+        prepared: false,
+        received_chunks: meta.next_index,
+        total_chunks: totalChunks
+      };
+    }
+    const preparedMeta = this.prepareRestoreUpload(paths, meta);
+    return {
+      done: false,
+      prepared: true,
+      upload_id: paths.uploadId,
+      received_chunks: preparedMeta.next_index,
+      total_chunks: totalChunks,
+      processed_records: 0,
+      total_records: Number(preparedMeta.total_records || 0)
+    };
+  }
+
+  /** Restore the next prepared record batch and return visible batch progress. */
+  async restoreJsonBatch(input, requestId) {
+    const paths = this.getRestoreUploadPaths(input && input.upload_id);
+    const meta = this.readRestoreUploadMeta(paths.metaPath);
+    if (!meta || !meta.prepared) {
+      const missingError = new Error("恢复任务不存在或尚未准备完成。");
+      missingError.statusCode = 404;
+      throw missingError;
+    }
+    const totalRecords = Number(meta.total_records || 0);
+    const startIndex = Number(meta.next_record_index || 0);
+    const batchSize = Math.max(1, Math.min(50, Math.floor(Number(input && input.batch_size || 10))));
+    const endIndex = Math.min(totalRecords, startIndex + batchSize);
+    const batchRecords = [];
+    for (let recordIndex = startIndex; recordIndex < endIndex; recordIndex += 1) {
+      batchRecords.push(this.readPreparedRestoreRecord(paths, recordIndex));
+    }
+    const restoreData = this.readPreparedRestoreData(paths);
+    const service = this;
+    /** Apply one prepared record range to the cache payload. */
+    const transaction = await this.repository.mutate(async function mutateRestoreBatch(payload) {
+      if (!meta.restore_started) {
+        service.repository.createHistorySnapshot({ platform: "system", platform_id: "all", records: payload.records }, "restore_chunked");
+        payload.records = [];
+        if (Object.prototype.hasOwnProperty.call(restoreData, "mappings")) {
+          payload.mappings = restoreData.mappings;
+        }
+        if (Object.prototype.hasOwnProperty.call(restoreData, "update_instruction")) {
+          payload.update_instruction = restoreData.update_instruction;
+        }
+      }
+      for (let recordIndex = 0; recordIndex < batchRecords.length; recordIndex += 1) {
+        await service.images.cacheRecordImages(batchRecords[recordIndex]);
+        payload.records.push(batchRecords[recordIndex]);
+      }
+      return null;
+    });
+    meta.restore_started = true;
+    meta.next_record_index = endIndex;
+    meta.updated_at = new Date().toISOString();
+    this.writeRestoreUploadMeta(paths.metaPath, meta);
+    const done = endIndex >= totalRecords;
+    if (done) {
+      this.events.publish({ resource: "product", action: "imported", ids: [], version: Number(transaction.payload.version || 1) }, requestId);
+      const workbench = this.viewModels.createWorkbench(transaction.payload);
+      this.cleanupRestoreUpload(paths);
+      return {
+        done: true,
+        processed_records: endIndex,
+        total_records: totalRecords,
+        workbench: workbench
+      };
+    }
+    return {
+      done: false,
+      processed_records: endIndex,
+      total_records: totalRecords
+    };
+  }
+
   /** Locate a raw record using stable platform identifiers. */
   findRecord(records, platform, platformId) {
     for (let index = 0; index < records.length; index += 1) {
@@ -171,7 +431,7 @@ class ProductService {
       const undoToken = service.repository.createHistorySnapshot(found.record, input.module);
       service.applyModule(found.record, input.module, input.data);
       if (input.module === "images" || input.module === "skus") {
-        await service.images.cacheRecordImages(found.record);
+        await service.images.cacheEditableRecordImages(found.record);
       }
       found.record.version = currentVersion + 1;
       return {
@@ -478,7 +738,7 @@ class ProductService {
         const replacement = service.createReplacementSku(targetSelection.row, sourceSelection.row, source.record, sourceSelection.index);
         target.record.sku[targetSelection.index] = replacement;
       }
-      await service.images.cacheRecordImages(target.record);
+      await service.images.cacheEditableRecordImages(target.record);
       target.record.version = currentVersion + 1;
       return {
         product: service.viewModels.normalizeRecord(target.record),
@@ -581,7 +841,7 @@ class ProductService {
       const undoToken = service.repository.createHistorySnapshot(found.record, "carousel_images");
       found.record.gallery_image_urls = gallery;
       found.record.main_image_url = gallery[0] || "";
-      await service.images.cacheRecordImages(found.record);
+      await service.images.cacheEditableRecordImages(found.record);
       found.record.version = Number(found.record.version || 1) + 1;
       return { product: service.viewModels.normalizeRecord(found.record), undo_token: undoToken };
     });

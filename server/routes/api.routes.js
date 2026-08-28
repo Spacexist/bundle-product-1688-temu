@@ -49,6 +49,8 @@ function createApiRouter(options) {
   router.delete("/products/:platform/:platformId", products.deleteOne.bind(products));
   router.post("/imports/json", validationModule.validate(schemaModule.jsonImportSchema, "body"), products.importJson.bind(products));
   router.post("/restore", validationModule.validate(schemaModule.jsonImportSchema, "body"), products.restoreJson.bind(products));
+  router.post("/restore/chunk", express.text({ type: "*/*", limit: "2mb" }), products.restoreJsonChunk.bind(products));
+  router.post("/restore/batch", products.restoreJsonBatch.bind(products));
   router.get("/exports/json", products.exportJson.bind(products));
   router.get("/zip", products.exportMiaoshouZip.bind(products));
   router.get("/miaoshou/cookie", products.getMiaoshouCookieStatus.bind(products));

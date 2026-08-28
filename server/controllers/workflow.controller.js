@@ -87,6 +87,16 @@ class WorkflowController {
     }
   }
 
+  /** Search CLIP top 10 directly from one English candidate keyword. */
+  async searchClipTop10(request, response, next) {
+    try {
+      const result = await this.workflow.searchClipTop10(request.validatedBody, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Write one named SSE event without exposing hidden reasoning content. */
   writeCarouselEvent(response, eventName, payload) {
     if (!response || response.destroyed || response.writableEnded) {

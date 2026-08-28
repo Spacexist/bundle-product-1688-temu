@@ -283,6 +283,8 @@ const VIEW_STATE_STORAGE_KEY = "pod-auto-build.view-state";
 const CAROUSEL_UNDO_STORAGE_KEY = "pod-auto-build.carousel-undo";
 const WORKFLOW_INDICATOR_ACK_STORAGE_KEY = "pod-auto-build.workflow-indicator-ack";
 const SKU_BLEND_INDICATOR_ACK_STORAGE_KEY = "pod-auto-build.sku-blend-indicator-ack";
+const RESTORE_UPLOAD_CHUNK_SIZE = 512 * 1024;
+const RESTORE_RECORD_BATCH_SIZE = 10;
 
 /** Read the last workbench selection without breaking startup when browser storage is unavailable. */
 function readPersistedViewState() {
@@ -396,12 +398,18 @@ const app = createApp({
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'smart' }" type="button" @click="changeWorkspaceMode('smart')">组货模式</button>
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'realtime' }" type="button" @click="changeWorkspaceMode('realtime')">工作台</button>
           <button class="mode-button glass-action-button" type="button" :disabled="!temuRecords.length || miaoshouExportBusy" @click="openMiaoshouExportDialog">{{ miaoshouExportBusy ? '妙手处理中…' : '导出妙手 ZIP' }}</button>
-          <label class="mode-button restore-button glass-action-button">
-            备份恢复
-            <input type="file" accept="application/json,.json" @change="handleRestoreFile">
+          <label class="mode-button restore-button glass-action-button" :class="{ 'is-busy': restoreProgress.active }">
+            {{ restoreProgress.active ? '恢复中…' : '备份恢复' }}
+            <input type="file" accept="application/json,.json" :disabled="restoreProgress.active" @change="handleRestoreFile">
           </label>
         </div>
       </header>
+
+      <div v-if="restoreProgress.active" class="clip-loading-progress clip-loading-progress-global restore-loading-progress" :class="'is-' + restoreProgress.status" role="progressbar" aria-label="备份恢复进度" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="restoreProgress.progress">
+        <div><strong>备份恢复</strong><span>{{ restoreProgress.message }} · {{ restoreProgress.progress }}%</span></div>
+        <span class="clip-loading-track"><i :style="{ width: restoreProgress.progress + '%' }"></i></span>
+        <small v-if="restoreProgress.error">{{ restoreProgress.error }}</small>
+      </div>
 
       <div v-if="cloudAuth.authorized && workflowClipLoading.status !== 'ready'" class="clip-loading-progress clip-loading-progress-global" :class="'is-' + workflowClipLoading.status" role="progressbar" aria-label="CLIP 后台加载进度" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="workflowClipLoading.progress">
         <div><strong>CLIP 后台加载</strong><span>{{ workflowClipLoading.message }} · {{ workflowClipLoading.progress }}%</span></div>
@@ -481,13 +489,13 @@ const app = createApp({
                 </div>
                 <div v-if="workflowMode === 'clip'" class="smart-workflow-manual-match" aria-label="手动 CLIP 匹配">
                   <input type="text" v-model="workflowClipKeyword" placeholder="手动 keyword" @keyup.enter="searchClipWorkflowCandidates">
-                  <button type="button" :disabled="workflowPromptBusy || workflowGenerateBusy || !selectedTemuRecord || !workflowClipKeyword.trim()" @click="searchClipWorkflowCandidates">匹配2个</button>
+                  <button type="button" :disabled="workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !selectedTemuRecord || !workflowClipKeyword.trim()" @click="searchClipWorkflowCandidates">匹配2个</button>
                 </div>
                 <div class="smart-workflow-mode-switch" role="group" aria-label="组货模式">
                   <button type="button" :class="{ active: workflowMode === 'clip' }" @click="setWorkflowMode('clip')">新版CLIP</button>
                   <button type="button" :class="{ active: workflowMode === 'legacy' }" @click="setWorkflowMode('legacy')">旧版生图</button>
                 </div>
-                <button class="workflow-direction-button smart-workflow-direction-button" :class="{ 'is-analyzing': workflowPromptBusy, 'is-generating': workflowGenerateBusy, 'is-ready': workflowPrompts.length && !workflowPromptBusy && !workflowGenerateBusy }" type="button" :disabled="workflowPromptBusy || workflowGenerateBusy || !workflowSelectedImageUrl" @click="startWorkflowAction">
+                <button class="workflow-direction-button smart-workflow-direction-button" :class="{ 'is-analyzing': workflowPromptBusy, 'is-generating': workflowGenerateBusy, 'is-ready': workflowPrompts.length && !workflowPromptBusy && !workflowGenerateBusy }" type="button" :disabled="workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !workflowSelectedImageUrl" @click="startWorkflowAction">
                   <span v-if="workflowPromptBusy || workflowGenerateBusy" class="workflow-direction-spinner" aria-hidden="true"></span>
                   <span v-else class="workflow-direction-icon" aria-hidden="true">↻</span>
                   <span>{{ workflowPromptBusy ? '分析中' : workflowGenerateBusy ? '生图中' : workflowPrompts.length ? '重新组货' : workflowMode === 'clip' ? '生成CLIP组货' : '生成组货方向' }}</span>
@@ -503,7 +511,7 @@ const app = createApp({
               <header><span>01</span><div><strong>组货建议</strong><small>{{ workflowMode === 'clip' ? '新版 CLIP 返回真实候选商品，点击搜索按钮走 1688 搜图。' : '四个候选方向会自动生成图片，生成完成后可直接搜图。' }}</small></div></header>
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
-                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="!!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
                   <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.product_intro }}</span><em v-if="item.product_name && item.product_name !== item.product_intro" class="smart-result-title">{{ item.product_name }}</em><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
                 </article>
               </div>
@@ -678,6 +686,14 @@ const app = createApp({
       sourceFileName: "",
       statusText: "请导入统一 JSON 文件。",
       statusType: "normal",
+      restoreProgress: {
+        active: false,
+        status: "waiting",
+        progress: 0,
+        message: "等待选择备份文件。",
+        error: ""
+      },
+      restoreProgressTimer: null,
       dragSkuReference: null,
       dragDropTarget: null,
       dragImageReference: null,
@@ -797,6 +813,8 @@ const app = createApp({
       workflowGenerateBusy: false,
       workflowGenerateBusyKeys: {},
       workflowSearchBusyKeys: {},
+      workflowClipTop10BusyKeys: {},
+      workflowClipTop10BusyMainId: "",
       workflowStatusText: "等待选择 Temu 商品。",
       workflowStatusType: "normal",
       pendingCacheEvents: {},
@@ -854,6 +872,10 @@ const app = createApp({
     if (this.skuBlendIndicatorTimer) {
       window.clearTimeout(this.skuBlendIndicatorTimer);
       this.skuBlendIndicatorTimer = null;
+    }
+    if (this.restoreProgressTimer) {
+      window.clearTimeout(this.restoreProgressTimer);
+      this.restoreProgressTimer = null;
     }
     this.stopRealtimeCache();
   },
@@ -2430,6 +2452,8 @@ const app = createApp({
           price_label: priceLabel,
           sales_label: salesLabel,
           image_url: String(sourceItem.image_url || ""),
+          clip_top10: Boolean(sourceItem.clip_top10),
+          clip_top10_query: String(sourceItem.clip_top10_query || ""),
           image_load_error: false,
           status: String(sourceItem.status || ""),
           error: String(sourceItem.error || ""),
@@ -2490,6 +2514,10 @@ const app = createApp({
 
     /** Open the custom prompt dialog for the requested old or new workflow mode. */
     openWorkflowPromptDialog: function openWorkflowPromptDialog(mode) {
+      if (this.hasWorkflowClipTop10Lock()) {
+        this.setWorkflowStatus("已有 CLIP Top10 正在检索，请等当前结果返回。", "normal");
+        return;
+      }
       if (!this.selectedTemuRecord || !this.workflowSelectedImageUrl || this.workflowPromptBusy) {
         return;
       }
@@ -2531,6 +2559,10 @@ const app = createApp({
 
     /** Request real-product CLIP candidates through the unified 3000 backend API. */
     generateClipWorkflowCandidates: function generateClipWorkflowCandidates(customPrompt) {
+      if (this.hasWorkflowClipTop10Lock()) {
+        this.setWorkflowStatus("已有 CLIP Top10 正在检索，请等当前结果返回。", "normal");
+        return;
+      }
       if (!this.selectedTemuRecord || !this.workflowSelectedImageUrl || this.workflowPromptBusy) {
         return;
       }
@@ -2585,6 +2617,10 @@ const app = createApp({
     /** Request two manually matched CLIP candidates from one user-entered keyword. */
     searchClipWorkflowCandidates: function searchClipWorkflowCandidates() {
       const keyword = String(this.workflowClipKeyword || "").trim();
+      if (this.hasWorkflowClipTop10Lock()) {
+        this.setWorkflowStatus("已有 CLIP Top10 正在检索，请等当前结果返回。", "normal");
+        return;
+      }
       if (!this.selectedTemuRecord || !keyword || this.workflowPromptBusy) {
         return;
       }
@@ -2632,6 +2668,10 @@ const app = createApp({
 
     /** Request four custom intelligent-packing directions for the selected Temu product. */
     submitWorkflowPrompts: function submitWorkflowPrompts() {
+      if (this.hasWorkflowClipTop10Lock()) {
+        this.setWorkflowStatus("已有 CLIP Top10 正在检索，请等当前结果返回。", "normal");
+        return;
+      }
       if (!this.selectedTemuRecord || !this.workflowSelectedImageUrl || this.workflowPromptBusy) {
         return;
       }
@@ -2814,6 +2854,83 @@ const app = createApp({
         this.acknowledgeWorkflowTaskIndicator(this.selectedTemuRecord);
         this.workflowSelectedResultIndex = Number(index);
       }
+    },
+
+    /** Return the English CLIP keyword attached to one visible candidate. */
+    workflowClipTop10Keyword: function workflowClipTop10Keyword(item) {
+      const source = item && typeof item === "object" ? item : {};
+      return String(source.clip_prompt_en || source.clip_top10_query || "").trim();
+    },
+
+    /** Return whether another product owns the active CLIP Top10 request. */
+    hasWorkflowClipTop10Lock: function hasWorkflowClipTop10Lock() {
+      return Boolean(this.workflowClipTop10BusyMainId && String(this.selectedTemuMainId) !== String(this.workflowClipTop10BusyMainId));
+    },
+
+    /** Replace visible CLIP candidates with the top 10 matches for one candidate keyword. */
+    searchWorkflowClipTop10: function searchWorkflowClipTop10(index) {
+      const resultIndex = Number(index);
+      const resultKey = String(resultIndex);
+      const result = this.workflowPrompts[resultIndex];
+      const keyword = this.workflowClipTop10Keyword(result);
+      const requestedTemuMainId = String(this.selectedTemuRecord && this.selectedTemuRecord.main_id || "");
+      if (this.workflowClipTop10BusyMainId) {
+        this.setWorkflowStatus("已有 CLIP Top10 正在检索，请等当前结果返回。", "normal");
+        return;
+      }
+      if (this.workflowClipTop10BusyKeys[resultKey] || resultIndex < 0 || !this.selectedTemuRecord || !keyword) {
+        return;
+      }
+      this.workflowClipTop10BusyMainId = requestedTemuMainId;
+      this.workflowClipTop10BusyKeys[resultKey] = true;
+      this.workflowPromptBusy = true;
+      this.workflowPromptBusyKeys[requestedTemuMainId] = true;
+      this.workflowPendingModeKeys[requestedTemuMainId] = "clip";
+      delete this.workflowTaskErrorKeys[requestedTemuMainId];
+      this.setWorkflowStatus("正在用 EN 关键词跑 CLIP Top10：" + keyword, "normal");
+      const view = this;
+      requestWorkflowJson(workflowApiUrl("/workflow/clip/top10"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keyword: keyword,
+          min_price: this.workflowClipMinPrice,
+          max_price: this.workflowClipMaxPrice
+        })
+      }).then(function handleClipTop10Success(payload) {
+        const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+        if (!candidates.length) {
+          throw new Error("CLIP Top10 没有返回候选。");
+        }
+        const currentTask = view.workflowTaskForMode(requestedTemuMainId, "clip");
+        if (currentTask) {
+          currentTask.status = "clip_ready";
+          currentTask.prompts = candidates;
+          currentTask.selected_result_index = -1;
+          currentTask.clip_top10_query = String(payload.query || keyword);
+        }
+        delete view.workflowTaskErrorKeys[requestedTemuMainId];
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.workflowPrompts = candidates;
+          view.workflowSelectedResultIndex = -1;
+          view.setWorkflowStatus("CLIP Top10 已返回 " + candidates.length + " 个候选。", "success");
+        }
+      }).catch(function handleClipTop10Error(error) {
+        view.workflowTaskErrorKeys[requestedTemuMainId] = true;
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.setWorkflowStatus("CLIP Top10 失败：" + error.message, "error");
+        }
+      }).finally(function finishClipTop10Request() {
+        view.workflowClipTop10BusyKeys[resultKey] = false;
+        if (String(view.workflowClipTop10BusyMainId) === requestedTemuMainId) {
+          view.workflowClipTop10BusyMainId = "";
+        }
+        delete view.workflowPromptBusyKeys[requestedTemuMainId];
+        delete view.workflowPendingModeKeys[requestedTemuMainId];
+        if (String(view.selectedTemuMainId) === requestedTemuMainId) {
+          view.workflowPromptBusy = false;
+        }
+      });
     },
 
     /** Send one selected generated image to the 1688 image-search service. */
@@ -4871,38 +4988,196 @@ const app = createApp({
       input.value = "";
     },
 
+    /** Update the visible backup-restore progress state. */
+    setRestoreProgress: function setRestoreProgress(progress, message, status, error) {
+      if (this.restoreProgressTimer) {
+        window.clearTimeout(this.restoreProgressTimer);
+        this.restoreProgressTimer = null;
+      }
+      this.restoreProgress.active = true;
+      this.restoreProgress.progress = Math.max(0, Math.min(100, Math.round(Number(progress || 0))));
+      this.restoreProgress.message = String(message || "正在恢复备份。");
+      this.restoreProgress.status = String(status || "running");
+      this.restoreProgress.error = String(error || "");
+    },
+
+    /** Hide the completed backup-restore progress bar after the user can see the result. */
+    closeRestoreProgressSoon: function closeRestoreProgressSoon() {
+      const view = this;
+      if (this.restoreProgressTimer) {
+        window.clearTimeout(this.restoreProgressTimer);
+      }
+      /** Clear the progress bar after the final state has remained visible briefly. */
+      this.restoreProgressTimer = window.setTimeout(function hideRestoreProgress() {
+        view.restoreProgress.active = false;
+        view.restoreProgressTimer = null;
+      }, 1400);
+    },
+
+    /** Convert one binary file chunk to base64 without loading the whole backup. */
+    arrayBufferToBase64: function arrayBufferToBase64(buffer) {
+      const bytes = new Uint8Array(buffer);
+      const step = 0x8000;
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += step) {
+        const chunk = bytes.subarray(index, Math.min(index + step, bytes.length));
+        binary += String.fromCharCode.apply(null, chunk);
+      }
+      return window.btoa(binary);
+    },
+
+    /** Upload one restore chunk and return the backend envelope data. */
+    uploadRestoreChunk: function uploadRestoreChunk(uploadId, fileName, chunkIndex, totalChunks, chunkBase64, onUploaded) {
+      /** Send one small restore body so large backups never use one huge POST. */
+      return new Promise(function sendRestoreChunk(resolve, reject) {
+        const xhr = new XMLHttpRequest();
+        /** Resolve one parsed chunk response after the server accepts it. */
+        xhr.onload = function handleRestoreChunkLoad() {
+          let payload = null;
+          try {
+            payload = JSON.parse(String(xhr.responseText || ""));
+          } catch (error) {
+            reject(new Error("恢复分片接口返回不是有效 JSON。"));
+            return;
+          }
+          if (xhr.status < 200 || xhr.status >= 300 || !payload || !payload.ok) {
+            reject(new Error(getApiErrorMessage(payload, "恢复分片上传失败。")));
+            return;
+          }
+          resolve(payload.data || {});
+        };
+        /** Reject the current chunk when the browser cannot reach the server. */
+        xhr.onerror = function handleRestoreChunkError() {
+          reject(new Error("恢复分片发送失败，请确认本地服务正在运行。"));
+        };
+        /** Mark the final chunk as delivered before the server starts heavy restore work. */
+        xhr.upload.onload = function handleRestoreChunkUploaded() {
+          if (typeof onUploaded === "function") {
+            onUploaded();
+          }
+        };
+        xhr.open("POST", apiUrl("/restore/chunk"));
+        xhr.setRequestHeader("Content-Type", "text/plain; charset=utf-8");
+        xhr.setRequestHeader("X-Restore-Upload-Id", String(uploadId || ""));
+        xhr.setRequestHeader("X-Restore-File-Name", encodeURIComponent(String(fileName || "")));
+        xhr.setRequestHeader("X-Restore-Chunk-Index", String(chunkIndex));
+        xhr.setRequestHeader("X-Restore-Total-Chunks", String(totalChunks));
+        xhr.send(String(chunkBase64 || ""));
+      });
+    },
+
+    /** Restore one prepared server-side record batch and return its progress. */
+    restorePreparedBatch: function restorePreparedBatch(uploadId) {
+      /** Parse one restore batch response and surface API errors. */
+      function handleRestoreBatchResponse(response) {
+        /** Validate one batch response before the next restore batch is requested. */
+        return response.json().then(function validateRestoreBatchPayload(payload) {
+          if (!response.ok || !payload || !payload.ok) {
+            throw new Error(getApiErrorMessage(payload, "恢复批次处理失败。"));
+          }
+          return payload.data || {};
+        });
+      }
+      const requestOptions = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          upload_id: String(uploadId || ""),
+          batch_size: RESTORE_RECORD_BATCH_SIZE
+        })
+      };
+      return fetch(apiUrl("/restore/batch"), requestOptions).then(handleRestoreBatchResponse);
+    },
+
+    /** Restore every prepared server-side record batch with visible product progress. */
+    restorePreparedBatches: async function restorePreparedBatches(uploadId, totalRecords) {
+      const count = Math.max(0, Number(totalRecords || 0));
+      let result = null;
+      if (!count) {
+        throw new Error("JSON 中没有找到商品数组。");
+      }
+      while (!result || !result.done) {
+        const processed = result ? Number(result.processed_records || 0) : 0;
+        const baseProgress = 88 + Math.round((processed / count) * 10);
+        this.setRestoreProgress(Math.min(98, baseProgress), "正在恢复商品 " + processed + "/" + count + "。", "running", "");
+        result = await this.restorePreparedBatch(uploadId);
+        const nextProcessed = Math.max(processed, Number(result.processed_records || 0));
+        const nextProgress = 88 + Math.round((nextProcessed / count) * 10);
+        this.setRestoreProgress(Math.min(98, nextProgress), "正在恢复商品 " + nextProcessed + "/" + count + "。", "running", "");
+      }
+      if (!result.workbench) {
+        throw new Error("恢复批次已完成，但服务器没有返回完整工作台数据。");
+      }
+      return result.workbench;
+    },
+
+    /** Read and upload a backup file in small sequential chunks. */
+    restoreFileInChunks: async function restoreFileInChunks(file) {
+      const totalSize = Number(file && file.size || 0);
+      if (!file || totalSize <= 0) {
+        throw new Error("备份文件为空。");
+      }
+      const uploadId = (window.crypto && typeof window.crypto.randomUUID === "function")
+        ? window.crypto.randomUUID()
+        : String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+      const totalChunks = Math.max(1, Math.ceil(totalSize / RESTORE_UPLOAD_CHUNK_SIZE));
+      let finalPayload = null;
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+        const start = chunkIndex * RESTORE_UPLOAD_CHUNK_SIZE;
+        const end = Math.min(start + RESTORE_UPLOAD_CHUNK_SIZE, totalSize);
+        const chunkNumber = chunkIndex + 1;
+        const baseProgress = Math.round((start / totalSize) * 88);
+        this.setRestoreProgress(Math.max(1, baseProgress), "正在读取分片 " + chunkNumber + "/" + totalChunks + "。", "running", "");
+        const buffer = await file.slice(start, end).arrayBuffer();
+        const chunkBase64 = this.arrayBufferToBase64(buffer);
+        this.setRestoreProgress(Math.max(2, baseProgress), "正在上传分片 " + chunkNumber + "/" + totalChunks + "。", "running", "");
+        /** Mark final upload completion before the server prepares record batches. */
+        function markRestoreChunkUploaded() {
+          if (chunkIndex === totalChunks - 1) {
+            this.setRestoreProgress(88, "分片已传完，服务器正在准备分批恢复。", "running", "");
+          }
+        }
+        finalPayload = await this.uploadRestoreChunk(uploadId, file.name, chunkIndex, totalChunks, chunkBase64, markRestoreChunkUploaded.bind(this));
+        const uploadedProgress = 2 + Math.round((end / totalSize) * 86);
+        if (finalPayload && finalPayload.prepared) {
+          this.setRestoreProgress(88, "服务器准备完成，开始分批恢复商品。", "running", "");
+        } else {
+          this.setRestoreProgress(Math.min(88, uploadedProgress), "已上传 " + chunkNumber + "/" + totalChunks + " 个分片。", "running", "");
+        }
+      }
+      if (!finalPayload || !finalPayload.prepared || !finalPayload.upload_id) {
+        throw new Error("恢复分片已上传，但服务器没有准备好分批恢复任务。");
+      }
+      return this.restorePreparedBatches(finalPayload.upload_id, finalPayload.total_records);
+    },
+
     /** Submit one extension-exported JSON file to the backend restore API. */
     handleRestoreFile: function handleRestoreFile(event) {
       const input = event.target;
       const file = input && input.files ? input.files[0] : null;
-      if (!file) {
+      if (!file || this.restoreProgress.active) {
+        if (input) {
+          input.value = "";
+        }
         return;
       }
-      const reader = new FileReader();
       const view = this;
-      /** Send the untouched extension JSON text to the backend. */
-      reader.onload = function handleRestoreJsonLoad(loadEvent) {
-        fetch(apiUrl("/restore"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ json_text: String(loadEvent.target.result || "") })
-        }).then(function handleRestoreResponse(response) {
-          return response.json().then(function validateRestorePayload(payload) {
-            if (!response.ok || !payload.ok) {
-              throw new Error(getApiErrorMessage(payload, "恢复失败。"));
-            }
-            return payload.data;
-          });
-        }).then(function applyRestoreViewModel(payload) {
-          view.applyCachePayload(payload);
-          view.workspaceMode = "realtime";
-          view.persistViewState();
-          view.setStatus("扩展 JSON 已恢复到服务器。", "success");
-        }).catch(function handleRestoreError(error) {
-          view.setStatus(error.message || "恢复失败。", "error");
-        });
-      };
-      reader.readAsText(file, "utf-8");
+      this.setRestoreProgress(1, "正在准备分段恢复。", "running", "");
+      this.setStatus("正在分段上传备份文件。", "normal");
+      this.restoreFileInChunks(file).then(function applyRestoreViewModel(payload) {
+        view.setRestoreProgress(96, "正在刷新工作台。", "running", "");
+        view.applyCachePayload(payload);
+        view.workspaceMode = "realtime";
+        view.persistViewState();
+        view.setRestoreProgress(100, "恢复完成。", "success", "");
+        view.setStatus("扩展 JSON 已恢复到服务器。", "success");
+        view.closeRestoreProgressSoon();
+      }).catch(function handleRestoreError(error) {
+        const message = error.message || "恢复失败。";
+        view.setRestoreProgress(100, "恢复失败。", "error", message);
+        view.setStatus(message, "error");
+        view.closeRestoreProgressSoon();
+      });
       input.value = "";
     },
 

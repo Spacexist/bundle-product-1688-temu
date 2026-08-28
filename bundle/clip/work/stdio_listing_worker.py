@@ -1,8 +1,11 @@
 """Serve CLIP listing operations over stdin/stdout without opening an HTTP port."""
 
 import base64
+import concurrent.futures
 import json
+import os
 import sys
+import threading
 
 from full_listing_server import (
     call_kimi_prompts,
@@ -20,6 +23,8 @@ from full_listing_server import (
     DEFAULT_KIMI_SYSTEM_PROMPT,
 )
 
+WRITE_LOCK = threading.Lock()
+
 
 def configure_stdio_encoding():
     """Force safe UTF-8 stream writes even when data contains surrogate escapes."""
@@ -31,8 +36,18 @@ def configure_stdio_encoding():
 
 def write_json_line(payload):
     """Write one JSON response line and flush immediately for the Node parent."""
-    sys.stdout.write(json.dumps(payload, ensure_ascii=True) + "\n")
-    sys.stdout.flush()
+    with WRITE_LOCK:
+        sys.stdout.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        sys.stdout.flush()
+
+
+def read_worker_count():
+    """Return the bounded stdio request concurrency for CLIP operations."""
+    try:
+        configured = int(os.environ.get("CLIP_WORKER_THREADS", "2"))
+    except ValueError:
+        configured = 2
+    return max(1, min(configured, 4))
 
 
 def read_optional_float(value):
@@ -159,24 +174,40 @@ def dispatch(payload):
     raise ValueError("Unknown CLIP worker action: " + action)
 
 
+def handle_request_text(text):
+    """Dispatch one JSON-line request and write the matching response."""
+    request = {}
+    try:
+        request = json.loads(text)
+        request_id = request.get("id")
+        result = dispatch(request)
+        write_json_line({"id": request_id, "ok": True, "result": result})
+    except Exception as error:
+        write_json_line({
+            "id": request.get("id", ""),
+            "ok": False,
+            "error": str(error),
+        })
+
+
+def prune_completed_futures(futures):
+    """Remove completed request futures so the long-running worker stays small."""
+    done = {future for future in futures if future.done()}
+    futures.difference_update(done)
+
+
 def main():
-    """Read JSON-line requests forever and return JSON-line responses."""
-    for line in sys.stdin:
-        text = line.strip()
-        if not text:
-            continue
-        request = {}
-        try:
-            request = json.loads(text)
-            request_id = request.get("id")
-            result = dispatch(request)
-            write_json_line({"id": request_id, "ok": True, "result": result})
-        except Exception as error:
-            write_json_line({
-                "id": request.get("id", ""),
-                "ok": False,
-                "error": str(error),
-            })
+    """Read JSON-line requests forever and process them with a small worker pool."""
+    futures = set()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=read_worker_count()) as executor:
+        for line in sys.stdin:
+            text = line.strip()
+            if not text:
+                continue
+            futures.add(executor.submit(handle_request_text, text))
+            prune_completed_futures(futures)
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
 
 
 if __name__ == "__main__":

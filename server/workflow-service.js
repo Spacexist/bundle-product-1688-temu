@@ -866,6 +866,46 @@ class WorkflowService {
     return { ok: true, task: task };
   }
 
+  /** Search CLIP top 10 directly with one English listing keyword. */
+  async searchClipTop10(input, requestId) {
+    const keyword = String(input.keyword || "").trim();
+    if (!keyword) {
+      throw createWorkflowError("请输入 CLIP 英文检索关键词。", 400);
+    }
+    this.writeLog("OUTBOUND", "CLIP workflow top10 text worker", {
+      query: keyword,
+      top_k: 10
+    }, requestId);
+    if (!this.clipWorker) {
+      throw createWorkflowError("CLIP worker 未初始化。", 500, "CLIP_WORKER_MISSING");
+    }
+    let payload = {};
+    try {
+      payload = await this.clipWorker.searchText({
+        request_id: requestId,
+        query: keyword,
+        top_k: 10,
+        min_price: input.min_price,
+        max_price: input.max_price
+      });
+    } catch (error) {
+      throw createWorkflowError("CLIP Top10 worker 失败：" + (error.message || "未知错误。"), 502, "CLIP_TOP10_WORKER_ERROR");
+    }
+    const candidates = this.normalizeClipCandidates(payload, 10, keyword, keyword);
+    if (!candidates.length) {
+      throw createWorkflowError("CLIP Top10 未返回可展示的候选商品。", 502, "CLIP_TOP10_EMPTY_RESULTS");
+    }
+    for (let index = 0; index < candidates.length; index += 1) {
+      candidates[index].relation = "CLIP Top " + (index + 1);
+      candidates[index].product_intro = candidates[index].product_name || candidates[index].product_intro;
+      candidates[index].prompt = keyword;
+      candidates[index].clip_prompt_en = keyword;
+      candidates[index].clip_top10 = true;
+      candidates[index].clip_top10_query = keyword;
+    }
+    return { ok: true, query: keyword, candidates: candidates };
+  }
+
   /** Ask Kimi for four white-background products related to one Temu item. */
   async generatePrompts(input, requestId) {
     const temuMainId = String(input.temu_main_id || "").trim();

@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -91,6 +92,7 @@ RUNTIME_CACHE = {
     "products": None,
     "prices": None,
 }
+RUNTIME_LOAD_LOCK = threading.Lock()
 BUILD_PROCESS = {"process": None}
 
 
@@ -227,61 +229,73 @@ def load_model_runtime():
     """Load the trained CLIP text tower only once per server process."""
     if RUNTIME_CACHE["model"] is not None:
         return
-    if not BASE_MODEL_PATH.exists() or not TRAINED_CHECKPOINT_PATH.exists():
-        raise FileNotFoundError("Base model or trained checkpoint is missing")
-    write_bundle_log("CLIP load progress", {"stage": "model_base", "progress": 78, "message": "正在载入 CLIP 基础模型。", "status": "loading", "error": ""})
-    device = torch.device("cpu")
-    model, _, _ = open_clip.create_model_and_transforms(
-        MODEL_NAME,
-        pretrained=str(BASE_MODEL_PATH),
-    )
-    write_bundle_log("CLIP load progress", {"stage": "model_checkpoint", "progress": 87, "message": "正在载入 CLIP 训练权重。", "status": "loading", "error": ""})
-    checkpoint = torch.load(TRAINED_CHECKPOINT_PATH, map_location=device, weights_only=False)
-    model.load_state_dict(checkpoint["model"])
-    model = model.to(device)
-    model.eval()
-    RUNTIME_CACHE["model"] = model
-    RUNTIME_CACHE["tokenizer"] = open_clip.get_tokenizer(MODEL_NAME)
-    RUNTIME_CACHE["device"] = device
-    write_bundle_log("CLIP load progress", {"stage": "model_ready", "progress": 96, "message": "CLIP 模型已载入，正在完成初始化。", "status": "loading", "error": ""})
+    with RUNTIME_LOAD_LOCK:
+        if RUNTIME_CACHE["model"] is not None:
+            return
+        if not BASE_MODEL_PATH.exists() or not TRAINED_CHECKPOINT_PATH.exists():
+            raise FileNotFoundError("Base model or trained checkpoint is missing")
+        write_bundle_log("CLIP load progress", {"stage": "model_base", "progress": 78, "message": "正在载入 CLIP 基础模型。", "status": "loading", "error": ""})
+        device = torch.device("cpu")
+        model, _, _ = open_clip.create_model_and_transforms(
+            MODEL_NAME,
+            pretrained=str(BASE_MODEL_PATH),
+        )
+        write_bundle_log("CLIP load progress", {"stage": "model_checkpoint", "progress": 87, "message": "正在载入 CLIP 训练权重。", "status": "loading", "error": ""})
+        checkpoint = torch.load(TRAINED_CHECKPOINT_PATH, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model"])
+        model = model.to(device)
+        model.eval()
+        RUNTIME_CACHE["model"] = model
+        RUNTIME_CACHE["tokenizer"] = open_clip.get_tokenizer(MODEL_NAME)
+        RUNTIME_CACHE["device"] = device
+        write_bundle_log("CLIP load progress", {"stage": "model_ready", "progress": 96, "message": "CLIP 模型已载入，正在完成初始化。", "status": "loading", "error": ""})
 
 
 def load_index_runtime():
     """Load or reload the completed listing FAISS index and product metadata."""
-    metadata_path = resolve_listing_metadata_path()
-    if not INDEX_PATH.exists() or not metadata_path.exists():
-        raise FileNotFoundError("Listing index is not ready; start the build first")
-    progress = read_json_file(PROGRESS_PATH, {})
-    if progress.get("status") != "complete":
-        raise RuntimeError(
-            f"Listing index is still building: {progress.get('completed', 0)}/{progress.get('total', 0)}"
-        )
-    index_mtime = INDEX_PATH.stat().st_mtime
-    cached_mtime = RUNTIME_CACHE.get("index_mtime")
-    if RUNTIME_CACHE["index"] is not None and cached_mtime == index_mtime:
-        return
-    write_bundle_log("CLIP load progress", {"stage": "index", "progress": 46, "message": "正在载入 FAISS 商品索引。", "status": "loading", "error": ""})
-    RUNTIME_CACHE["index"] = read_faiss_index_file(INDEX_PATH)
-    write_bundle_log("CLIP load progress", {"stage": "metadata", "progress": 60, "message": "正在载入商品元数据。", "status": "loading", "error": ""})
-    RUNTIME_CACHE["products"] = normalize_product_metadata_rows(read_json_file(metadata_path, []))
-    write_bundle_log("CLIP load progress", {"stage": "prices", "progress": 70, "message": "正在载入价格数据。", "status": "loading", "error": ""})
-    RUNTIME_CACHE["prices"] = read_json_file(PRICE_METADATA_PATH, {})
-    RUNTIME_CACHE["index_mtime"] = index_mtime
-    if RUNTIME_CACHE["index"].ntotal != len(RUNTIME_CACHE["products"]):
-        raise RuntimeError("Listing index count does not match metadata count")
+    with RUNTIME_LOAD_LOCK:
+        metadata_path = resolve_listing_metadata_path()
+        if not INDEX_PATH.exists() or not metadata_path.exists():
+            raise FileNotFoundError("Listing index is not ready; start the build first")
+        progress = read_json_file(PROGRESS_PATH, {})
+        if progress.get("status") != "complete":
+            raise RuntimeError(
+                f"Listing index is still building: {progress.get('completed', 0)}/{progress.get('total', 0)}"
+            )
+        index_mtime = INDEX_PATH.stat().st_mtime
+        cached_mtime = RUNTIME_CACHE.get("index_mtime")
+        if RUNTIME_CACHE["index"] is not None and cached_mtime == index_mtime:
+            return
+        write_bundle_log("CLIP load progress", {"stage": "index", "progress": 46, "message": "正在载入 FAISS 商品索引。", "status": "loading", "error": ""})
+        RUNTIME_CACHE["index"] = read_faiss_index_file(INDEX_PATH)
+        write_bundle_log("CLIP load progress", {"stage": "metadata", "progress": 60, "message": "正在载入商品元数据。", "status": "loading", "error": ""})
+        RUNTIME_CACHE["products"] = normalize_product_metadata_rows(read_json_file(metadata_path, []))
+        write_bundle_log("CLIP load progress", {"stage": "prices", "progress": 70, "message": "正在载入价格数据。", "status": "loading", "error": ""})
+        RUNTIME_CACHE["prices"] = read_json_file(PRICE_METADATA_PATH, {})
+        RUNTIME_CACHE["index_mtime"] = index_mtime
+        if RUNTIME_CACHE["index"].ntotal != len(RUNTIME_CACHE["products"]):
+            raise RuntimeError("Listing index count does not match metadata count")
 
 
-def encode_text(query):
-    """Encode one listing query with the trained CLIP text tower."""
+def encode_text_batch(queries):
+    """Encode multiple listing queries with one trained CLIP text-tower pass."""
     load_model_runtime()
     tokenizer = RUNTIME_CACHE["tokenizer"]
     model = RUNTIME_CACHE["model"]
     device = RUNTIME_CACHE["device"]
-    tokens = tokenizer([query]).to(device)
+    safe_queries = [str(query or "") for query in queries]
+    if not safe_queries:
+        return np.zeros((0, 0), dtype="float32")
+    tokens = tokenizer(safe_queries).to(device)
     with torch.inference_mode():
-        feature = model.encode_text(tokens)
-        feature = feature / feature.norm(dim=-1, keepdim=True)
-    return feature.cpu().numpy().astype("float32")
+        features = model.encode_text(tokens)
+        features = features / features.norm(dim=-1, keepdim=True)
+    return features.cpu().numpy().astype("float32")
+
+
+def encode_text(query):
+    """Encode one listing query with the trained CLIP text tower."""
+    return encode_text_batch([query])
 
 
 def get_rank_window(top_k):
@@ -331,23 +345,14 @@ def add_sidecar_fields(product):
     return product
 
 
-def search_listing_index(query_vector, top_k, min_price, max_price):
-    """Search the text index and dedupe similar listing families before returning."""
-    load_index_runtime()
-    index = RUNTIME_CACHE["index"]
-    products = RUNTIME_CACHE["products"]
-    output_count = get_rank_window(top_k)
-    if min_price is not None or max_price is not None:
-        search_count = index.ntotal
-    else:
-        search_count = min(index.ntotal, max(output_count * 30, 300))
-    scores, indices = index.search(query_vector, search_count)
+def collect_listing_search_results(score_row, index_row, products, output_count, min_price, max_price):
+    """Convert one FAISS result row into deduped product matches."""
     results = []
     seen_families = set()
     seen_images = set()
     result_position = 0
-    while result_position < len(indices[0]):
-        product_index = int(indices[0][result_position])
+    while result_position < len(index_row):
+        product_index = int(index_row[result_position])
         if product_index < 0 or product_index >= len(products):
             result_position += 1
             continue
@@ -364,7 +369,7 @@ def search_listing_index(query_vector, top_k, min_price, max_price):
         if family_key in seen_families or image_key in seen_images:
             result_position += 1
             continue
-        product["similarity"] = round(float(scores[0][result_position]) * 100, 2)
+        product["similarity"] = round(float(score_row[result_position]) * 100, 2)
         product["rank"] = len(results) + 1
         product["source"] = "Listing"
         results.append(product)
@@ -374,6 +379,34 @@ def search_listing_index(query_vector, top_k, min_price, max_price):
             break
         result_position += 1
     return results
+
+
+def search_listing_index_batch(query_vectors, top_k, min_price, max_price):
+    """Search the text index for multiple vectors in one FAISS call."""
+    load_index_runtime()
+    index = RUNTIME_CACHE["index"]
+    products = RUNTIME_CACHE["products"]
+    output_count = get_rank_window(top_k)
+    if min_price is not None or max_price is not None:
+        search_count = index.ntotal
+    else:
+        search_count = min(index.ntotal, max(output_count * 30, 300))
+    vectors = np.asarray(query_vectors, dtype="float32")
+    if vectors.ndim == 1:
+        vectors = vectors.reshape(1, -1)
+    if vectors.shape[0] == 0:
+        return []
+    scores, indices = index.search(vectors, search_count)
+    return [
+        collect_listing_search_results(scores[row_index], indices[row_index], products, output_count, min_price, max_price)
+        for row_index in range(indices.shape[0])
+    ]
+
+
+def search_listing_index(query_vector, top_k, min_price, max_price):
+    """Search the text index and dedupe similar listing families before returning."""
+    matches = search_listing_index_batch(query_vector, top_k, min_price, max_price)
+    return matches[0] if matches else []
 
 
 def image_to_data_url(image):
@@ -620,12 +653,17 @@ def search_prompt_groups(prompts, min_price, max_price, top_k, prompt_offset=0):
     """Run each Kimi prompt through the listing CLIP index and group results."""
     groups = []
     selected_results = []
+    recall_texts = []
     prompt_index = 0
     while prompt_index < len(prompts):
         prompt_item = prompts[prompt_index]
-        recall_text = prompt_item.get("en") or prompt_item.get("zh") or ""
-        query_vector = encode_text(recall_text)
-        matches = search_listing_index(query_vector, top_k, min_price, max_price)
+        recall_texts.append(prompt_item.get("en") or prompt_item.get("zh") or "")
+        prompt_index += 1
+    matches_by_prompt = search_listing_index_batch(encode_text_batch(recall_texts), top_k, min_price, max_price)
+    prompt_index = 0
+    while prompt_index < len(prompts):
+        prompt_item = prompts[prompt_index]
+        matches = matches_by_prompt[prompt_index] if prompt_index < len(matches_by_prompt) else []
         group_results = []
         result_index = 0
         while result_index < len(matches):

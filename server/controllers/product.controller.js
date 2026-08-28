@@ -124,6 +124,33 @@ class ProductController {
     }
   }
 
+  /** Restore one extension-exported JSON batch through sequential text chunks. */
+  async restoreJsonChunk(request, response, next) {
+    try {
+      const result = await this.products.restoreJsonChunk({
+        upload_id: request.get("X-Restore-Upload-Id"),
+        file_name: request.get("X-Restore-File-Name"),
+        chunk_index: Number(request.get("X-Restore-Chunk-Index")),
+        total_chunks: Number(request.get("X-Restore-Total-Chunks")),
+        chunk_base64: String(request.body || "")
+      }, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Restore the next prepared backup record batch and report progress. */
+  async restoreJsonBatch(request, response, next) {
+    try {
+      const input = request.body && typeof request.body === "object" ? request.body : {};
+      const result = await this.products.restoreJsonBatch(input, request.requestId);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Download the current backend-produced ViewModel as JSON. */
   exportJson(request, response, next) {
     try {

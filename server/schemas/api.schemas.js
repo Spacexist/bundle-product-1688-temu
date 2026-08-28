@@ -153,6 +153,12 @@ const clipWorkflowSearchSchema = z.object({
   max_price: z.union([z.string(), z.number()]).optional()
 });
 
+const clipWorkflowTop10Schema = z.object({
+  keyword: z.string().trim().min(1).max(500),
+  min_price: z.union([z.string(), z.number()]).optional(),
+  max_price: z.union([z.string(), z.number()]).optional()
+});
+
 const carouselWorkflowPromptSchema = z.object({
   mode: z.literal("carousel"),
   temu_main_id: z.union([z.string(), z.number()]),
@@ -236,6 +242,7 @@ module.exports = {
   workflowPromptSchema: workflowPromptSchema,
   clipWorkflowAssembleSchema: clipWorkflowAssembleSchema,
   clipWorkflowSearchSchema: clipWorkflowSearchSchema,
+  clipWorkflowTop10Schema: clipWorkflowTop10Schema,
   carouselWorkflowPromptSchema: carouselWorkflowPromptSchema,
   carouselManualPromptSchema: carouselManualPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,

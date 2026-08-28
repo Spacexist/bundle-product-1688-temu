@@ -29,6 +29,7 @@ function createProviderRouter(options) {
   router.get("/workflow/active", workflow.getActive.bind(workflow));
   router.post("/workflow/clip/assemble", validationModule.validate(schemaModule.clipWorkflowAssembleSchema, "body"), workflow.assembleClip.bind(workflow));
   router.post("/workflow/clip/search", validationModule.validate(schemaModule.clipWorkflowSearchSchema, "body"), workflow.searchClip.bind(workflow));
+  router.post("/workflow/clip/top10", validationModule.validate(schemaModule.clipWorkflowTop10Schema, "body"), workflow.searchClipTop10.bind(workflow));
   router.post("/workflow/prompts", validationModule.validate(schemaModule.workflowPromptSchema, "body"), workflow.generatePrompts.bind(workflow));
   router.get("/workflow/carousel", workflow.getCarouselTasks.bind(workflow));
   router.post("/workflow/carousel/plan", validationModule.validate(schemaModule.carouselWorkflowPromptSchema, "body"), workflow.startCarouselPlan.bind(workflow));

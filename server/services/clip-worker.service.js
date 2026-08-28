@@ -224,6 +224,7 @@ class ClipWorkerService {
   /** Build environment variables consumed by the Python CLIP worker. */
   buildEnvironment(config) {
     const kimi = config && config.kimi && typeof config.kimi === "object" ? config.kimi : {};
+    const workflow = config && config.workflow && typeof config.workflow === "object" ? config.workflow : {};
     const environment = Object.assign({}, process.env);
     if (kimi.apikey) {
       environment.MOONSHOT_API_KEY = String(kimi.apikey);
@@ -231,6 +232,7 @@ class ClipWorkerService {
     environment.KIMI_ENDPOINT = this.buildKimiEndpoint(kimi);
     environment.KIMI_MODEL = String(kimi.model || "kimi-k2.6");
     environment.CLIP_WORKER_MODE = "stdio";
+    environment.CLIP_WORKER_THREADS = String(Math.max(1, Math.min(Number(workflow.clip_worker_threads || 2), 4)));
     environment.PYTHONUTF8 = "1";
     environment.PYTHONIOENCODING = "utf-8:backslashreplace";
     this.applyBundledPythonPath(environment);
