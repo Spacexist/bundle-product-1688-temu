@@ -605,10 +605,14 @@ body::before {
 .gallery-sku-picker-group + .gallery-sku-picker-group { margin-top: 12px; padding-top: 11px; border-top: 1px solid rgba(148, 163, 184, .18); }
 .gallery-sku-picker-group > strong { display: block; margin-bottom: 7px; color: #64748b; font-size: 10px; letter-spacing: .02em; }
 .gallery-sku-picker-bubble .sku-image-picker-grid { max-height: none; overflow: visible; }
-.listing-cache-actions { display: flex; gap: 4px; }
+.listing-cache-actions { position: relative; display: flex; align-items: center; gap: 4px; }
 .listing-cache-actions button { padding: 4px 6px; border: 1px solid rgba(92, 108, 145, .2); border-radius: 7px; background: rgba(255, 255, 255, .48); color: #667085; cursor: pointer; font-size: 10px; }
 .listing-cache-actions button:hover:not(:disabled) { border-color: rgba(82, 101, 143, .42); background: rgba(255, 255, 255, .8); color: #425274; }
 .listing-cache-actions button:disabled { cursor: not-allowed; opacity: .42; }
+.listing-other-actions { position: relative; }
+.listing-other-actions-trigger { white-space: nowrap; }
+.listing-other-actions-menu { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; display: grid; width: 112px; gap: 4px; padding: 6px; border: 1px solid rgba(255, 255, 255, .82); border-radius: 10px; background: rgba(247, 249, 251, .94); box-shadow: 0 14px 34px rgba(52, 61, 79, .2), inset 0 1px 0 #fff; backdrop-filter: blur(18px) saturate(120%); -webkit-backdrop-filter: blur(18px) saturate(120%); }
+.listing-other-actions-menu button { width: 100%; padding: 6px 8px; text-align: left; white-space: nowrap; }
 .panel-title { color: #16191f; font-size: 15px; font-weight: 800; letter-spacing: -.015em; }
 .listing-card { position: relative; overflow: hidden; border-color: rgba(255, 255, 255, .5); background: rgba(255, 255, 255, .18); box-shadow: 0 7px 18px rgba(62, 79, 118, .05), inset 0 1px 0 rgba(255, 255, 255, .54); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease; }
 .listing-card:hover { border-color: rgba(255, 255, 255, .86); background: rgba(255, 255, 255, .48); box-shadow: 0 12px 28px rgba(65, 84, 128, .12), 0 0 22px rgba(119, 156, 238, .12), inset 0 1px 0 rgba(255, 255, 255, .95); transform: translateY(-2px); }
