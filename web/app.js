@@ -421,7 +421,7 @@ const app = createApp({
         <div v-if="!records.length" class="panel empty">{{ renderMode === 'realtime' ? '等待扩展采集商品并写入本地 cache。' : '请先导入统一 JSON 文件。' }}</div>
         <div v-else class="render-layout">
           <aside class="panel listing-rail">
-            <div class="listing-rail-heading"><div class="listing-cache-actions"><button class="glass-action-button" type="button" :disabled="bulkActionBusy" @click="clearEntireCache">清空</button><div class="listing-other-actions" @click.stop><button class="glass-action-button listing-other-actions-trigger" type="button" :disabled="bulkActionBusy || hasAnyWorkflowOperationBusy() || !temuRecords.length" aria-haspopup="menu" :aria-expanded="bulkActionsMenuOpen ? 'true' : 'false'" @click.stop="toggleBulkActionsMenu">{{ bulkActionButtonLabel() }}</button><div v-if="bulkActionsMenuOpen" class="listing-other-actions-menu" role="menu"><button type="button" role="menuitem" @click="openBulkClipPrompt">全部重新 CLIP</button><button type="button" role="menuitem" @click="startBulkDetailCover">全部主图覆盖</button></div></div></div></div>
+            <div class="listing-rail-heading"><div class="listing-cache-actions"><button class="glass-action-button" type="button" :disabled="bulkClipBusy || bulkCoverBusy" @click="clearEntireCache">清空</button><div class="listing-other-actions" @click.stop><button class="glass-action-button" type="button" :disabled="!temuRecords.length" aria-haspopup="menu" :aria-expanded="bulkActionsMenuOpen ? 'true' : 'false'" @click.stop="toggleBulkActionsMenu">其他功能</button><div v-if="bulkActionsMenuOpen" class="listing-other-actions-menu" role="menu"><button class="glass-action-button" type="button" role="menuitem" :disabled="bulkClipBusy || hasAnyWorkflowOperationBusy()" @click="openBulkClipPrompt">{{ bulkClipMenuLabel() }}</button><button class="glass-action-button" type="button" role="menuitem" :disabled="bulkCoverBusy" @click="startBulkDetailCover">{{ bulkCoverMenuLabel() }}</button></div></div></div></div>
             <button
               v-for="record in temuRecords"
               :key="record.main_id"
@@ -474,7 +474,7 @@ const app = createApp({
                   <tr v-if="!selectedTemuRecord.sku.length"><td :colspan="skuSpecGroups(selectedTemuRecord).length + 5" class="empty">暂无 SKU 数据</td></tr>
                </tbody></table>
              </div>
-               <div class="detail-section" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail')" @dragover.prevent.stop="setImageInteractionTarget('temu-detail')" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord)"><div class="detail-section-heading"><h3>商品详情</h3><button class="glass-action-button" type="button" :disabled="bulkActionBusy || !galleryImages(selectedTemuRecord).length" @click.stop="replaceDetailsWithGallery(selectedTemuRecord)">使用主图一键覆盖</button></div><div v-if="selectedTemuRecord.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selectedTemuRecord.detail_image_urls" :key="image" class="detail-image-editor" draggable="true" title="双击打开 Edits" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-detail', detailIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'detail', detailIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord, detailIndex)" @dblclick.stop="openDetailImageEditor(selectedTemuRecord, image, detailIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品详情图" draggable="false"><button class="image-delete-button" type="button" aria-label="删除详情图" @click="removeDetailImage(selectedTemuRecord, detailIndex)">×</button></div></div><div v-else class="detail-empty-upload"><label class="detail-empty-upload-button" title="上传详情图">+<input type="file" accept="image/*" multiple @change="handleDetailUpload($event, selectedTemuRecord)"></label><span>暂无详情图，请上传图片。</span></div></div>
+               <div class="detail-section" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail')" @dragover.prevent.stop="setImageInteractionTarget('temu-detail')" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord)"><div class="detail-section-heading"><h3>商品详情</h3><button class="glass-action-button" type="button" :disabled="bulkCoverBusy || !galleryImages(selectedTemuRecord).length" @click.stop="replaceDetailsWithGallery(selectedTemuRecord)">使用主图一键覆盖</button></div><div v-if="selectedTemuRecord.detail_image_urls.length" class="detail-images"><div v-for="(image, detailIndex) in selectedTemuRecord.detail_image_urls" :key="image" class="detail-image-editor" draggable="true" title="双击打开 Edits" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-detail', detailIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'detail', detailIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-detail', detailIndex)" @drop.prevent.stop="dropAliImageToTemuDetail($event, selectedTemuRecord, detailIndex)" @dblclick.stop="openDetailImageEditor(selectedTemuRecord, image, detailIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品详情图" draggable="false"><button class="image-delete-button" type="button" aria-label="删除详情图" @click="removeDetailImage(selectedTemuRecord, detailIndex)">×</button></div></div><div v-else class="detail-empty-upload"><label class="detail-empty-upload-button" title="上传详情图">+<input type="file" accept="image/*" multiple @change="handleDetailUpload($event, selectedTemuRecord)"></label><span>暂无详情图，请上传图片。</span></div></div>
           </section>
           <section v-else class="panel platform-render empty">请选择 Temu 商品。</section>
 
@@ -489,13 +489,13 @@ const app = createApp({
                 </div>
                 <div v-if="workflowMode === 'clip'" class="smart-workflow-manual-match" aria-label="手动 CLIP 匹配">
                   <input type="text" v-model="workflowClipKeyword" placeholder="手动 keyword" @keyup.enter="searchClipWorkflowCandidates">
-                  <button type="button" :disabled="bulkActionBusy || workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !selectedTemuRecord || !workflowClipKeyword.trim()" @click="searchClipWorkflowCandidates">匹配2个</button>
+                  <button type="button" :disabled="bulkClipBusy || workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !selectedTemuRecord || !workflowClipKeyword.trim()" @click="searchClipWorkflowCandidates">匹配2个</button>
                 </div>
                 <div class="smart-workflow-mode-switch" role="group" aria-label="组货模式">
                   <button type="button" :class="{ active: workflowMode === 'clip' }" @click="setWorkflowMode('clip')">新版CLIP</button>
                   <button type="button" :class="{ active: workflowMode === 'legacy' }" @click="setWorkflowMode('legacy')">旧版生图</button>
                 </div>
-                <button class="workflow-direction-button smart-workflow-direction-button" :class="{ 'is-analyzing': workflowPromptBusy, 'is-generating': workflowGenerateBusy, 'is-ready': workflowPrompts.length && !workflowPromptBusy && !workflowGenerateBusy }" type="button" :disabled="bulkActionBusy || workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !workflowSelectedImageUrl" @click="startWorkflowAction">
+                <button class="workflow-direction-button smart-workflow-direction-button" :class="{ 'is-analyzing': workflowPromptBusy, 'is-generating': workflowGenerateBusy, 'is-ready': workflowPrompts.length && !workflowPromptBusy && !workflowGenerateBusy }" type="button" :disabled="bulkClipBusy || workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !workflowSelectedImageUrl" @click="startWorkflowAction">
                   <span v-if="workflowPromptBusy || workflowGenerateBusy" class="workflow-direction-spinner" aria-hidden="true"></span>
                   <span v-else class="workflow-direction-icon" aria-hidden="true">↻</span>
                   <span>{{ workflowPromptBusy ? '分析中' : workflowGenerateBusy ? '生图中' : workflowPrompts.length ? '重新组货' : workflowMode === 'clip' ? '生成CLIP组货' : '生成组货方向' }}</span>
@@ -511,7 +511,7 @@ const app = createApp({
               <header><span>01</span><div><strong>组货建议</strong><small>{{ workflowMode === 'clip' ? '新版 CLIP 返回真实候选商品，点击搜索按钮走 1688 搜图。' : '四个候选方向会自动生成图片，生成完成后可直接搜图。' }}</small></div></header>
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
-                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkActionBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkActionBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
                   <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.product_intro }}</span><em v-if="item.product_name && item.product_name !== item.product_intro" class="smart-result-title">{{ item.product_name }}</em><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
                 </article>
               </div>
@@ -819,10 +819,12 @@ const app = createApp({
       workflowStatusText: "等待选择 Temu 商品。",
       workflowStatusType: "normal",
       bulkActionsMenuOpen: false,
-      bulkActionBusy: false,
-      bulkActionType: "",
-      bulkActionCurrent: 0,
-      bulkActionTotal: 0,
+      bulkClipBusy: false,
+      bulkClipCurrent: 0,
+      bulkClipTotal: 0,
+      bulkCoverBusy: false,
+      bulkCoverCurrent: 0,
+      bulkCoverTotal: 0,
       pendingCacheEvents: {},
       productSaveStates: {},
       copyFirstSkuAttributeBusyKeys: {},
@@ -2279,7 +2281,7 @@ const app = createApp({
 
     /** Start the selected workflow mode after letting the user confirm its prompt. */
     startWorkflowAction: function startWorkflowAction() {
-      if (this.bulkActionBusy) {
+      if (this.bulkClipBusy) {
         return;
       }
       this.openWorkflowPromptDialog(this.workflowMode);
@@ -2287,9 +2289,6 @@ const app = createApp({
 
     /** Toggle the compact batch-action menu beside the cache button. */
     toggleBulkActionsMenu: function toggleBulkActionsMenu() {
-      if (this.bulkActionBusy || this.hasAnyWorkflowOperationBusy()) {
-        return;
-      }
       this.bulkActionsMenuOpen = !this.bulkActionsMenuOpen;
     },
 
@@ -2298,13 +2297,18 @@ const app = createApp({
       this.bulkActionsMenuOpen = false;
     },
 
-    /** Return the rail-button label for the active batch progress. */
-    bulkActionButtonLabel: function bulkActionButtonLabel() {
-      if (!this.bulkActionBusy) {
-        return "其他功能";
-      }
-      const prefix = this.bulkActionType === "clip" ? "CLIP" : "覆盖";
-      return prefix + " " + this.bulkActionCurrent + "/" + this.bulkActionTotal;
+    /** Return the CLIP menu label with independent batch progress. */
+    bulkClipMenuLabel: function bulkClipMenuLabel() {
+      return this.bulkClipBusy
+        ? "全部重新 CLIP " + this.bulkClipCurrent + "/" + this.bulkClipTotal
+        : "全部重新 CLIP";
+    },
+
+    /** Return the detail-cover menu label with independent batch progress. */
+    bulkCoverMenuLabel: function bulkCoverMenuLabel() {
+      return this.bulkCoverBusy
+        ? "全部主图覆盖 " + this.bulkCoverCurrent + "/" + this.bulkCoverTotal
+        : "全部主图覆盖";
     },
 
     /** Return whether any single-product workflow is currently analyzing or generating. */
@@ -2335,7 +2339,7 @@ const app = createApp({
     /** Open one shared CLIP prompt for every Temu product in the left rail. */
     openBulkClipPrompt: function openBulkClipPrompt() {
       this.closeBulkActionsMenu();
-      if (this.bulkActionBusy || this.hasAnyWorkflowOperationBusy()) {
+      if (this.bulkClipBusy || this.hasAnyWorkflowOperationBusy()) {
         this.setStatus("已有商品任务正在运行，请完成后再执行全部重新 CLIP。", "normal");
         return;
       }
@@ -2595,7 +2599,7 @@ const app = createApp({
 
     /** Open the custom prompt dialog for the requested old or new workflow mode. */
     openWorkflowPromptDialog: function openWorkflowPromptDialog(mode) {
-      if (this.bulkActionBusy) {
+      if (this.bulkClipBusy) {
         return;
       }
       if (this.hasWorkflowClipTop10Lock()) {
@@ -2648,6 +2652,9 @@ const app = createApp({
         throw new Error("商品没有可用于 CLIP 组货的主图。");
       }
       const settings = options && typeof options === "object" ? options : {};
+      const timeoutMs = Math.max(0, Number(settings.timeoutMs || 0));
+      const requestController = timeoutMs ? new AbortController() : null;
+      const requestTimeout = requestController ? window.setTimeout(requestController.abort.bind(requestController), timeoutMs) : null;
       const kimiPrompt = String(customPrompt || this.workflowClipPromptDefault || "").trim();
       const requestedTemuMainId = String(record.main_id);
       this.workflowPromptBusyKeys[requestedTemuMainId] = true;
@@ -2663,6 +2670,7 @@ const app = createApp({
         const payload = await requestWorkflowJson(workflowApiUrl("/workflow/clip/assemble"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: requestController ? requestController.signal : undefined,
           body: JSON.stringify({
             temu_main_id: record.main_id,
             image_url: imageUrl,
@@ -2686,12 +2694,16 @@ const app = createApp({
         }
         return payload.task;
       } catch (error) {
+        const failure = error && error.name === "AbortError" ? new Error("CLIP 组货请求超时，已继续处理其他商品。") : error;
         this.workflowTaskErrorKeys[requestedTemuMainId] = true;
         if (String(this.selectedTemuMainId) === requestedTemuMainId) {
-          this.setWorkflowStatus("CLIP 组货失败：" + error.message, "error");
+          this.setWorkflowStatus("CLIP 组货失败：" + failure.message, "error");
         }
-        throw error;
+        throw failure;
       } finally {
+        if (requestTimeout) {
+          window.clearTimeout(requestTimeout);
+        }
         delete this.workflowPromptBusyKeys[requestedTemuMainId];
         delete this.workflowPendingModeKeys[requestedTemuMainId];
         if (String(this.selectedTemuMainId) === requestedTemuMainId) {
@@ -2702,7 +2714,7 @@ const app = createApp({
 
     /** Request real-product CLIP candidates through the existing single-product path. */
     generateClipWorkflowCandidates: async function generateClipWorkflowCandidates(customPrompt) {
-      if (this.bulkActionBusy || this.hasWorkflowClipTop10Lock()) {
+      if (this.bulkClipBusy || this.hasWorkflowClipTop10Lock()) {
         this.setWorkflowStatus("已有批量任务或 CLIP Top10 正在运行，请等待当前任务完成。", "normal");
         return;
       }
@@ -2716,36 +2728,46 @@ const app = createApp({
       }
     },
 
-    /** Run the confirmed CLIP request serially for every Temu product. */
+    /** Run one product inside the concurrent CLIP batch and advance settled progress. */
+    runBulkClipRecord: async function runBulkClipRecord(record, customPrompt, requestOptions) {
+      const imageUrl = this.workflowSourceImageForRecord(record);
+      try {
+        await this.requestClipWorkflowForRecord(record, imageUrl, customPrompt, requestOptions);
+        return true;
+      } catch (error) {
+        return false;
+      } finally {
+        this.bulkClipCurrent += 1;
+      }
+    },
+
+    /** Dispatch every confirmed CLIP request with the existing cross-product concurrency. */
     runBulkClipWorkflows: async function runBulkClipWorkflows(customPrompt) {
-      if (this.bulkActionBusy || this.hasAnyWorkflowOperationBusy()) {
+      if (this.bulkClipBusy || this.hasAnyWorkflowOperationBusy()) {
         this.setStatus("已有商品任务正在运行，请完成后再执行全部重新 CLIP。", "normal");
         return;
       }
       const records = this.temuRecords.slice();
-      this.bulkActionBusy = true;
-      this.bulkActionType = "clip";
-      this.bulkActionCurrent = 0;
-      this.bulkActionTotal = records.length;
-      let succeeded = 0;
-      let failed = 0;
-      const requestOptions = { minPrice: this.workflowClipMinPrice, maxPrice: this.workflowClipMaxPrice };
+      this.bulkClipBusy = true;
+      this.bulkClipCurrent = 0;
+      this.bulkClipTotal = records.length;
+      const requestOptions = { minPrice: this.workflowClipMinPrice, maxPrice: this.workflowClipMaxPrice, timeoutMs: 150000 };
       try {
+        const requests = [];
         for (let index = 0; index < records.length; index += 1) {
-          this.bulkActionCurrent = index + 1;
-          const record = records[index];
-          const imageUrl = this.workflowSourceImageForRecord(record);
-          try {
-            await this.requestClipWorkflowForRecord(record, imageUrl, customPrompt, requestOptions);
+          requests.push(this.runBulkClipRecord(records[index], customPrompt, requestOptions));
+        }
+        const results = await Promise.all(requests);
+        let succeeded = 0;
+        for (let index = 0; index < results.length; index += 1) {
+          if (results[index]) {
             succeeded += 1;
-          } catch (error) {
-            failed += 1;
           }
         }
-      } finally {
-        this.bulkActionBusy = false;
-        this.bulkActionType = "";
+        const failed = records.length - succeeded;
         this.setStatus("全部重新 CLIP 完成：成功 " + succeeded + "，失败 " + failed + "，总数 " + records.length + "。", failed ? "error" : "success");
+      } finally {
+        this.bulkClipBusy = false;
       }
     },
 
@@ -3211,7 +3233,7 @@ const app = createApp({
 
     /** Delete the selected or explicitly targeted Temu product directly from the backend cache. */
     deleteSelectedTemuRecord: async function deleteSelectedTemuRecord(targetRecord) {
-      if (this.bulkActionBusy) {
+      if (this.bulkClipBusy || this.bulkCoverBusy) {
         this.setStatus("批量任务运行中，暂时不能删除商品。", "normal");
         return;
       }
@@ -3235,7 +3257,7 @@ const app = createApp({
 
     /** Clear all Temu, 1688, image, workflow and JSON data from the backend cache directory. */
     clearEntireCache: async function clearEntireCache() {
-      if (this.bulkActionBusy) {
+      if (this.bulkClipBusy || this.bulkCoverBusy) {
         return;
       }
       if (!window.confirm("确认清空整个 cache 目录？Temu、1688、图片、工作流和 JSON 数据都会永久删除。")) {
@@ -4974,7 +4996,7 @@ const app = createApp({
     /** Replace all Temu detail images with a copy of the current main-image gallery. */
     replaceDetailsWithGallery: function replaceDetailsWithGallery(record, options) {
       const settings = options && typeof options === "object" ? options : {};
-      if (this.bulkActionBusy && !settings.allowBulk) {
+      if (this.bulkCoverBusy && !settings.allowBulk) {
         return false;
       }
       const images = this.galleryImages(record).slice();
@@ -4995,8 +5017,7 @@ const app = createApp({
     /** Confirm and start one serial detail-image overwrite for every Temu product. */
     startBulkDetailCover: function startBulkDetailCover() {
       this.closeBulkActionsMenu();
-      if (this.bulkActionBusy || this.hasAnyWorkflowOperationBusy()) {
-        this.setStatus("已有商品任务正在运行，请完成后再执行全部主图覆盖。", "normal");
+      if (this.bulkCoverBusy) {
         return;
       }
       const total = this.temuRecords.length;
@@ -5009,15 +5030,14 @@ const app = createApp({
     /** Reuse the single-product overwrite and await each product save in rail order. */
     runBulkDetailCover: async function runBulkDetailCover() {
       const records = this.temuRecords.slice();
-      this.bulkActionBusy = true;
-      this.bulkActionType = "cover";
-      this.bulkActionCurrent = 0;
-      this.bulkActionTotal = records.length;
+      this.bulkCoverBusy = true;
+      this.bulkCoverCurrent = 0;
+      this.bulkCoverTotal = records.length;
       let succeeded = 0;
       let failed = 0;
       try {
         for (let index = 0; index < records.length; index += 1) {
-          this.bulkActionCurrent = index + 1;
+          this.bulkCoverCurrent = index + 1;
           const record = records[index];
           try {
             if (!this.replaceDetailsWithGallery(record, { allowBulk: true, silent: true })) {
@@ -5030,8 +5050,7 @@ const app = createApp({
           }
         }
       } finally {
-        this.bulkActionBusy = false;
-        this.bulkActionType = "";
+        this.bulkCoverBusy = false;
         this.setStatus("全部主图覆盖完成：成功 " + succeeded + "，失败 " + failed + "，总数 " + records.length + "。", failed ? "error" : "success");
       }
     },

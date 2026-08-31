@@ -610,7 +610,6 @@ body::before {
 .listing-cache-actions button:hover:not(:disabled) { border-color: rgba(82, 101, 143, .42); background: rgba(255, 255, 255, .8); color: #425274; }
 .listing-cache-actions button:disabled { cursor: not-allowed; opacity: .42; }
 .listing-other-actions { position: relative; }
-.listing-other-actions-trigger { white-space: nowrap; }
 .listing-other-actions-menu { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; display: grid; width: 112px; gap: 4px; padding: 6px; border: 1px solid rgba(255, 255, 255, .82); border-radius: 10px; background: rgba(247, 249, 251, .94); box-shadow: 0 14px 34px rgba(52, 61, 79, .2), inset 0 1px 0 #fff; backdrop-filter: blur(18px) saturate(120%); -webkit-backdrop-filter: blur(18px) saturate(120%); }
 .listing-other-actions-menu button { width: 100%; padding: 6px 8px; text-align: left; white-space: nowrap; }
 .panel-title { color: #16191f; font-size: 15px; font-weight: 800; letter-spacing: -.015em; }
