@@ -421,7 +421,7 @@ const app = createApp({
         <div v-if="!records.length" class="panel empty">{{ renderMode === 'realtime' ? '等待扩展采集商品并写入本地 cache。' : '请先导入统一 JSON 文件。' }}</div>
         <div v-else class="render-layout">
           <aside class="panel listing-rail">
-            <div class="listing-rail-heading"><div class="listing-cache-actions"><button class="glass-action-button" type="button" :disabled="bulkClipBusy || bulkCoverBusy" @click="clearEntireCache">清空</button><div class="listing-other-actions" @click.stop><button class="glass-action-button" type="button" :disabled="!temuRecords.length" aria-haspopup="menu" :aria-expanded="bulkActionsMenuOpen ? 'true' : 'false'" @click.stop="toggleBulkActionsMenu">其他功能</button><div v-if="bulkActionsMenuOpen" class="listing-other-actions-menu" role="menu"><button class="glass-action-button" type="button" role="menuitem" :disabled="bulkClipBusy || hasAnyWorkflowOperationBusy()" @click="openBulkClipPrompt">{{ bulkClipMenuLabel() }}</button><button class="glass-action-button" type="button" role="menuitem" :disabled="bulkCoverBusy" @click="startBulkDetailCover">{{ bulkCoverMenuLabel() }}</button></div></div></div></div>
+            <div class="listing-rail-heading"><div class="listing-cache-actions"><button class="glass-action-button" type="button" :disabled="bulkClipBusy || bulkCoverBusy" @click="clearEntireCache">清空</button><div class="listing-other-actions" @click.stop><button class="glass-action-button" type="button" :disabled="!temuRecords.length" aria-haspopup="menu" :aria-expanded="bulkActionsMenuOpen ? 'true' : 'false'" @click.stop="toggleBulkActionsMenu">其他功能</button><div v-if="bulkActionsMenuOpen" class="listing-other-actions-menu" role="menu"><button class="glass-action-button" type="button" role="menuitem" :disabled="bulkClipBusy || hasAnyWorkflowOperationBusy()" @click="openBulkClipPrompt"><span>全部重新 CLIP</span><small v-if="bulkClipBusy">{{ bulkClipCurrent }}/{{ bulkClipTotal }}</small></button><button class="glass-action-button" type="button" role="menuitem" :disabled="bulkCoverBusy" @click="startBulkDetailCover"><span>全部主图覆盖</span><small v-if="bulkCoverBusy">{{ bulkCoverCurrent }}/{{ bulkCoverTotal }}</small></button></div></div></div></div>
             <button
               v-for="record in temuRecords"
               :key="record.main_id"
@@ -2295,20 +2295,6 @@ const app = createApp({
     /** Close the compact batch-action menu after an outside selection. */
     closeBulkActionsMenu: function closeBulkActionsMenu() {
       this.bulkActionsMenuOpen = false;
-    },
-
-    /** Return the CLIP menu label with independent batch progress. */
-    bulkClipMenuLabel: function bulkClipMenuLabel() {
-      return this.bulkClipBusy
-        ? "全部重新 CLIP " + this.bulkClipCurrent + "/" + this.bulkClipTotal
-        : "全部重新 CLIP";
-    },
-
-    /** Return the detail-cover menu label with independent batch progress. */
-    bulkCoverMenuLabel: function bulkCoverMenuLabel() {
-      return this.bulkCoverBusy
-        ? "全部主图覆盖 " + this.bulkCoverCurrent + "/" + this.bulkCoverTotal
-        : "全部主图覆盖";
     },
 
     /** Return whether any single-product workflow is currently analyzing or generating. */

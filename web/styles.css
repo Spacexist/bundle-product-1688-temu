@@ -610,8 +610,10 @@ body::before {
 .listing-cache-actions button:hover:not(:disabled) { border-color: rgba(82, 101, 143, .42); background: rgba(255, 255, 255, .8); color: #425274; }
 .listing-cache-actions button:disabled { cursor: not-allowed; opacity: .42; }
 .listing-other-actions { position: relative; }
-.listing-other-actions-menu { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; display: grid; width: 112px; gap: 4px; padding: 6px; border: 1px solid rgba(255, 255, 255, .82); border-radius: 10px; background: rgba(247, 249, 251, .94); box-shadow: 0 14px 34px rgba(52, 61, 79, .2), inset 0 1px 0 #fff; backdrop-filter: blur(18px) saturate(120%); -webkit-backdrop-filter: blur(18px) saturate(120%); }
-.listing-other-actions-menu button { width: 100%; padding: 6px 8px; text-align: left; white-space: nowrap; }
+.listing-other-actions-menu { position: absolute; z-index: 40; top: calc(100% + 6px); right: 0; display: grid; width: 144px; gap: 4px; padding: 6px; border: 1px solid rgba(255, 255, 255, .82); border-radius: 10px; background: rgba(247, 249, 251, .94); box-shadow: 0 14px 34px rgba(52, 61, 79, .2), inset 0 1px 0 #fff; backdrop-filter: blur(18px) saturate(120%); -webkit-backdrop-filter: blur(18px) saturate(120%); }
+.listing-other-actions-menu button { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; text-align: left; white-space: nowrap; }
+.listing-other-actions-menu button:disabled { opacity: .68; }
+.listing-other-actions-menu small { flex: 0 0 auto; color: #8090aa; font-size: 9px; font-variant-numeric: tabular-nums; }
 .panel-title { color: #16191f; font-size: 15px; font-weight: 800; letter-spacing: -.015em; }
 .listing-card { position: relative; overflow: hidden; border-color: rgba(255, 255, 255, .5); background: rgba(255, 255, 255, .18); box-shadow: 0 7px 18px rgba(62, 79, 118, .05), inset 0 1px 0 rgba(255, 255, 255, .54); transition: border-color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease; }
 .listing-card:hover { border-color: rgba(255, 255, 255, .86); background: rgba(255, 255, 255, .48); box-shadow: 0 12px 28px rgba(65, 84, 128, .12), 0 0 22px rgba(119, 156, 238, .12), inset 0 1px 0 rgba(255, 255, 255, .95); transform: translateY(-2px); }
