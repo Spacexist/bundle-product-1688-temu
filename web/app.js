@@ -442,7 +442,7 @@ const app = createApp({
           <section v-if="selectedTemuRecord" class="panel platform-render temu-render">
             <div class="render-heading"><div><span class="platform-label temu-label">Temu</span><span v-if="hasWorkflowTask(selectedTemuRecord) || hasOpenableDirectImageTask(selectedTemuRecord) || hasOpenableCarouselTask(selectedTemuRecord) || hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" class="task-status-indicators heading-task-status-indicators"><task-status-indicator v-if="hasWorkflowTask(selectedTemuRecord)" tone="blue" :complete="isWorkflowTaskComplete(selectedTemuRecord)" :error="hasWorkflowTaskError(selectedTemuRecord)" :label="hasWorkflowTaskError(selectedTemuRecord) ? '打开失败的组货任务' : isWorkflowTaskComplete(selectedTemuRecord) ? '打开已完成的组货任务' : '打开进行中的组货任务'" @activate="openWorkflowTask(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasOpenableDirectImageTask(selectedTemuRecord)" tone="green" :pulse="true" :complete="isDirectImageTaskComplete(selectedTemuRecord)" :error="hasDirectImageTaskError(selectedTemuRecord)" :label="hasDirectImageTaskError(selectedTemuRecord) ? '打开失败的单图 Edits 任务' : '打开单图 Edits 任务'" @activate="openRetainedDirectImageEditor(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasOpenableCarouselTask(selectedTemuRecord)" tone="violet" :complete="isCarouselTaskComplete(selectedTemuRecord)" :error="hasCarouselTaskError(selectedTemuRecord)" :label="hasCarouselTaskError(selectedTemuRecord) ? '打开失败的 Fusion 任务' : '打开 Fusion 任务'" @activate="openRetainedCarouselEditor(selectedTemuRecord)"></task-status-indicator><task-status-indicator v-if="hasSkuBlendTask(selectedTemuRecord) || hasCompletedSkuBlendTask(selectedTemuRecord) || hasSkuBlendError(selectedTemuRecord)" tone="yellow" :complete="hasCompletedSkuBlendTask(selectedTemuRecord)" :error="hasSkuBlendError(selectedTemuRecord)" :label="hasSkuBlendError(selectedTemuRecord) ? '打开失败的 SKU 溶图任务' : '打开 SKU 溶图任务'" @activate="openSkuBlendTask(selectedTemuRecord)"></task-status-indicator></span><div class="render-title-row"><button v-if="workspaceMode === 'realtime'" class="listing-merge-button listing-title-merge-button glass-action-button" :class="{ 'is-busy': listingMergeBusy }" type="button" :disabled="listingMergeBusy || !selected1688Record" title="这是AI合并标题" aria-label="这是AI合并标题" @click="mergeSelectedListings"><span class="listing-merge-triangle" aria-hidden="true"></span></button><input class="render-title-input" type="text" v-model="selectedTemuRecord.product_name" @change="saveProductModule(selectedTemuRecord, 'basic')" aria-label="Temu 商品名称"><button v-if="hasListingUndo(selectedTemuRecord)" class="operation-undo-button" type="button" :disabled="listingUndoBusy" @click="undoSelectedListing">{{ listingUndoBusy ? '返回中…' : '返回' }}</button><button v-if="hasCarouselUndo(selectedTemuRecord)" class="operation-undo-button" type="button" @click="undoCarouselReplacement(selectedTemuRecord)">恢复轮播替换</button></div><input class="render-category-input" type="text" v-model="selectedTemuRecord.product_category" @change="saveProductModule(selectedTemuRecord, 'basic')" placeholder="未提供商品分类" aria-label="Temu 商品分类"></div></div>
             <div class="render-gallery">
-               <div class="gallery-thumbs" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord)">
+               <div class="gallery-thumbs" :class="{ 'is-image-drop-target': isImageDropTarget('temu-gallery') }" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery')" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery')" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, galleryImages(selectedTemuRecord).length)">
                 <div v-for="(image, imageIndex) in galleryImages(selectedTemuRecord)" :key="image" class="thumb-item" draggable="true" :class="{ 'is-image-reorder-target': isImageReorderTarget('temu-gallery', imageIndex), 'is-image-drop-target': isImageDropTarget('temu-gallery', imageIndex), 'is-ai-selected': isTemuGalleryEditSelected(selectedTemuRecord, imageIndex) }" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @dragenter.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @dragover.prevent.stop="setImageInteractionTarget('temu-gallery', imageIndex)" @drop.prevent.stop="dropAliImageToTemuGallery($event, selectedTemuRecord, imageIndex)">
                   <button class="thumb" :class="{ active: selectedTemuGalleryIndex === imageIndex }" type="button" draggable="true" title="双击打开 Edits" @dragstart.stop="startImageReorder($event, selectedTemuRecord, 'gallery', imageIndex)" @dragend="endImageReorder" @click="handleTemuGallerySelection($event, selectedTemuRecord, imageIndex)" @dblclick.stop="openSingleGalleryImageEditor(selectedTemuRecord, imageIndex)"><img :src="imageSource(image)" referrerpolicy="no-referrer" alt="Temu 商品图片" draggable="false"><span v-if="isTemuGalleryEditSelected(selectedTemuRecord, imageIndex)" class="gallery-ai-check"></span></button>
                   <button class="image-delete-button" type="button" aria-label="删除图片" @click.stop="removeGalleryImage(selectedTemuRecord, imageIndex, 'temu')">×</button>
@@ -511,7 +511,7 @@ const app = createApp({
               <header><span>01</span><div><strong>组货建议</strong><small>{{ workflowMode === 'clip' ? '新版 CLIP 返回真实候选商品，点击搜索按钮走 1688 搜图。' : '四个候选方向会自动生成图片，生成完成后可直接搜图。' }}</small></div></header>
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
-                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" :draggable="!!item.image_url" :title="item.image_url ? '拖到 Temu 主图、轮播图或 SKU 图片' : ''" @dragstart.stop="startWorkflowImageDrag($event, item, index)" @dragend="endAliImageDrag" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" draggable="false" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
                   <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.product_intro }}</span><em v-if="item.product_name && item.product_name !== item.product_intro" class="smart-result-title">{{ item.product_name }}</em><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
                 </article>
               </div>
@@ -7835,7 +7835,7 @@ const app = createApp({
       return images[index] || images[0] || "";
     },
 
-    /** Start dragging one 1688 image to its matching Temu image target. */
+    /** Start dragging one source image to its matching Temu image target. */
     startAliImageDrag: function startAliImageDrag(event, record, image, sourceType, index) {
       const imageUrl = String(image || "").trim();
       if (!imageUrl) {
@@ -7869,7 +7869,13 @@ const app = createApp({
       }
     },
 
-    /** Clear the active 1688 image drag state after a completed or cancelled drag. */
+    /** Start dragging one workflow candidate through the existing Temu image pipeline. */
+    startWorkflowImageDrag: function startWorkflowImageDrag(event, item, index) {
+      const candidate = item && typeof item === "object" ? item : {};
+      this.startAliImageDrag(event, this.selectedTemuRecord, candidate.image_url, "workflow", index);
+    },
+
+    /** Clear the active source-image drag state after a completed or cancelled drag. */
     endAliImageDrag: function endAliImageDrag() {
       this.dragImageReference = null;
       this.imageDropTarget = null;
@@ -7880,7 +7886,7 @@ const app = createApp({
     /** Mark one Temu image area as the active image drop target. */
     setImageDropTarget: function setImageDropTarget(targetType, targetIndex) {
       if (String(targetType || "") === "temu-sku"
-        && (!this.dragImageReference || String(this.dragImageReference.source_type || "") !== "sku")) {
+        && (!this.dragImageReference || ["sku", "workflow"].indexOf(String(this.dragImageReference.source_type || "")) < 0)) {
         this.imageDropTarget = null;
         return;
       }
@@ -8008,7 +8014,7 @@ const app = createApp({
       }
       const reference = this.dragImageReference;
       if (targetName === "temu-gallery" && reference
-        && (String(reference.source_type || "") === "gallery" || String(reference.source_type || "") === "sku")) {
+        && ["gallery", "sku", "workflow"].indexOf(String(reference.source_type || "")) >= 0) {
         this.setImageDropTarget(targetType, targetIndex);
         this.imageReorderTarget = null;
         return;
@@ -8106,7 +8112,7 @@ const app = createApp({
       return true;
     },
 
-    /** Add a 1688 gallery image to Temu or reorder the Temu gallery. */
+    /** Add one accepted source image to Temu or reorder the Temu gallery. */
     dropAliImageToTemuGallery: function dropAliImageToTemuGallery(event, record, targetIndex) {
       event.preventDefault();
       event.stopPropagation();
@@ -8117,7 +8123,7 @@ const app = createApp({
       }
       const reference = this.dragImageReference || this.readDraggedImageReference(event);
       const sourceType = reference ? String(reference.source_type || "") : "";
-      const canAddToGallery = sourceType === "gallery" || sourceType === "sku";
+      const canAddToGallery = ["gallery", "sku", "workflow"].indexOf(sourceType) >= 0;
       const imageUrl = canAddToGallery ? String(reference.image_url || "") : "";
       if (record && imageUrl) {
         const added = this.appendTemuGalleryImage(record, imageUrl, targetIndex);
@@ -8154,18 +8160,32 @@ const app = createApp({
       this.endAliImageDrag();
     },
 
-    /** Replace one Temu SKU image with a dragged 1688 main or SKU image. */
+    /** Apply one dragged source image to a Temu SKU image list. */
     dropAliImageToTemuSku: function dropAliImageToTemuSku(event, record, targetSku, rowIndex) {
       event.preventDefault();
       event.stopPropagation();
       const reference = this.dragImageReference || this.readDraggedImageReference(event);
       const sourceType = reference ? String(reference.source_type || "") : "";
-      const canReplaceSkuImage = sourceType === "gallery" || sourceType === "sku";
+      const canReplaceSkuImage = ["gallery", "sku", "workflow"].indexOf(sourceType) >= 0;
       const imageUrl = canReplaceSkuImage && reference.image_url ? String(reference.image_url) : "";
       if (targetSku && imageUrl) {
-        targetSku.sku_image_urls = [imageUrl];
-        targetSku.sku_image_url = imageUrl;
-        this.setStatus("已用 1688 图片替换 Temu SKU #" + (Number(rowIndex) + 1) + " 的图片。", "success");
+        if (sourceType === "workflow") {
+          const images = this.skuImageUrls(targetSku);
+          const existingIndex = images.indexOf(imageUrl);
+          if (existingIndex >= 0) {
+            images.splice(existingIndex, 1);
+          }
+          images.splice(images.length ? 1 : 0, 0, imageUrl);
+          targetSku.sku_image_urls = images;
+          targetSku.sku_image_url = images[0] || "";
+          this.setStatus(images.length > 1
+            ? "已将组货图放到 Temu SKU #" + (Number(rowIndex) + 1) + " 的第 2 张。"
+            : "已将组货图设为 Temu SKU #" + (Number(rowIndex) + 1) + " 的图片。", "success");
+        } else {
+          targetSku.sku_image_urls = [imageUrl];
+          targetSku.sku_image_url = imageUrl;
+          this.setStatus("已用 1688 图片替换 Temu SKU #" + (Number(rowIndex) + 1) + " 的图片。", "success");
+        }
         this.saveProductModule(record, "skus");
       }
       this.endAliImageDrag();
