@@ -489,7 +489,7 @@ const app = createApp({
                 </div>
                 <div v-if="workflowMode === 'clip'" class="smart-workflow-manual-match" aria-label="手动 CLIP 匹配">
                   <input type="text" v-model="workflowClipKeyword" placeholder="手动 keyword" @keyup.enter="searchClipWorkflowCandidates">
-                  <button type="button" :disabled="bulkClipBusy || workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !selectedTemuRecord || !workflowClipKeyword.trim()" @click="searchClipWorkflowCandidates">匹配2个</button>
+                  <button type="button" :disabled="bulkClipBusy || workflowPromptBusy || workflowGenerateBusy || hasWorkflowClipTop10Lock() || !selectedTemuRecord || !workflowClipKeyword.trim()" @click="searchClipWorkflowCandidates">匹配10个</button>
                 </div>
                 <div class="smart-workflow-mode-switch" role="group" aria-label="组货模式">
                   <button type="button" :class="{ active: workflowMode === 'clip' }" @click="setWorkflowMode('clip')">新版CLIP</button>
@@ -512,7 +512,7 @@ const app = createApp({
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
                   <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" :draggable="!!item.image_url" :title="item.image_url ? '拖到 Temu 主图、轮播图或 SKU 图片' : ''" @dragstart.stop="startWorkflowImageDrag($event, item, index)" @dragend="endAliImageDrag" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" draggable="false" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
-                  <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.product_intro }}</span><em v-if="item.product_name && item.product_name !== item.product_intro" class="smart-result-title">{{ item.product_name }}</em><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
+                  <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.product_intro }}</span><em v-if="item.match_query && item.match_query !== item.product_intro" class="smart-result-title">检索词：{{ item.match_query }}</em><em v-else-if="item.product_name && item.product_name !== item.product_intro" class="smart-result-title">{{ item.product_name }}</em><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
                 </article>
               </div>
               <div v-if="selectedWorkflowTask && selectedWorkflowTask.search_url" class="smart-search-ready"><span>搜款页已生成，进入满意商品详情后选择 Temu，并点击扩展确认绑定。</span><a :href="selectedWorkflowTask.search_url" target="_blank">重新打开搜款页</a></div>
@@ -2504,6 +2504,7 @@ const app = createApp({
         }
         const clipProduct = sourceItem.clip_product && typeof sourceItem.clip_product === "object" ? sourceItem.clip_product : {};
         const clipPrompt = String(clipProduct.search_prompt || "");
+        const actualProductName = String(sourceItem.product_name || clipProduct.title || clipProduct.listing_text || sourceItem.product_intro || "");
         const rawPrice = sourceItem.price_label || clipProduct.price_usd || clipProduct.price || "";
         const numericPrice = Number(rawPrice);
         const priceLabel = sourceItem.price_label
@@ -2515,8 +2516,9 @@ const app = createApp({
           : rawSales === undefined || rawSales === null || rawSales === "" ? "" : "销量 " + String(rawSales);
         prompts.push({
           relation: String(sourceItem.relation || ""),
-          product_name: String(sourceItem.product_name || ""),
-          product_intro: String(itemMode === "clip" && clipPrompt ? clipPrompt : sourceItem.product_intro || sourceItem.product_name || ""),
+          product_name: actualProductName,
+          product_intro: String(itemMode === "clip" ? actualProductName : sourceItem.product_intro || actualProductName),
+          match_query: String(itemMode === "clip" ? sourceItem.match_query || clipPrompt || sourceItem.clip_top10_query || sourceItem.prompt || "" : ""),
           prompt: hasDraft ? this.workflowPromptDrafts[promptKey] : String(sourceItem.prompt || ""),
           clip_prompt_en: String(sourceItem.clip_prompt_en || clipProduct.search_prompt_en || ""),
           source_mode: itemMode,
@@ -2757,7 +2759,7 @@ const app = createApp({
       }
     },
 
-    /** Request two manually matched CLIP candidates from one user-entered keyword. */
+    /** Request ten manually matched CLIP candidates from one user-entered keyword. */
     searchClipWorkflowCandidates: function searchClipWorkflowCandidates() {
       const keyword = String(this.workflowClipKeyword || "").trim();
       if (this.hasWorkflowClipTop10Lock()) {
@@ -2774,7 +2776,7 @@ const app = createApp({
       this.workflowMode = "clip";
       delete this.workflowTaskErrorKeys[requestedTemuMainId];
       this.workflowPromptDrafts = {};
-      this.setWorkflowStatus("CLIP 正在按 keyword 手动匹配 2 个候选…", "normal");
+      this.setWorkflowStatus("CLIP 正在按 keyword 手动匹配 10 个候选…", "normal");
       const view = this;
       requestWorkflowJson(workflowApiUrl("/workflow/clip/search"), {
         method: "POST",

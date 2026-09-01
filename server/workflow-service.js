@@ -599,7 +599,8 @@ class WorkflowService {
     return {
       relation: "组货方向 " + (index + 1),
       product_name: title,
-      product_intro: promptText,
+      product_intro: title,
+      match_query: promptText,
       prompt: promptText,
       clip_prompt_en: promptTextEn,
       price_label: priceLabel,
@@ -832,7 +833,7 @@ class WorkflowService {
     return { ok: true, task: task };
   }
 
-  /** Search and persist two manual keyword CLIP candidates for one Temu item. */
+  /** Search and persist ten manual keyword CLIP candidates for one Temu item. */
   async searchClip(input, requestId) {
     const temuMainId = String(input.temu_main_id || "").trim();
     const keyword = String(input.keyword || "").trim();
@@ -841,7 +842,7 @@ class WorkflowService {
     }
     const payload = await this.requestClipTextSearch(input, requestId);
     const clipQuery = String(payload.clip_query || keyword);
-    const candidates = this.normalizeClipCandidates(payload, 2, keyword, clipQuery);
+    const candidates = this.normalizeClipCandidates(payload, 10, keyword, clipQuery);
     if (!candidates.length) {
       throw createWorkflowError("CLIP 未返回可展示的手动匹配商品。", 502, "CLIP_SEARCH_EMPTY_RESULTS");
     }

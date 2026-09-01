@@ -73,7 +73,7 @@ class WorkflowController {
     }
   }
 
-  /** Search CLIP directly with one user-entered keyword and persist two candidates. */
+  /** Search CLIP directly with one user-entered keyword and persist ten candidates. */
   async searchClip(request, response, next) {
     const temuMainId = String(request.validatedBody.temu_main_id || "");
     try {
