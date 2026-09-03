@@ -1,3 +1,7 @@
+const { TubaAsyncImageService, PROVIDER_TIMEOUT_MS } = require("./tuba-async-image.service");
+const crypto = require("crypto");
+const { reportImageFailure } = require("./image-failure.service");
+
 /** Create one provider error carrying its intended HTTP status code. */
 function createProviderError(message, statusCode, code) {
   const error = new Error(String(message || "上游服务请求失败。"));
@@ -85,6 +89,7 @@ class ProviderService {
     this.readConfig = settings.readConfig;
     this.images = settings.images;
     this.imageTaskQueue = settings.imageTaskQueue;
+    this.asyncImages = settings.asyncImages || new TubaAsyncImageService();
     this.diagnostics = settings.diagnostics;
     this.undoEntries = {};
     this.undoOrder = [];
@@ -383,7 +388,7 @@ class ProviderService {
         headers: this.createRemoteHeaders(source, "image/avif,image/webp,image/png,image/jpeg,image/*;q=0.9,*/*;q=0.5")
       });
     } catch (error) {
-      throw createProviderError("图片网络请求失败：" + (error.message || "未知错误。"), 502);
+      throw Object.assign(createProviderError("图片网络请求失败：" + (error.message || "未知错误。"), 502), { cause: error, failure_url: source });
     }
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get("location");
@@ -395,18 +400,21 @@ class ProviderService {
     }
     const contentLength = Number(response.headers.get("content-length") || 0);
     if (contentLength > 20 * 1024 * 1024) {
-      throw createProviderError("图片文件超过 20MB 限制。", 413);
+      throw Object.assign(createProviderError("图片文件超过 20MB 限制。", 413), { http_status: response.status, failure_url: source });
     }
     const mimeType = String(response.headers.get("content-type") || "image/jpeg").split(";")[0].trim().toLowerCase();
     if (!response.ok) {
-      throw createProviderError("图片读取失败（HTTP " + response.status + "）。", 502);
+      throw Object.assign(createProviderError("图片读取失败（HTTP " + response.status + "）。", 502), { http_status: response.status, failure_url: source });
     }
     if (mimeType.indexOf("image/") !== 0) {
-      throw createProviderError("图片响应不是有效图片。", 502);
+      throw Object.assign(createProviderError("图片响应不是有效图片。", 502), { http_status: response.status, failure_url: source });
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
+    let buffer;
+    try { buffer = Buffer.from(await response.arrayBuffer()); } catch (error) {
+      throw Object.assign(createProviderError("图片响应读取失败。", 502), { cause: error, http_status: response.status, failure_url: source });
+    }
     if (!buffer.length || buffer.length > 20 * 1024 * 1024) {
-      throw createProviderError("图片文件超过 20MB 限制。", 413);
+      throw Object.assign(createProviderError("图片文件超过 20MB 限制。", 413), { http_status: response.status, failure_url: source });
     }
     return { buffer: buffer, mimeType: mimeType };
   }
@@ -445,11 +453,9 @@ class ProviderService {
     return config.image && typeof config.image === "object" ? config.image : config;
   }
 
-  /** Return the configured timeout for image edit, fusion, and generation calls. */
+  /** Return the fixed total Tuba polling deadline shared by every image call. */
   getImageTimeoutMs(config) {
-    const source = config || {};
-    const timeoutMs = Number(source.image_timeout_ms || source.timeout_ms || 300000);
-    return Math.max(10000, Math.min(timeoutMs, 900000));
+    return PROVIDER_TIMEOUT_MS;
   }
 
   /** Build one configured BeeAPI image endpoint URL. */
@@ -547,7 +553,7 @@ class ProviderService {
     }
   }
 
-  /** Execute one image edit or two-image fusion request against BeeAPI. */
+  /** Submit and poll one Tuba edit or fusion while holding its shared queue slot. */
   async executeImageEdit(input, mode, requestId) {
     const requestMode = mode === "edit" ? "edit" : "fusion";
     const source = input && typeof input === "object" ? input : {};
@@ -578,13 +584,20 @@ class ProviderService {
     form.append("n", "1");
     for (let index = 0; index < imageUrls.length; index += 1) {
       this.throwIfImageEditCancelled(source);
-      const image = await this.readImageSource(imageUrls[index], requestId);
+      let image;
+      try { image = await this.readImageSource(imageUrls[index], requestId); } catch (error) {
+        reportImageFailure({ onFailure: source.on_image_failure, sensitiveValues: [config.apikey, prompt] }, error, {
+          stage: "reference_download", method: /^https?:/i.test(imageUrls[index]) ? "GET" : "",
+          attempt: 1, source_index: index, url: imageUrls[index], code: "REFERENCE_IMAGE_READ_FAILED"
+        });
+        throw error;
+      }
       this.throwIfImageEditCancelled(source);
       const blob = new Blob([image.buffer], { type: image.mimeType });
       form.append("image", blob, "blend-" + (index + 1) + "." + image.mimeType.split("/")[1]);
       preparedImages.push({ index: index + 1, mime_type: image.mimeType, bytes: image.buffer.length });
     }
-    this.writeLog("OUTBOUND", "BeeAPI " + requestMode + " POST " + endpoint, {
+    this.writeLog("OUTBOUND", "Tuba async " + requestMode + " POST " + endpoint, {
       carousel_task_id: String(source.carousel_task_id || ""),
       carousel_page_index: source.carousel_page_index === undefined ? "" : Number(source.carousel_page_index),
       generation_id: String(source.generation_id || ""),
@@ -592,85 +605,36 @@ class ProviderService {
       prompt: prompt,
       size: size,
       quality: quality,
+      async: true,
+      response_format: "url",
       images: preparedImages,
       timeout_ms: this.getImageTimeoutMs(config)
     }, requestId);
-    const controller = new AbortController();
-    const cancellationSignal = source.cancel_signal && typeof source.cancel_signal.addEventListener === "function"
-      ? source.cancel_signal
-      : null;
-    /** Forward one runtime cancellation signal into the active BeeAPI request. */
-    function abortImageEditForRuntimeCancel() {
-      controller.abort();
-    }
-    if (cancellationSignal) {
-      if (cancellationSignal.aborted) {
-        abortImageEditForRuntimeCancel();
-      } else {
-        cancellationSignal.addEventListener("abort", abortImageEditForRuntimeCancel, { once: true });
-      }
-    }
-    const timeoutMs = this.getImageTimeoutMs(config);
-    /** Abort one BeeAPI image edit/fusion request after the configured image timeout. */
-    const timeoutHandle = setTimeout(function abortImageEditRequest() {
-      controller.abort();
-    }, timeoutMs);
-    let providerResponse;
-    let providerText;
-    try {
-      this.throwIfImageEditCancelled(source);
-      providerResponse = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Authorization": "Bearer " + String(config.apikey) },
-        body: form,
-        signal: controller.signal
-      });
-      this.throwIfImageEditCancelled(source);
-      providerText = await providerResponse.text();
-      this.throwIfImageEditCancelled(source);
-    } catch (error) {
-      if (this.isImageEditCancelled(source)) {
-        throw createProviderError("图片任务已被放弃。", 409, "IMAGE_TASK_CANCELLED");
-      }
-      if (error && error.name === "AbortError") {
-        throw createProviderError("BeeAPI 图片请求超过配置超时时间。", 504, "BEEAPI_TIMEOUT");
-      }
-      this.writeLog("UPSTREAM", "BeeAPI " + requestMode + " network error", {
-        name: String(error && error.name || ""),
-        message: String(error && error.message || ""),
-        cause_code: String(error && error.cause && error.cause.code || ""),
-        cause_errno: String(error && error.cause && error.cause.errno || ""),
-        cause_syscall: String(error && error.cause && error.cause.syscall || ""),
-        cause_host: String(error && error.cause && error.cause.host || ""),
-        cause_port: String(error && error.cause && error.cause.port || "")
-      }, requestId);
-      throw createProviderError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502, "BEEAPI_NETWORK_ERROR");
-    } finally {
-      clearTimeout(timeoutHandle);
-      if (cancellationSignal) {
-        cancellationSignal.removeEventListener("abort", abortImageEditForRuntimeCancel);
-      }
-    }
+    const service = this;
+    const generatedSource = await this.asyncImages.generate({
+      endpoint: endpoint,
+      apiKey: String(config.apikey),
+      body: form,
+      signal: source.cancel_signal,
+      /** Retain the runtime's ownership check through polling and downloading. */
+      isCancelled: function isEditAbandoned() {
+        return service.isImageEditCancelled(source);
+      },
+      onState: source.on_provider_state,
+      onFailure: source.on_image_failure,
+      writeLog: this.writeLog.bind(this),
+      requestId: requestId
+    });
     this.throwIfImageEditCancelled(source);
-    let providerPayload = {};
-    try {
-      providerPayload = JSON.parse(providerText || "{}");
-    } catch (error) {
-      providerPayload = {};
-    }
-    this.writeLog("UPSTREAM", "BeeAPI response " + providerResponse.status,
-      Object.keys(providerPayload).length ? providerPayload : providerText, requestId);
-    if (!providerResponse.ok) {
-      const statusCode = normalizeProviderStatusCode(providerResponse.status);
-      const errorCode = readProviderErrorCode(providerPayload, "BEEAPI_HTTP_" + statusCode);
-      throw createProviderError(this.readProviderError(providerPayload, providerText, "BeeAPI 图片请求失败。"), statusCode, errorCode);
-    }
-    const generatedSource = this.readGeneratedImageFromPayload(providerPayload);
-    if (!generatedSource) {
-      throw createProviderError("BeeAPI 已响应，但没有找到生成图片。", 502);
-    }
-    this.throwIfImageEditCancelled(source);
-    const imageUrl = await this.images.cacheGeneratedImage(generatedSource);
+    const imageUrl = await this.images.cacheGeneratedImage(generatedSource, {
+      signal: source.cancel_signal,
+      onProgress: source.on_download_progress,
+      onFailure: source.on_image_failure,
+      /** Prevent a deleted or superseded task from writing a downloaded image. */
+      isCancelled: function isDownloadAbandoned() {
+        return service.isImageEditCancelled(source);
+      }
+    });
     if (this.isImageEditCancelled(source)) {
       if (this.images && typeof this.images.deleteUnreferencedGeneratedImage === "function") {
         this.images.deleteUnreferencedGeneratedImage(imageUrl);
@@ -694,16 +658,37 @@ class ProviderService {
 
   /** Queue one image edit or fusion operation behind the shared image limit. */
   editImages(input, mode, requestId) {
-    const source = input && typeof input === "object" ? input : {};
+    const source = Object.assign({}, input && typeof input === "object" ? input : {});
     if (!this.imageTaskQueue) {
       return this.executeImageEdit(source, mode, requestId);
     }
     const service = this;
+    const executionId = String(source.direct_task_id || source.generation_id || crypto.randomUUID());
+    const persistProviderState = source.on_provider_state;
+    /** Buffer sanitized failures until the queue knows whether the execution finally failed. */
+    source.on_image_failure = function observeEditFailure(event) {
+      service.imageTaskQueue.recordFailure(executionId, event);
+    };
+    /** Mirror provider transitions before the business callback can reject a deleted runtime. */
+    source.on_provider_state = function observeEditProviderState(state) {
+      service.imageTaskQueue.observeProviderState(executionId, state);
+      if (typeof persistProviderState === "function") { return persistProviderState(state); }
+    };
+    /** Count actual download attempts separately from successful upstream generation. */
+    source.on_download_progress = function observeEditDownload(progress) {
+      service.imageTaskQueue.updateTask(executionId, { phase: "downloading", download_attempt: progress.attempt });
+    };
     /** Execute one queued provider image task when the shared slot is available. */
     return this.imageTaskQueue.run(function executeQueuedImageProviderTask() {
       return service.executeImageEdit(source, mode, requestId);
     }, {
       type: "edits",
+      execution_id: executionId,
+      source: source.carousel_task_id ? "carousel" : source.task_scope === "sku" ? "sku-fusion" : mode === "fusion" ? "fusion" : "single-edit",
+      temu_main_id: source.temu_main_id,
+      temu_platform_id: source.temu_platform_id,
+      sku_id: source.sku_id,
+      sku_index: source.sku_index,
       request_id: requestId,
       direct_task_id: String(source.direct_task_id || ""),
       carousel_task_id: String(source.carousel_task_id || ""),

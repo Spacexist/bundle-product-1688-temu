@@ -579,7 +579,7 @@ const app = createApp({
         </div>
         <div v-if="imageEditorOpen" class="image-editor-modal" @pointerdown.self="beginImageEditorBackdropPress" @pointerup="finishImageEditorBackdropPress" @pointercancel="cancelImageEditorBackdropPress">
           <section class="image-editor-dialog" role="dialog" aria-modal="true" aria-label="AI 图片编辑">
-            <header class="image-editor-header"><div><strong>{{ imageEditorTitle() }}</strong><span>{{ imageEditorSubtitle() }}</span></div><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
+            <header class="image-editor-header"><div><strong>{{ imageEditorTitle() }}</strong><span>{{ imageEditorSubtitle() }}</span></div><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button v-if="canStartCarouselImagesDirect()" class="image-editor-header-tool" type="button" :disabled="defaultPromptDialogBusy" @click="openDefaultPromptDialog">分镜模板</button><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
             <div class="image-editor-stage" :class="{ 'has-two-sources': imageEditorState().sourceCount === 2, 'has-result': imageEditorState().hasResult }">
               <span v-if="shouldShowImageEditorStageLabel()" class="image-editor-stage-label">{{ imageEditorStageLabel() }}</span>
               <div v-if="shouldShowImageEditorLoading()" class="image-editor-loading"><span></span><strong>{{ imageEditorLoadingTitle() }}</strong><small>{{ imageEditorLoadingHint() }}</small></div>
@@ -611,7 +611,7 @@ const app = createApp({
               <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy" @click="openDefaultPromptDialog">默认分镜生图</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy" @click="regenerateAllCarouselPages">{{ imageCarouselGenerationBusy ? '全部生成中…' : '全部重生' }}</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !String(currentCarouselPage().prompt || '').trim()" @click="regenerateCurrentCarouselPage">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '单张生成中…' : '单独重生' }}</button><button v-if="canApplyCarouselReplacement(true)" class="image-editor-main-apply" type="button" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" @click="confirmGalleryImageEdit">确认替换</button></footer>
+            <footer class="image-editor-actions"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy" @click="regenerateAllCarouselPages">{{ imageCarouselGenerationBusy ? '全部生成中…' : '全部重生' }}</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !String(currentCarouselPage().prompt || '').trim()" @click="regenerateCurrentCarouselPage">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '单张生成中…' : '单独重生' }}</button><button v-if="canApplyCarouselReplacement(true)" class="image-editor-main-apply" type="button" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '确认' : '确认替换' }}</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -627,20 +627,33 @@ const app = createApp({
           </section>
         </div>
         <div v-if="defaultPromptDialogOpen" class="image-editor-modal" @pointerdown.self="beginDefaultPromptBackdropPress" @pointerup="finishDefaultPromptBackdropPress" @pointercancel="cancelDefaultPromptBackdropPress">
-          <section class="image-editor-dialog default-prompt-dialog" role="dialog" aria-modal="true" aria-label="默认分镜生图">
-            <header class="image-editor-header"><div><strong>默认分镜生图</strong><span>读取并保存 server/default.prompt.json</span></div><button type="button" aria-label="关闭默认分镜生图" @click="closeDefaultPromptDialog">×</button></header>
-            <div v-if="defaultPromptDialogLoading" class="image-editor-loading default-prompt-loading"><span></span><strong>正在读取默认分镜</strong><small>这些提示词会直接用于 Fusion 生图。</small></div>
-            <div v-else class="default-prompt-list">
-              <article v-for="(page, pageIndex) in defaultPromptPages" :key="page.local_id" class="default-prompt-card">
-                <header><strong>分镜 {{ pageIndex + 1 }} 提示词</strong><button type="button" :disabled="defaultPromptPages.length <= 1 || defaultPromptDialogBusy" @click="removeDefaultPromptPage(pageIndex)">删除</button></header>
-                <input type="text" v-model="page.purpose" autocomplete="off" placeholder="分镜名称，例如：卖点主图" :disabled="defaultPromptDialogBusy">
-                <textarea v-model="page.prompt" rows="5" spellcheck="false" autocomplete="off" placeholder="输入这一张分镜的完整生图提示词" :disabled="defaultPromptDialogBusy"></textarea>
-              </article>
-              <button v-if="defaultPromptPages.length < 10" class="default-prompt-add" type="button" :disabled="defaultPromptDialogBusy" @click="addDefaultPromptPage">+ 添加分镜</button>
+          <section class="image-editor-dialog default-prompt-dialog" role="dialog" aria-modal="true" aria-label="分镜模板配置">
+            <header class="image-editor-header"><div><strong>分镜模板</strong><span>配置保存在 server/default.prompt.json，默认模板可一键生图</span></div><button type="button" aria-label="关闭分镜模板" @click="closeDefaultPromptDialog">×</button></header>
+            <div v-if="defaultPromptDialogLoading" class="image-editor-loading default-prompt-loading"><span></span><strong>正在读取分镜模板</strong><small>模板由所有浏览器共用。</small></div>
+            <div v-else class="default-prompt-content">
+              <div class="default-prompt-workspace">
+              <aside class="default-template-sidebar">
+                <header><strong>模板</strong><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length >= 50" @click="addDefaultPromptTemplate">+ 新增</button></header>
+                <div class="default-template-list"><button v-for="template in defaultPromptTemplates" :key="template.id" type="button" :class="{ active: template.id === defaultPromptSelectedTemplateId }" :disabled="defaultPromptDialogBusy" @click="requestSelectDefaultPromptTemplate(template.id)"><span>{{ template.name }}</span><small>{{ template.pages.length }} 张 · {{ template.id === defaultPromptDefaultTemplateId ? '默认' : '普通' }}</small></button></div>
+                <div class="default-template-actions"><button type="button" :disabled="defaultPromptDialogBusy" @click="duplicateDefaultPromptTemplate">复制模板</button><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length <= 1" @click="deleteDefaultPromptTemplate">删除模板</button><button type="button" :disabled="defaultPromptDialogBusy || !currentDefaultPromptTemplate() || currentDefaultPromptTemplate().id === defaultPromptDefaultTemplateId" @click="setCurrentDefaultPromptTemplate">设为默认</button></div>
+              </aside>
+              <section v-if="currentDefaultPromptTemplate()" class="default-template-editor">
+                <label class="image-editor-prompt"><span>模板名称</span><input type="text" v-model="currentDefaultPromptTemplate().name" maxlength="100" autocomplete="off" :disabled="defaultPromptDialogBusy"></label>
+                <div class="default-prompt-list">
+                  <article v-for="(page, pageIndex) in currentDefaultPromptTemplate().pages" :key="page.local_id" class="default-prompt-card">
+                    <header><strong>分镜 {{ pageIndex + 1 }} 提示词</strong><span><button type="button" :disabled="defaultPromptDialogBusy" @click="duplicateDefaultPromptPage(pageIndex)">复制</button><button type="button" :disabled="defaultPromptDialogBusy || pageIndex <= 0" @click="moveDefaultPromptPage(pageIndex, -1)">上移</button><button type="button" :disabled="defaultPromptDialogBusy || pageIndex >= currentDefaultPromptTemplate().pages.length - 1" @click="moveDefaultPromptPage(pageIndex, 1)">下移</button><button type="button" :disabled="currentDefaultPromptTemplate().pages.length <= 1 || defaultPromptDialogBusy" @click="removeDefaultPromptPage(pageIndex)">删除</button></span></header>
+                    <input type="text" v-model="page.purpose" maxlength="500" autocomplete="off" placeholder="分镜名称，例如：卖点主图" :disabled="defaultPromptDialogBusy">
+                    <textarea v-model="page.prompt" maxlength="10000" rows="5" spellcheck="false" autocomplete="off" placeholder="输入这一张分镜的完整生图提示词，可使用 {market_language}" :disabled="defaultPromptDialogBusy"></textarea>
+                  </article>
+                  <button v-if="currentDefaultPromptTemplate().pages.length < 10" class="default-prompt-add" type="button" :disabled="defaultPromptDialogBusy" @click="addDefaultPromptPage">+ 添加分镜</button>
+                </div>
+              </section>
+              </div>
             </div>
+            <div v-if="defaultPromptPendingAction" class="default-prompt-unsaved"><span>当前修改尚未保存。</span><button type="button" :disabled="defaultPromptDialogBusy" @click="resolveDefaultPromptPendingAction('save')">保存并继续</button><button type="button" :disabled="defaultPromptDialogBusy" @click="resolveDefaultPromptPendingAction('discard')">放弃修改</button><button type="button" :disabled="defaultPromptDialogBusy" @click="resolveDefaultPromptPendingAction('cancel')">取消</button></div>
             <div v-if="defaultPromptSavedText" class="miaoshou-export-result is-success">{{ defaultPromptSavedText }}</div>
             <div v-if="defaultPromptDialogError" class="image-editor-error">{{ defaultPromptDialogError }}</div>
-            <footer class="image-editor-actions"><button class="image-editor-cancel" type="button" :disabled="defaultPromptDialogBusy" @click="closeDefaultPromptDialog">关闭</button><button class="image-editor-generate" type="button" :disabled="defaultPromptDialogLoading || defaultPromptDialogBusy" @click="reloadDefaultPromptPages">重新读取</button><button class="image-editor-generate" type="button" :disabled="defaultPromptDialogLoading || defaultPromptDialogBusy" @click="saveDefaultPromptPages">保存模板</button><button class="image-editor-main-apply" type="button" :disabled="defaultPromptDialogLoading || defaultPromptDialogBusy || imageEditorBusy" @click="generateDefaultPromptPages">{{ defaultPromptDialogBusy ? '提交中…' : '保存并生图' }}</button></footer>
+            <footer class="image-editor-actions"><button class="image-editor-cancel" type="button" @click="closeDefaultPromptDialog">关闭</button><button class="image-editor-generate" type="button" :disabled="defaultPromptDialogLoading || defaultPromptDialogBusy" @click="requestReloadDefaultPromptPages">重新读取</button><button class="image-editor-confirm" type="button" :disabled="defaultPromptDialogLoading || defaultPromptDialogBusy" @click="saveDefaultPromptPages">{{ defaultPromptDialogBusy ? '保存中…' : '保存全部模板' }}</button></footer>
           </section>
         </div>
 
@@ -772,7 +785,14 @@ const app = createApp({
       defaultPromptDialogOpen: false,
       defaultPromptDialogLoading: false,
       defaultPromptDialogBusy: false,
-      defaultPromptPages: [],
+      defaultPromptSystemPrompt: "",
+      defaultPromptTemplates: [],
+      defaultPromptDefaultTemplateId: "",
+      defaultPromptSelectedTemplateId: "",
+      defaultPromptSavedConfig: "",
+      defaultPromptPendingAction: null,
+      defaultPromptConfigLoaded: false,
+      defaultPromptGenerationBusy: false,
       defaultPromptDialogError: "",
       defaultPromptSavedText: "",
       defaultPromptBackdropPressed: false,
@@ -1231,43 +1251,41 @@ const app = createApp({
       });
     },
 
-    /** Open the default storyboard editor and load server/default.prompt.json. */
+    /** Open the shared storyboard-template editor and refresh its server-backed data. */
     openDefaultPromptDialog: function openDefaultPromptDialog() {
       if (!this.canStartCarouselImagesDirect()) {
         return;
       }
       this.defaultPromptDialogOpen = true;
       this.defaultPromptBackdropPressed = false;
+      this.defaultPromptPendingAction = null;
       this.reloadDefaultPromptPages();
     },
 
-    /** Close the default storyboard editor when no save or submit is running. */
+    /** Close the template editor immediately and discard its unsaved in-memory drafts. */
     closeDefaultPromptDialog: function closeDefaultPromptDialog() {
-      if (this.defaultPromptDialogBusy) {
-        return;
+      if (this.defaultPromptSavedConfig) {
+        this.applyDefaultPromptConfig(JSON.parse(this.defaultPromptSavedConfig));
       }
-      this.defaultPromptDialogOpen = false;
-      this.defaultPromptDialogError = "";
-      this.defaultPromptSavedText = "";
-      this.defaultPromptBackdropPressed = false;
+      this.defaultPromptPendingAction = null;
+      this.performDefaultPromptAction({ type: "close" });
     },
 
-    /** Remember that a default-prompt close gesture started on the empty backdrop. */
+    /** Remember that a template-editor close gesture started on the empty backdrop. */
     beginDefaultPromptBackdropPress: function beginDefaultPromptBackdropPress() {
       this.defaultPromptBackdropPressed = true;
     },
 
-    /** Close the default-prompt popup only when press and release both hit the backdrop. */
+    /** Close the template popup only when press and release both hit the backdrop. */
     finishDefaultPromptBackdropPress: function finishDefaultPromptBackdropPress(event) {
-      const shouldClose = this.defaultPromptBackdropPressed
-        && event && event.target === event.currentTarget;
+      const shouldClose = this.defaultPromptBackdropPressed && event && event.target === event.currentTarget;
       this.defaultPromptBackdropPressed = false;
       if (shouldClose) {
         this.closeDefaultPromptDialog();
       }
     },
 
-    /** Cancel one incomplete default-prompt backdrop gesture without closing. */
+    /** Cancel one incomplete template-editor backdrop gesture. */
     cancelDefaultPromptBackdropPress: function cancelDefaultPromptBackdropPress() {
       this.defaultPromptBackdropPressed = false;
     },
@@ -1282,131 +1300,387 @@ const app = createApp({
       };
     },
 
-    /** Apply backend storyboard prompt pages to the popup draft list. */
-    applyDefaultPromptPages: function applyDefaultPromptPages(pages) {
-      const sourcePages = Array.isArray(pages) && pages.length ? pages : [{ purpose: "分镜1", prompt: "" }];
-      const drafts = [];
-      for (let index = 0; index < sourcePages.length; index += 1) {
-        drafts.push(this.createDefaultPromptPageDraft(sourcePages[index], index));
-      }
-      this.defaultPromptPages = drafts;
-    },
-
-    /** Reload manually configured storyboard prompts from the backend. */
-    reloadDefaultPromptPages: function reloadDefaultPromptPages() {
-      if (this.defaultPromptDialogLoading || this.defaultPromptDialogBusy) {
-        return;
-      }
-      this.defaultPromptDialogLoading = true;
-      this.defaultPromptDialogError = "";
-      this.defaultPromptSavedText = "";
-      const view = this;
-      fetch(apiUrl("/config/default-prompts"), { cache: "no-store" }).then(function handleDefaultPromptResponse(response) {
-        return response.json().then(function validateDefaultPromptPayload(payload) {
-          if (!response.ok || !payload.ok) {
-            throw new Error(getApiErrorMessage(payload, "默认分镜读取失败。"));
-          }
-          return payload.data || {};
-        });
-      }).then(function applyDefaultPromptPayload(data) {
-        view.applyDefaultPromptPages(data.pages);
-      }).catch(function handleDefaultPromptError(error) {
-        view.defaultPromptDialogError = error.message || "默认分镜读取失败。";
-        if (!view.defaultPromptPages.length) {
-          view.applyDefaultPromptPages([]);
-        }
-      }).finally(function finishDefaultPromptLoad() {
-        view.defaultPromptDialogLoading = false;
-      });
-    },
-
-    /** Collect non-empty storyboard prompts from the popup draft list. */
-    collectDefaultPromptPages: function collectDefaultPromptPages() {
+    /** Build one editable named template while keeping its persisted ID stable. */
+    createDefaultPromptTemplateDraft: function createDefaultPromptTemplateDraft(template, index) {
+      const source = template && typeof template === "object" ? template : {};
+      const sourcePages = Array.isArray(source.pages) && source.pages.length ? source.pages : [{ purpose: "分镜1", prompt: "" }];
       const pages = [];
-      for (let index = 0; index < this.defaultPromptPages.length; index += 1) {
-        const prompt = String(this.defaultPromptPages[index].prompt || "").trim();
-        if (prompt) {
-          pages.push({
-            purpose: String(this.defaultPromptPages[index].purpose || "分镜" + (pages.length + 1)).trim(),
-            prompt: prompt
-          });
+      for (let pageIndex = 0; pageIndex < sourcePages.length; pageIndex += 1) {
+        pages.push(this.createDefaultPromptPageDraft(sourcePages[pageIndex], pageIndex));
+      }
+      return {
+        id: String(source.id || "template-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8)),
+        name: String(source.name || "模板 " + (Number(index || 0) + 1)),
+        pages: pages
+      };
+    },
+
+    /** Return the persisted fields only, excluding local row keys. */
+    defaultPromptConfigSnapshot: function defaultPromptConfigSnapshot() {
+      const templates = [];
+      for (let index = 0; index < this.defaultPromptTemplates.length; index += 1) {
+        const source = this.defaultPromptTemplates[index];
+        templates.push({
+          id: String(source.id || ""),
+          name: String(source.name || ""),
+          pages: source.pages.map(/** Remove local-only row IDs. */ function snapshotDefaultPromptPage(page) {
+            return { purpose: String(page.purpose || ""), prompt: String(page.prompt || "") };
+          })
+        });
+      }
+      return { system_prompt: String(this.defaultPromptSystemPrompt || ""), default_template_id: String(this.defaultPromptDefaultTemplateId || ""), templates: templates };
+    },
+
+    /** Return whether the current template drafts differ from their last server snapshot. */
+    hasDefaultPromptUnsavedChanges: function hasDefaultPromptUnsavedChanges() {
+      return Boolean(this.defaultPromptSavedConfig)
+        && JSON.stringify(this.defaultPromptConfigSnapshot()) !== this.defaultPromptSavedConfig;
+    },
+
+    /** Apply a complete backend configuration and mark it as the saved baseline. */
+    applyDefaultPromptConfig: function applyDefaultPromptConfig(data, preferredTemplateId) {
+      const source = data && typeof data === "object" ? data : {};
+      this.defaultPromptSystemPrompt = String(source.system_prompt || "");
+      const sourceTemplates = Array.isArray(source.templates) ? source.templates : [];
+      const templates = [];
+      for (let index = 0; index < sourceTemplates.length; index += 1) {
+        templates.push(this.createDefaultPromptTemplateDraft(sourceTemplates[index], index));
+      }
+      this.defaultPromptTemplates = templates;
+      const requestedDefaultId = String(source.default_template_id || "");
+      this.defaultPromptDefaultTemplateId = templates.some(/** Match the requested server default. */ function matchDefaultTemplate(item) { return item.id === requestedDefaultId; })
+        ? requestedDefaultId : templates.length ? templates[0].id : "";
+      const requestedSelectedId = String(preferredTemplateId || this.defaultPromptSelectedTemplateId || this.defaultPromptDefaultTemplateId);
+      this.defaultPromptSelectedTemplateId = templates.some(/** Retain the visible template after save. */ function matchSelectedTemplate(item) { return item.id === requestedSelectedId; })
+        ? requestedSelectedId : this.defaultPromptDefaultTemplateId;
+      this.defaultPromptConfigLoaded = templates.length > 0;
+      this.defaultPromptSavedConfig = JSON.stringify(this.defaultPromptConfigSnapshot());
+    },
+
+    /** Return the template currently visible in the configuration editor. */
+    currentDefaultPromptTemplate: function currentDefaultPromptTemplate() {
+      for (let index = 0; index < this.defaultPromptTemplates.length; index += 1) {
+        if (this.defaultPromptTemplates[index].id === this.defaultPromptSelectedTemplateId) {
+          return this.defaultPromptTemplates[index];
         }
       }
-      if (!pages.length) {
-        throw new Error("至少填写 1 条默认分镜提示词。");
-      }
-      return pages;
+      return null;
     },
 
-    /** Add one empty storyboard prompt row to the popup. */
-    addDefaultPromptPage: function addDefaultPromptPage() {
-      if (this.defaultPromptPages.length >= 10) {
-        return;
+    /** Return the template used by the one-click generation action. */
+    activeDefaultPromptTemplate: function activeDefaultPromptTemplate() {
+      for (let index = 0; index < this.defaultPromptTemplates.length; index += 1) {
+        if (this.defaultPromptTemplates[index].id === this.defaultPromptDefaultTemplateId) {
+          return this.defaultPromptTemplates[index];
+        }
       }
-      this.defaultPromptPages.push(this.createDefaultPromptPageDraft({ purpose: "分镜" + (this.defaultPromptPages.length + 1), prompt: "" }, this.defaultPromptPages.length));
+      return null;
     },
 
-    /** Remove one storyboard prompt row while keeping at least one row. */
-    removeDefaultPromptPage: function removeDefaultPromptPage(pageIndex) {
-      if (this.defaultPromptPages.length <= 1) {
-        return;
-      }
-      this.defaultPromptPages.splice(Number(pageIndex), 1);
-    },
-
-    /** Persist storyboard prompt pages into server/default.prompt.json. */
-    async requestSaveDefaultPromptPages(pages) {
-      const response = await fetch(apiUrl("/config/default-prompts"), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pages: pages })
-      });
+    /** Fetch the latest shared template configuration from the backend. */
+    async requestDefaultPromptConfig() {
+      const response = await fetch(apiUrl("/config/default-prompts"), { cache: "no-store" });
       const payload = await response.json();
       if (!response.ok || !payload || !payload.ok) {
-        throw new Error(getApiErrorMessage(payload, "默认分镜保存失败。"));
+        throw new Error(getApiErrorMessage(payload, "分镜模板读取失败。"));
       }
       return payload.data || {};
     },
 
-    /** Save the default storyboard template without starting image generation. */
-    async saveDefaultPromptPages() {
+    /** Reload all configured templates from the backend. */
+    async reloadDefaultPromptPages() {
+      if (this.defaultPromptDialogLoading || this.defaultPromptDialogBusy) {
+        return false;
+      }
+      this.defaultPromptDialogLoading = true;
+      this.defaultPromptDialogError = "";
+      this.defaultPromptSavedText = "";
+      try {
+        const data = await this.requestDefaultPromptConfig();
+        this.applyDefaultPromptConfig(data);
+        return true;
+      } catch (error) {
+        const message = error.message || "分镜模板读取失败。";
+        this.defaultPromptDialogError = message;
+        if (!this.defaultPromptDialogOpen) {
+          this.imageEditorError = "[DEFAULT_PROMPT_LOAD_FAILED] " + message;
+        }
+        return false;
+      } finally {
+        this.defaultPromptDialogLoading = false;
+      }
+    },
+
+    /** Delay a template action until the user resolves any unsaved edits. */
+    requestDefaultPromptAction: function requestDefaultPromptAction(action) {
       if (this.defaultPromptDialogBusy || this.defaultPromptDialogLoading) {
         return;
+      }
+      if (this.hasDefaultPromptUnsavedChanges()) {
+        this.defaultPromptPendingAction = action;
+        return;
+      }
+      this.performDefaultPromptAction(action);
+    },
+
+    /** Select a different template with the shared unsaved-change guard. */
+    requestSelectDefaultPromptTemplate: function requestSelectDefaultPromptTemplate(templateId) {
+      if (String(templateId || "") === this.defaultPromptSelectedTemplateId) {
+        return;
+      }
+      this.requestDefaultPromptAction({ type: "select", template_id: String(templateId || "") });
+    },
+
+    /** Reload templates with the shared unsaved-change guard. */
+    requestReloadDefaultPromptPages: function requestReloadDefaultPromptPages() {
+      this.requestDefaultPromptAction({ type: "reload" });
+    },
+
+    /** Execute one template action after unsaved changes are resolved. */
+    performDefaultPromptAction: function performDefaultPromptAction(action) {
+      const target = action && typeof action === "object" ? action : {};
+      if (target.type === "select") {
+        this.defaultPromptSelectedTemplateId = String(target.template_id || "");
+        return;
+      }
+      if (target.type === "reload") {
+        this.reloadDefaultPromptPages();
+        return;
+      }
+      if (target.type === "close") {
+        this.defaultPromptDialogOpen = false;
+        this.defaultPromptDialogError = "";
+        this.defaultPromptSavedText = "";
+        this.defaultPromptBackdropPressed = false;
+      }
+    },
+
+    /** Save, discard, or retain edits before performing a pending template action. */
+    async resolveDefaultPromptPendingAction(resolution) {
+      const action = this.defaultPromptPendingAction;
+      if (!action) {
+        return;
+      }
+      if (resolution === "cancel") {
+        this.defaultPromptPendingAction = null;
+        return;
+      }
+      if (resolution === "save") {
+        const saved = await this.saveDefaultPromptPages();
+        if (!saved) {
+          return;
+        }
+      } else if (resolution === "discard" && this.defaultPromptSavedConfig) {
+        this.applyDefaultPromptConfig(JSON.parse(this.defaultPromptSavedConfig));
+      }
+      this.defaultPromptPendingAction = null;
+      this.performDefaultPromptAction(action);
+    },
+
+    /** Validate every named template and return its backend payload. */
+    collectDefaultPromptConfig: function collectDefaultPromptConfig() {
+      if (!this.defaultPromptTemplates.length) {
+        throw new Error("至少保留 1 套分镜模板。");
+      }
+      const templates = [];
+      const names = {};
+      for (let templateIndex = 0; templateIndex < this.defaultPromptTemplates.length; templateIndex += 1) {
+        const source = this.defaultPromptTemplates[templateIndex];
+        const name = String(source.name || "").trim();
+        const normalizedName = name.toLocaleLowerCase("zh-CN");
+        if (!name) {
+          this.defaultPromptSelectedTemplateId = source.id;
+          throw new Error("模板名称不能为空。");
+        }
+        if (names[normalizedName]) {
+          this.defaultPromptSelectedTemplateId = source.id;
+          throw new Error("模板名称不能重复：“" + name + "”。");
+        }
+        names[normalizedName] = true;
+        if (!Array.isArray(source.pages) || !source.pages.length || source.pages.length > 10) {
+          this.defaultPromptSelectedTemplateId = source.id;
+          throw new Error("模板“" + name + "”必须包含 1 到 10 个分镜。");
+        }
+        const pages = [];
+        for (let pageIndex = 0; pageIndex < source.pages.length; pageIndex += 1) {
+          const prompt = String(source.pages[pageIndex].prompt || "").trim();
+          if (!prompt) {
+            this.defaultPromptSelectedTemplateId = source.id;
+            throw new Error("模板“" + name + "”的分镜 " + (pageIndex + 1) + " 提示词不能为空。");
+          }
+          pages.push({ purpose: String(source.pages[pageIndex].purpose || "分镜" + (pageIndex + 1)).trim() || "分镜" + (pageIndex + 1), prompt: prompt });
+        }
+        templates.push({ id: String(source.id || ""), name: name, pages: pages });
+      }
+      const hasDefault = templates.some(/** Ensure one submitted template is the default. */ function matchSubmittedDefault(item) { return item.id === String(this.defaultPromptDefaultTemplateId || ""); }, this);
+      return { system_prompt: String(this.defaultPromptSystemPrompt || "").trim(), default_template_id: hasDefault ? this.defaultPromptDefaultTemplateId : templates[0].id, templates: templates };
+    },
+
+    /** Create a unique readable name for a copied or new template. */
+    uniqueDefaultPromptTemplateName: function uniqueDefaultPromptTemplateName(baseName) {
+      const used = {};
+      for (let index = 0; index < this.defaultPromptTemplates.length; index += 1) {
+        used[String(this.defaultPromptTemplates[index].name || "").trim().toLocaleLowerCase("zh-CN")] = true;
+      }
+      const base = String(baseName || "新模板").trim() || "新模板";
+      let candidate = base;
+      let suffix = 2;
+      while (used[candidate.toLocaleLowerCase("zh-CN")]) {
+        candidate = base + " " + suffix;
+        suffix += 1;
+      }
+      return candidate;
+    },
+
+    /** Add and select one empty named template. */
+    addDefaultPromptTemplate: function addDefaultPromptTemplate() {
+      if (this.defaultPromptTemplates.length >= 50) {
+        return;
+      }
+      const template = this.createDefaultPromptTemplateDraft({ name: this.uniqueDefaultPromptTemplateName("新模板") }, this.defaultPromptTemplates.length);
+      this.defaultPromptTemplates.push(template);
+      this.defaultPromptSelectedTemplateId = template.id;
+    },
+
+    /** Duplicate the selected template and all of its storyboard prompts. */
+    duplicateDefaultPromptTemplate: function duplicateDefaultPromptTemplate() {
+      const current = this.currentDefaultPromptTemplate();
+      if (!current || this.defaultPromptTemplates.length >= 50) {
+        return;
+      }
+      const template = this.createDefaultPromptTemplateDraft({ name: this.uniqueDefaultPromptTemplateName(current.name + " 副本"), pages: current.pages }, this.defaultPromptTemplates.length);
+      this.defaultPromptTemplates.push(template);
+      this.defaultPromptSelectedTemplateId = template.id;
+    },
+
+    /** Delete the selected template while always retaining one valid default. */
+    deleteDefaultPromptTemplate: function deleteDefaultPromptTemplate() {
+      if (this.defaultPromptTemplates.length <= 1) {
+        return;
+      }
+      const index = this.defaultPromptTemplates.findIndex(/** Locate the selected template. */ function matchSelectedTemplate(item) { return item.id === this.defaultPromptSelectedTemplateId; }, this);
+      if (index < 0) {
+        return;
+      }
+      const removed = this.defaultPromptTemplates.splice(index, 1)[0];
+      const replacement = this.defaultPromptTemplates[Math.min(index, this.defaultPromptTemplates.length - 1)];
+      this.defaultPromptSelectedTemplateId = replacement.id;
+      if (removed.id === this.defaultPromptDefaultTemplateId) {
+        this.defaultPromptDefaultTemplateId = replacement.id;
+      }
+    },
+
+    /** Make the selected template the one-click generation default. */
+    setCurrentDefaultPromptTemplate: function setCurrentDefaultPromptTemplate() {
+      const current = this.currentDefaultPromptTemplate();
+      if (current) {
+        this.defaultPromptDefaultTemplateId = current.id;
+      }
+    },
+
+    /** Add one empty storyboard row to the selected template. */
+    addDefaultPromptPage: function addDefaultPromptPage() {
+      const current = this.currentDefaultPromptTemplate();
+      if (!current || current.pages.length >= 10) {
+        return;
+      }
+      current.pages.push(this.createDefaultPromptPageDraft({ purpose: "分镜" + (current.pages.length + 1), prompt: "" }, current.pages.length));
+    },
+
+    /** Duplicate one storyboard row immediately after its source. */
+    duplicateDefaultPromptPage: function duplicateDefaultPromptPage(pageIndex) {
+      const current = this.currentDefaultPromptTemplate();
+      const index = Number(pageIndex);
+      if (!current || !current.pages[index] || current.pages.length >= 10) {
+        return;
+      }
+      current.pages.splice(index + 1, 0, this.createDefaultPromptPageDraft(current.pages[index], index + 1));
+    },
+
+    /** Move one storyboard row up or down without changing its content. */
+    moveDefaultPromptPage: function moveDefaultPromptPage(pageIndex, direction) {
+      const current = this.currentDefaultPromptTemplate();
+      const index = Number(pageIndex);
+      const nextIndex = index + Number(direction);
+      if (!current || index < 0 || nextIndex < 0 || nextIndex >= current.pages.length) {
+        return;
+      }
+      const page = current.pages.splice(index, 1)[0];
+      current.pages.splice(nextIndex, 0, page);
+    },
+
+    /** Remove one storyboard row while keeping at least one row. */
+    removeDefaultPromptPage: function removeDefaultPromptPage(pageIndex) {
+      const current = this.currentDefaultPromptTemplate();
+      if (!current || current.pages.length <= 1) {
+        return;
+      }
+      current.pages.splice(Number(pageIndex), 1);
+    },
+
+    /** Persist a complete multi-template configuration. */
+    async requestSaveDefaultPromptPages(config) {
+      const response = await fetch(apiUrl("/config/default-prompts"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config)
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload || !payload.ok) {
+        throw new Error(getApiErrorMessage(payload, "分镜模板保存失败。"));
+      }
+      return payload.data || {};
+    },
+
+    /** Save all named templates without starting image generation. */
+    async saveDefaultPromptPages() {
+      if (this.defaultPromptDialogBusy || this.defaultPromptDialogLoading) {
+        return false;
       }
       this.defaultPromptDialogBusy = true;
       this.defaultPromptDialogError = "";
       this.defaultPromptSavedText = "";
+      const selectedId = this.defaultPromptSelectedTemplateId;
       try {
-        const data = await this.requestSaveDefaultPromptPages(this.collectDefaultPromptPages());
-        this.applyDefaultPromptPages(data.pages);
-        this.defaultPromptSavedText = "默认分镜已保存到 server/default.prompt.json。";
-        this.setStatus("默认分镜已保存。", "success");
+        const data = await this.requestSaveDefaultPromptPages(this.collectDefaultPromptConfig());
+        this.applyDefaultPromptConfig(data, selectedId);
+        this.defaultPromptSavedText = "全部分镜模板已保存。";
+        this.setStatus("分镜模板已保存到后端。", "success");
+        return true;
       } catch (error) {
-        this.defaultPromptDialogError = error.message || "默认分镜保存失败。";
+        this.defaultPromptDialogError = error.message || "分镜模板保存失败。";
+        return false;
       } finally {
         this.defaultPromptDialogBusy = false;
       }
     },
 
-    /** Save manual storyboard prompts, create a ready task, and start Fusion generation. */
+    /** Return the current one-click template name and effective image count. */
+    defaultPromptButtonLabel: function defaultPromptButtonLabel() {
+      if (this.defaultPromptGenerationBusy) {
+        return "默认分镜提交中…";
+      }
+      const template = this.activeDefaultPromptTemplate();
+      return template ? "默认分镜生图 · " + template.name + "（" + template.pages.length + "张）" : "默认分镜生图";
+    },
+
+    /** Resolve market-language placeholders from the existing image-editor field. */
+    resolveDefaultPromptGenerationPages: function resolveDefaultPromptGenerationPages(template) {
+      const language = String(this.imageCarouselMarketLanguage || "美国 / English");
+      return template.pages.map(/** Build the exact manual Fusion pages. */ function resolveDefaultPromptPage(page) {
+        return { purpose: String(page.purpose || ""), prompt: String(page.prompt || "").split("{market_language}").join(language) };
+      });
+    },
+
+    /** Read the saved default template, create a manual task, and start Fusion directly. */
     async generateDefaultPromptPages() {
       const record = this.selectedTemuRecord;
       const sources = this.galleryImageEditorSources(record);
       if (!record || sources.length !== 2 || this.imageEditorBusy || this.imageCarouselTask) {
-        this.defaultPromptDialogError = "请先选择两张图片，并确保当前没有未完成轮播任务。";
         return;
       }
       const requestId = Number(this.imageEditorRequestId);
-      let pages;
-      try {
-        pages = this.collectDefaultPromptPages();
-      } catch (error) {
-        this.defaultPromptDialogError = error.message || "默认分镜不能为空。";
-        return;
-      }
-      this.defaultPromptDialogBusy = true;
-      this.defaultPromptDialogError = "";
-      this.defaultPromptSavedText = "";
+      this.defaultPromptGenerationBusy = true;
       this.imageEditorBusy = true;
       this.imageEditorRestoreMainId = String(record.main_id || "");
       this.imageCarouselReviewOnly = false;
@@ -1414,9 +1688,13 @@ const app = createApp({
       this.imageEditorError = "";
       this.persistViewState();
       try {
-        const saved = await this.requestSaveDefaultPromptPages(pages);
-        this.applyDefaultPromptPages(saved.pages);
-        const savedPages = Array.isArray(saved.pages) && saved.pages.length ? saved.pages : pages;
+        const data = await this.requestDefaultPromptConfig();
+        this.applyDefaultPromptConfig(data);
+        const template = this.activeDefaultPromptTemplate();
+        if (!template) {
+          throw new Error("没有可用的默认分镜模板。");
+        }
+        const pages = this.resolveDefaultPromptGenerationPages(template);
         const response = await fetch(apiUrl("/workflow/carousel/manual"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1428,7 +1706,7 @@ const app = createApp({
             source_indices: this.galleryEditSelection.slice(),
             gallery_snapshot: this.galleryImages(record).slice(),
             market_language: String(this.imageCarouselMarketLanguage || "美国 / English"),
-            pages: savedPages,
+            pages: pages,
             size: this.imageEditSize
           })
         });
@@ -1445,13 +1723,11 @@ const app = createApp({
           return;
         }
         this.applyCarouselTaskSnapshot(task);
-        this.imageCarouselCount = Number(task.count || savedPages.length);
-        this.defaultPromptDialogOpen = false;
+        this.imageCarouselCount = Number(task.count || pages.length);
         this.imageEditorBusy = false;
         await this.generateCarouselPages();
       } catch (error) {
         if (this.isImageEditorRequestCurrent(requestId)) {
-          this.defaultPromptDialogError = error.message || "默认分镜生图失败。";
           this.imageEditorError = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "默认分镜生图失败。");
         }
         if (this.isImageEditorRequestCurrent(requestId) && !this.imageCarouselTask) {
@@ -1459,9 +1735,7 @@ const app = createApp({
           this.persistViewState();
         }
       } finally {
-        if (this.isImageEditorRequestCurrent(requestId) || !this.defaultPromptDialogOpen) {
-          this.defaultPromptDialogBusy = false;
-        }
+        this.defaultPromptGenerationBusy = false;
         if (this.isImageEditorRequestCurrent(requestId)) {
           this.imageEditorBusy = false;
         }
@@ -6602,6 +6876,7 @@ const app = createApp({
       if (sources.length === 1) {
         this.loadDirectImageTaskForProduct(record, sources);
       } else {
+        this.reloadDefaultPromptPages();
         this.loadCarouselTaskForProduct(record, sources);
       }
     },
@@ -6796,6 +7071,9 @@ const app = createApp({
 
     /** Return the primary busy label for the visible image editor. */
     imageEditorLoadingTitle: function imageEditorLoadingTitle() {
+      if (this.defaultPromptGenerationBusy) {
+        return "默认分镜提交中…";
+      }
       const state = this.imageEditorState();
       if (state.sourceCount === 2 || state.hasCarouselTask) {
         return this.imageCarouselReasoningEnabled ? "Kimi 推理生成提示词…" : "Kimi 快速生成提示词…";
@@ -6805,6 +7083,10 @@ const app = createApp({
 
     /** Return the secondary busy label for the visible image editor. */
     imageEditorLoadingHint: function imageEditorLoadingHint() {
+      if (this.defaultPromptGenerationBusy) {
+        const template = this.activeDefaultPromptTemplate();
+        return template ? "正在调用“" + template.name + "”的 " + template.pages.length + " 个分镜，不经过 Kimi。" : "正在读取默认模板，不经过 Kimi。";
+      }
       const state = this.imageEditorState();
       if (state.sourceCount === 2 || state.hasCarouselTask) {
         const reviewOnly = this.imageCarouselTask
@@ -7532,6 +7814,7 @@ const app = createApp({
       this.imageCarouselPageBusyKeys = {};
       this.imageCarouselPageIndex = 0;
       this.imageCarouselGenerationBusy = false;
+      this.defaultPromptGenerationBusy = false;
       this.imageCarouselEstimatedTokens = 0;
       this.imageCarouselSourceMismatch = false;
       this.imageEditorBusy = false;
@@ -7625,10 +7908,10 @@ const app = createApp({
       return true;
     },
 
-    /** Replace selected gallery positions only after the user confirms the result. */
+    /** Confirm carousel additions or replace a direct-edit source after user approval. */
     async confirmGalleryImageEdit() {
       if (this.imageCarouselTask) {
-        this.confirmCarouselReplacement();
+        await this.confirmCarouselReplacement();
         return;
       }
       const record = this.selectedTemuRecord;
@@ -7698,7 +7981,7 @@ const app = createApp({
       this.closeGalleryImageEditor(true);
     },
 
-    /** Apply selected outputs to source positions or replace the complete main-image gallery. */
+    /** Append selected outputs without removing originals, or explicitly replace the entire gallery. */
     async confirmCarouselReplacement(replaceAll) {
       const task = this.imageCarouselTask;
       this.imageCarouselGenerationBusy = this.isCarouselTaskGenerating(task);
@@ -7724,18 +8007,18 @@ const app = createApp({
         });
         const payload = await response.json();
         if (!response.ok || !payload || !payload.ok) {
-          throw new Error(getApiErrorMessage(payload, "轮播替换失败。"));
+          throw new Error(getApiErrorMessage(payload, replaceAll ? "轮播替换失败。" : "轮播确认失败。"));
         }
         const result = payload.data || {};
         const product = result.product || {};
         this.carouselUndoTokens[this.productCacheEventKey(product)] = String(result.undo_token || "");
         this.persistCarouselUndoTokens();
         await this.reloadWorkbenchAfterCarousel();
-        this.setStatus(replaceAll ? "全部主图已替换为本次轮播生成图。" : "轮播图片已按分镜顺序替换，可恢复整组原图。", "success");
+        this.setStatus(replaceAll ? "全部主图已替换为本次轮播生成图。" : "已确认，选中的轮播图片已追加到末尾，原图保持不变。", "success");
         delete this.imageCarouselTasksByMainId[String(task.temu_main_id || "")];
         this.closeGalleryImageEditor(true);
       } catch (error) {
-        this.imageEditorError = error.message || "轮播替换失败。";
+        this.imageEditorError = error.message || (replaceAll ? "轮播替换失败。" : "轮播确认失败。");
       } finally {
         this.imageCarouselGenerationBusy = false;
       }

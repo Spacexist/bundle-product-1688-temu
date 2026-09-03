@@ -86,6 +86,36 @@
     .inspector-tab.is-active { border-color: rgba(56, 189, 248, .7); background: rgba(56, 189, 248, .14); color: #e0f2fe; }
     .inspector-tab:disabled { cursor: not-allowed; opacity: .45; }
     .inspector-json { max-height: 420px; margin: 0; }
+    [hidden] { display: none !important; }
+    .page-tabs, .task-tools, .task-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .page-tabs button[aria-selected="true"] { border-color: var(--blue); color: var(--strong); background: #163047; }
+    .task-panel { padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+    .task-tools input { flex: 1; min-width: 220px; padding: 9px 11px; border: 1px solid #334155; border-radius: 8px; background: #111c2f; color: var(--text); font: inherit; font-size: 12px; }
+    .task-note { margin: 10px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .task-warning { color: #fbbf24; }
+    .task-table-wrap { overflow-x: auto; }
+    .task-table { width: 100%; border-collapse: collapse; font-size: 12px; text-align: left; }
+    .task-table th { padding: 10px 8px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+    .task-table td { padding: 10px 8px; border-top: 1px solid var(--line); vertical-align: top; }
+    .task-table time, .task-elapsed { white-space: nowrap; font: 11px/1.6 Consolas, monospace; }
+    .task-id { display: block; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11px/1.6 Consolas, monospace; }
+    .task-table button { min-height: 26px; margin-top: 4px; padding: 3px 7px; font-size: 11px; }
+    .task-phase { display: inline-block; padding: 4px 7px; border-radius: 5px; background: #163047; color: #7dd3fc; white-space: nowrap; }
+    .task-phase[data-phase="succeeded"] { color: #86efac; background: #123126; }
+    .task-phase[data-phase="failed"], .task-phase[data-phase="timeout"] { color: #fca5a5; background: #361e2a; }
+    .task-phase[data-phase="cancelled"], .task-phase[data-phase="interrupted"] { color: #fcd34d; background: #322c1d; }
+    .task-detail { background: #081223; }
+    .task-detail dl { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 6px 12px; margin: 0; line-height: 1.5; }
+    .task-detail dt { color: var(--muted); }
+    .task-detail dd { margin: 0; overflow-wrap: anywhere; }
+    .task-pagination { justify-content: flex-end; margin: 14px 0 0; font-size: 12px; color: var(--muted); }
+    button:disabled { cursor: default; opacity: .45; }
+    .failure-attempts { display: grid; gap: 10px; max-height: 520px; overflow: auto; margin-top: 12px; }
+    .failure-attempt { padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--red); border-radius: 8px; }
+    .failure-attempt p { margin: 6px 0; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.6; }
+    .failure-attempt summary { cursor: pointer; color: var(--blue); overflow-wrap: anywhere; }
+    .failure-url { display: block; padding: 10px; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+    .failure-reason { max-width: 400px; overflow-wrap: anywhere; }
     @media (max-width: 980px) {
       header { align-items: flex-start; flex-wrap: wrap; }
       .actions { width: 100%; margin-left: 0; overflow-x: auto; }
@@ -115,6 +145,11 @@
     </div>
   </header>
   <main>
+    <nav class="page-tabs" role="tablist" aria-label="诊断视图">
+      <button id="logsTab" type="button" role="tab" aria-selected="true" aria-controls="logsPanel">服务日志</button>
+      <button id="imageTasksTab" type="button" role="tab" aria-selected="false" aria-controls="imageTasksPanel">图片任务</button>
+      <button id="imageFailuresTab" type="button" role="tab" aria-selected="false" aria-controls="imageFailuresPanel">图片失败</button>
+    </nav>
     <section class="queue-panel" aria-live="polite">
       <div class="queue-heading">
         <div>
@@ -141,12 +176,44 @@
         </section>
       </div>
     </section>
+    <section id="imageTasksPanel" class="task-panel" role="tabpanel" aria-labelledby="imageTasksTab" hidden>
+      <div class="queue-heading"><h2>图片执行历史</h2><span id="imageTasksStatus" class="status">等待读取</span></div>
+      <p class="task-note">每行对应一次图片执行 / 一个上游 task_id。历史保留最近 3 天，最多 1000 条已结束记录；进行中的任务不清理。每秒读取本地状态，不增加上游查询。</p>
+      <div class="task-tools">
+        <input id="imageTaskSearch" type="search" placeholder="搜索本地 ID / task_id / 商品 ID" aria-label="搜索图片任务">
+        <select id="imageTaskSource" aria-label="图片任务来源"><option value="">全部来源</option><option value="text-to-image">文生图</option><option value="single-edit">单图编辑</option><option value="sku-fusion">SKU 溶图</option><option value="carousel">轮播图</option><option value="fusion">双图溶图</option></select>
+        <select id="imageTaskPhase" aria-label="图片任务状态"><option value="">全部状态</option><option value="active">进行中</option><option value="finished">已结束</option><option value="queued">本地排队</option><option value="preparing">准备图片</option><option value="submitting">正在提交</option><option value="upstream_queued">上游排队</option><option value="upstream_running">上游生成</option><option value="downloading">下载中</option><option value="succeeded">本地成功</option><option value="failed">失败</option><option value="timeout">超时</option><option value="cancelled">本地取消</option><option value="interrupted">重启中断</option></select>
+        <select id="imageTaskOrder" aria-label="任务显示顺序"><option value="active">进行中优先</option><option value="history">历史优先</option></select>
+      </div>
+      <p id="imageTaskSummary" class="task-note"></p>
+      <p id="imageTaskWarning" class="task-note task-warning" role="status" hidden></p>
+      <div class="task-table-wrap"><table class="task-table"><thead><tr><th>来源 / 详情</th><th>本地执行 ID</th><th>上游 task_id</th><th>当前阶段</th><th>总耗时</th><th>创建时间</th></tr></thead><tbody id="imageTaskRows"></tbody></table></div>
+      <div class="task-pagination"><button id="imageTaskPrev" type="button">上一页</button><span id="imageTaskPage"></span><button id="imageTaskNext" type="button">下一页</button></div>
+      <p class="task-note">只读看板，不自动重试。上游完成后仍需下载；超时、取消、重启中断不代表上游已停止，仍可能完成并计费。启用前的历史无法补齐。</p>
+    </section>
+    <section id="imageFailuresPanel" class="task-panel" role="tabpanel" aria-labelledby="imageFailuresTab" hidden>
+      <div class="queue-heading"><h2>图片失败记录</h2><span id="imageFailuresStatus" class="status">等待读取</span></div>
+      <p class="task-note">只保存最终失败和超时的图片任务。独立保留最近 3 天，最多 1000 个失败任务；任务最终成功后，中途错误不会保存在此处。取消和重启中断请看“图片任务”。</p>
+      <div class="task-tools">
+        <input id="imageFailureSearch" type="search" aria-label="搜索图片失败记录" placeholder="搜索本地 ID / task_id / 商品 / 最终错误码">
+        <select id="imageFailureSource" aria-label="失败任务来源"><option value="">全部来源</option><option value="text-to-image">文生图</option><option value="single-edit">单图编辑</option><option value="sku-fusion">SKU 溶图</option><option value="carousel">轮播图</option><option value="fusion">双图溶图</option></select>
+        <select id="imageFailureStage" aria-label="最后失败阶段"><option value="">全部失败阶段</option><option value="preparing">本地准备</option><option value="reference_download">参考图读取</option><option value="provider_submit">提交上游</option><option value="provider_poll">查询上游</option><option value="provider_generation">上游生成</option><option value="result_validation">生成结果校验</option><option value="result_download">结果下载</option><option value="cache_write">缓存写入</option><option value="cache_validation">缓存校验</option><option value="state_persistence">状态保存</option></select>
+      </div>
+      <p id="imageFailureSummary" class="task-note"></p>
+      <p id="imageFailureWarning" class="task-note task-warning" role="status" hidden></p>
+      <div class="task-table-wrap"><table class="task-table"><thead><tr><th>来源 / 执行 ID / task_id</th><th>失败阶段</th><th>最终错误码 / HTTP</th><th>错误原因 / URL（脱敏）</th><th>失败时间</th><th>操作</th></tr></thead><tbody id="imageFailureRows"></tbody></table></div>
+      <div class="task-pagination"><button id="imageFailurePrev" type="button">上一页</button><span id="imageFailurePage"></span><button id="imageFailureNext" type="button">下一页</button></div>
+      <p class="task-note">只读，不重新生成、不重新下载。每任务最多保留最近 200 条 / 256 KB 明细，超限注明省略数量。完整失败 URL 可能含临时签名，仅在本机详情按需展开和复制，请勿随意分享。历史细节从启用后开始记录。</p>
+    </section>
+    <section id="logsPanel" role="tabpanel" aria-labelledby="logsTab">
+    <div id="requestLogFilter" class="task-note" hidden><span id="requestLogFilterText"></span> <button id="clearRequestLogFilter" type="button">显示全部请求</button></div>
     <div class="summary">
       <span id="logCount">0 条日志</span>
       <span id="serviceSummary">Frontend API 0 · CLIP 0 · Provider 0</span>
       <span>status 不做主显示；错误只在关键字段里提示</span>
     </div>
     <div id="logList" class="service-grid"></div>
+    </section>
     <aside id="logInspector" class="log-inspector" hidden aria-live="polite">
       <header class="inspector-head">
         <div>
@@ -174,6 +241,7 @@
   </main>
   <script>
     var logEntries = [];
+    var logRequestFilter = "";
     var isPaused = false;
     var logRenderScheduled = false;
     var lastLogEventId = 0;
@@ -826,6 +894,7 @@
       }
       for (var entryIndex = 0; entryIndex < logEntries.length; entryIndex += 1) {
         var entry = logEntries[entryIndex] || {};
+        if (logRequestFilter && String(entry.request_id || "") !== logRequestFilter) { continue; }
         var call = null;
         if (isCallResponseEntry(entry)) {
           call = findPendingCall(pendingCalls, entry);
@@ -959,6 +1028,8 @@
     async function pollImageQueue() {
       queuePollTimer = null;
       await loadQueueState();
+      if (!document.getElementById("imageTasksPanel").hidden) { await loadImageTasks(); }
+      if (!document.getElementById("imageFailuresPanel").hidden) { await loadImageFailures(); }
       queuePollTimer = window.setTimeout(pollImageQueue, 1000);
     }
 
@@ -1010,6 +1081,523 @@
       connectServerLogs();
       queuePollTimer = window.setTimeout(pollImageQueue, 1000);
     }
+
+    var imageTasks = [];
+    var imageTaskPage = 0;
+    var imageTaskOpenId = "";
+    var imageTaskSignature = "";
+    var imageTaskLoading = false;
+    var imageTaskLoaded = false;
+    var imageTaskLoadError = "";
+    var imageTaskClockOffset = 0;
+    var imageTaskRows = document.getElementById("imageTaskRows");
+    var imageTaskSearch = document.getElementById("imageTaskSearch");
+    var imageTaskSource = document.getElementById("imageTaskSource");
+    var imageTaskPhase = document.getElementById("imageTaskPhase");
+    var imageTaskOrder = document.getElementById("imageTaskOrder");
+    var taskPhaseLabels = { queued: "本地排队", preparing: "准备图片", submitting: "正在提交", upstream_queued: "上游排队", upstream_running: "上游生成", downloading: "下载中", succeeded: "本地成功", failed: "失败", timeout: "超时", cancelled: "本地取消", interrupted: "重启中断" };
+    var taskSourceLabels = { "text-to-image": "文生图", "single-edit": "单图编辑", "sku-fusion": "SKU 溶图", carousel: "轮播图", fusion: "双图溶图" };
+
+    /** Distinguish local terminal results from work still holding or waiting for a queue slot. */
+    function isImageTaskFinished(task) {
+      return ["succeeded", "failed", "timeout", "cancelled", "interrupted"].indexOf(task.phase) >= 0;
+    }
+
+    /** Build text-only nodes so provider identifiers can never become HTML. */
+    function taskText(tag, text, className) {
+      var node = document.createElement(tag);
+      node.textContent = String(text === undefined || text === null ? "—" : text);
+      if (className) { node.className = className; }
+      return node;
+    }
+
+    /** Build a delegated read-only control, never a retry or cancellation action. */
+    function taskButton(label, action, task) {
+      var button = taskText("button", label);
+      button.type = "button";
+      button.dataset.taskAction = action;
+      button.dataset.executionId = task.execution_id;
+      return button;
+    }
+
+    /** Filter a detached list and apply active/history priority without changing backend scheduling. */
+    function filteredImageTasks() {
+      var query = imageTaskSearch.value.trim().toLowerCase();
+      var source = imageTaskSource.value;
+      var phase = imageTaskPhase.value;
+      var items = imageTasks.filter(/** Match exact categories and partial metadata IDs. */ function matches(task) {
+        var finished = isImageTaskFinished(task);
+        return (!source || task.source === source)
+          && (!phase || (phase === "active" ? !finished : phase === "finished" ? finished : task.phase === phase))
+          && (!query || [task.execution_id, task.provider_task_id, task.temu_main_id, task.temu_platform_id, task.sku_id, task.carousel_task_id, task.request_id].join(" ").toLowerCase().indexOf(query) >= 0);
+      });
+      items.sort(/** Prioritize the selected group, then order by its most recent timestamp. */ function newest(a, b) {
+        var aFinished = isImageTaskFinished(a);
+        var bFinished = isImageTaskFinished(b);
+        if (aFinished !== bFinished) { return (aFinished ? 1 : -1) * (imageTaskOrder.value === "history" ? -1 : 1); }
+        return Date.parse(b.finished_at || b.created_at) - Date.parse(a.finished_at || a.created_at)
+          || String(a.execution_id).localeCompare(String(b.execution_id));
+      });
+      return items;
+    }
+
+    /** Show local dates consistently while keeping the original ISO value available in details. */
+    function imageTaskTime(value) {
+      return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
+    }
+
+    /** Update clocks in place to preserve expanded details, focus and text selection each second. */
+    function updateImageTaskDurations() {
+      var clocks = imageTaskRows.querySelectorAll(".task-elapsed");
+      for (var index = 0; index < clocks.length; index += 1) {
+        var node = clocks[index];
+        var end = node.dataset.finishedAt ? Date.parse(node.dataset.finishedAt) : Date.now() + imageTaskClockOffset;
+        var seconds = Math.max(0, Math.floor((end - Date.parse(node.dataset.createdAt)) / 1000));
+        node.textContent = Math.floor(seconds / 60) + "分 " + seconds % 60 + "秒";
+      }
+    }
+
+    /** Explain bounded failures without persisting raw provider bodies or prompts in the ledger. */
+    function imageTaskError(task) {
+      var messages = {
+        DOWNLOAD_FAILED: "连续三次下载或本地缓存失败；请在工作台手动重试。",
+        PROVIDER_TIMEOUT: "已等待 600 秒并停止本地查询；上游最终结果未知。",
+        PROVIDER_SUBMISSION_UNKNOWN: "提交结果不确定，未自动重发；请先核查上游记录。",
+        PROVIDER_FAILED: "上游明确返回生成失败；具体原因见关联请求日志。",
+        SERVER_RESTARTED: "服务重启，本地跟踪已中断；不会恢复或重新提交。",
+        IMAGE_TASK_CANCELLED: "本地任务已被放弃；未向上游发送取消请求。",
+        QUEUE_TASK_CANCELLED: "尚未提交的本地排队任务已取消。",
+        PROVIDER_UNKNOWN_STATUS: "上游连续三次返回未知状态，已停止跟踪。",
+        PROVIDER_EMPTY_IMAGE: "上游返回完成，但没有可用的图片 URL。",
+        PROVIDER_TASK_ID_CONFLICT: "上游返回的 task_id 与当前执行不一致。"
+      };
+      return task.error_code ? task.error_code + " · " + (messages[task.error_code] || "本次执行失败；具体原因见关联请求日志。") : "—";
+    }
+
+    /** Expand metadata for one execution without fetching image bytes or provider task state. */
+    function createImageTaskDetail(task) {
+      var row = document.createElement("tr");
+      row.className = "task-detail";
+      var cell = document.createElement("td");
+      cell.colSpan = 6;
+      var list = document.createElement("dl");
+      var providerLabels = { submitting: "提交中", queued: "排队中", running: "生成中", completed: "已完成（不等于本地已下载）", failed: "明确失败", tracking_stopped: "本地跟踪结束，上游最终结果未知", submission_unknown: "提交结果不确定" };
+      var pairs = [
+        ["本地执行 ID", task.execution_id], ["上游 task_id", task.provider_task_id || "未分配"],
+        ["上游最近状态", providerLabels[task.provider_status] || task.provider_status || "未提交"],
+        ["商品 / 平台", [task.temu_main_id, task.temu_platform_id].filter(Boolean).join(" / ") || "—"],
+        ["SKU / 序号", (task.sku_id || "—") + (task.sku_index === undefined ? "" : " / 第 " + (task.sku_index + 1) + " 个")],
+        ["轮播任务 / 页", (task.carousel_task_id || "—") + (task.carousel_page_index === undefined ? "" : " / 第 " + (task.carousel_page_index + 1) + " 页")],
+        ["候选图", task.candidate_index === undefined ? "—" : "第 " + (task.candidate_index + 1) + " 张"],
+        ["下载尝试", (task.download_attempt || 0) + " / 3"], ["请求 ID", task.request_id || "—"],
+        ["创建 / 开始", imageTaskTime(task.created_at) + " / " + imageTaskTime(task.started_at)],
+        ["上游提交", imageTaskTime(task.provider_submitted_at)], ["最近更新 / 结束", imageTaskTime(task.updated_at) + " / " + imageTaskTime(task.finished_at)],
+        ["错误信息", imageTaskError(task)]
+      ];
+      for (var index = 0; index < pairs.length; index += 1) {
+        list.appendChild(taskText("dt", pairs[index][0]));
+        list.appendChild(taskText("dd", pairs[index][1]));
+      }
+      cell.appendChild(list);
+      if (task.request_id) { cell.appendChild(taskButton("查看关联请求日志", "logs", task)); }
+      cell.appendChild(taskText("p", "日志仅保留服务器内存中的最近 300 条；一个请求可能包含多张图。重启后的任务元数据仍在，但旧日志可能已不可用。", "task-note"));
+      row.appendChild(cell);
+      return row;
+    }
+
+    /** Render only a 50-row page and avoid replacing unchanged rows on every polling tick. */
+    function renderImageTasks() {
+      var filtered = filteredImageTasks();
+      var pages = Math.max(1, Math.ceil(filtered.length / 50));
+      imageTaskPage = Math.max(0, Math.min(imageTaskPage, pages - 1));
+      var visible = filtered.slice(imageTaskPage * 50, (imageTaskPage + 1) * 50);
+      var signature = JSON.stringify([visible, imageTaskOpenId, queueState.pending_tasks, imageTaskLoadError]);
+      var activeCount = imageTasks.filter(/** Count all local active executions before filtering. */ function active(task) { return !isImageTaskFinished(task); }).length;
+      document.getElementById("imageTaskSummary").textContent = "进行中 " + activeCount + " · 已结束 " + (imageTasks.length - activeCount) + " · 筛选结果 " + filtered.length;
+      if (!imageTaskLoaded && imageTaskLoadError) { document.getElementById("imageTaskSummary").textContent = "任务数量未知：尚未成功读取后端记录"; }
+      document.getElementById("imageTaskPage").textContent = (imageTaskPage + 1) + " / " + pages + " 页";
+      document.getElementById("imageTaskPrev").disabled = imageTaskPage === 0;
+      document.getElementById("imageTaskNext").disabled = imageTaskPage >= pages - 1;
+      if (signature !== imageTaskSignature) {
+        imageTaskSignature = signature;
+        var fragment = document.createDocumentFragment();
+        if (!visible.length) {
+          var emptyRow = document.createElement("tr");
+          var emptyCell = taskText("td", imageTaskLoadError ? "记录读取失败，不能据此判断是否有任务。请查看上方错误提示。" : imageTasks.length ? "没有匹配的图片任务。" : "暂无执行记录。启用后产生的图片任务会显示在这里。", "empty");
+          emptyCell.colSpan = 6;
+          emptyRow.appendChild(emptyCell);
+          fragment.appendChild(emptyRow);
+        }
+        for (var index = 0; index < visible.length; index += 1) {
+          var task = visible[index];
+          var row = document.createElement("tr");
+          var sourceCell = taskText("td", "");
+          sourceCell.appendChild(taskText("div", taskSourceLabels[task.source] || "图片"));
+          var toggle = taskButton(task.execution_id === imageTaskOpenId ? "收起详情" : "展开详情", "expand", task);
+          toggle.setAttribute("aria-expanded", String(task.execution_id === imageTaskOpenId));
+          sourceCell.appendChild(toggle);
+          row.appendChild(sourceCell);
+          var identities = [[task.execution_id, "copy-local"], [task.provider_task_id, "copy-provider"]];
+          for (var identityIndex = 0; identityIndex < identities.length; identityIndex += 1) {
+            var identity = identities[identityIndex];
+            var idCell = taskText("td", "");
+            var idText = taskText("span", identity[0] || "未分配", "task-id");
+            idText.title = identity[0] || "未分配";
+            idCell.appendChild(idText);
+            if (identity[0]) { idCell.appendChild(taskButton("复制", identity[1], task)); }
+            row.appendChild(idCell);
+          }
+          var phaseCell = taskText("td", "");
+          var phase = taskText("span", taskPhaseLabels[task.phase] || task.phase, "task-phase");
+          phase.dataset.phase = task.phase;
+          phaseCell.appendChild(phase);
+          if (task.phase === "downloading") { phaseCell.appendChild(taskText("div", "已尝试 " + (task.download_attempt || 0) + " / 3", "task-note")); }
+          if (task.phase === "queued") {
+            for (var queueIndex = 0; queueIndex < queueState.pending_tasks.length; queueIndex += 1) {
+              if (queueState.pending_tasks[queueIndex].execution_id === task.execution_id) { phaseCell.appendChild(taskText("div", "等待第 " + (queueIndex + 1) + " 位", "task-note")); break; }
+            }
+          }
+          row.appendChild(phaseCell);
+          var elapsed = taskText("td", "", "task-elapsed");
+          elapsed.dataset.createdAt = task.created_at;
+          elapsed.dataset.finishedAt = task.finished_at || "";
+          row.appendChild(elapsed);
+          var created = taskText("td", "");
+          created.appendChild(taskText("time", imageTaskTime(task.created_at)));
+          row.appendChild(created);
+          fragment.appendChild(row);
+          if (task.execution_id === imageTaskOpenId) { fragment.appendChild(createImageTaskDetail(task)); }
+        }
+        imageTaskRows.textContent = "";
+        imageTaskRows.appendChild(fragment);
+      }
+      updateImageTaskDurations();
+    }
+
+    /** Distinguish missing old-backend routes from network failures and genuinely empty histories. */
+    async function readImageDiagnosticsResponse(response, route) {
+      if (!response.ok) {
+        var message = response.status === 404
+          ? "后台接口 " + route + " 不存在（HTTP 404）。运行中的后端尚未更新；请等任务结束后停止并重新启动后端。只刷新页面或双击已运行的启动程序不会重载后端。"
+          : "后台接口 " + route + " 返回 HTTP " + response.status + "，请检查后端服务日志。";
+        var error = new Error(message);
+        error.httpStatus = response.status;
+        error.diagnosticsMessage = message;
+        throw error;
+      }
+      var payload = await response.json();
+      if (!payload || !payload.ok || !payload.data || !Array.isArray(payload.data.tasks)) {
+        var invalid = new Error("后台返回的数据格式不匹配，请确认页面和后端为同一版本。");
+        invalid.diagnosticsMessage = invalid.message;
+        throw invalid;
+      }
+      return payload;
+    }
+
+    /** Show an actionable read error without mistaking an unavailable API for an empty ledger. */
+    function showImageDiagnosticsError(error, status, warning, hasSnapshot) {
+      var message = error.diagnosticsMessage || "无法读取本机接口，请检查后端服务是否运行、连接是否超时。";
+      status.className = "status";
+      status.textContent = error.httpStatus === 404 ? "后端未更新 · HTTP 404" : "读取失败" + (hasSnapshot ? " · 当前显示上次快照" : " · 尚未读取成功");
+      warning.textContent = message;
+      warning.hidden = false;
+      return message;
+    }
+
+    /** Poll only the local ledger, retaining the last successful snapshot on transport failure. */
+    async function loadImageTasks() {
+      if (imageTaskLoading) { return; }
+      imageTaskLoading = true;
+      var status = document.getElementById("imageTasksStatus");
+      try {
+        var response = await fetch("/api/v1/image-tasks", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+        var payload = await readImageDiagnosticsResponse(response, "/api/v1/image-tasks");
+        imageTasks = payload.data.tasks;
+        imageTaskLoaded = true;
+        imageTaskLoadError = "";
+        var serverTime = Date.parse(payload.data.server_time);
+        imageTaskClockOffset = Number.isFinite(serverTime) ? serverTime - Date.now() : 0;
+        var warning = document.getElementById("imageTaskWarning");
+        warning.textContent = payload.data.storage_warning || "";
+        warning.hidden = !warning.textContent;
+        status.className = "status is-online";
+        status.textContent = "本地状态 · " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        renderImageTasks();
+      } catch (error) {
+        imageTaskLoadError = showImageDiagnosticsError(error, status, document.getElementById("imageTaskWarning"), imageTaskLoaded);
+        renderImageTasks();
+      } finally { imageTaskLoading = false; }
+    }
+
+    /** Switch diagnostics tabs without stopping the shared queue poll or log connection. */
+    function selectDiagnosticsTab(showTasks) {
+      var showFailures = showTasks === "failures";
+      var showImages = showTasks === true;
+      document.getElementById("imageTasksPanel").hidden = !showImages;
+      document.getElementById("imageFailuresPanel").hidden = !showFailures;
+      document.getElementById("logsPanel").hidden = showImages || showFailures;
+      document.getElementById("imageTasksTab").setAttribute("aria-selected", String(showImages));
+      document.getElementById("imageFailuresTab").setAttribute("aria-selected", String(showFailures));
+      document.getElementById("logsTab").setAttribute("aria-selected", String(!showImages && !showFailures));
+      serviceFilter.hidden = showImages || showFailures;
+      pauseButton.hidden = showImages || showFailures;
+      clearButton.hidden = showImages || showFailures;
+      closeLogInspector();
+      if (showImages) { renderImageTasks(); loadImageTasks(); }
+      if (showFailures) { renderImageFailures(); loadImageFailures(); }
+    }
+
+    /** Apply filters immediately and reset pagination to the first result page. */
+    function handleImageTaskFilter() {
+      imageTaskPage = 0;
+      renderImageTasks();
+    }
+
+    /** Delegate expansion, copy and request-log navigation without mutating business tasks. */
+    async function handleImageTaskAction(event) {
+      var button = event.target.closest("button[data-task-action]");
+      if (!button) { return; }
+      var task = imageTasks.find(/** Resolve the clicked row against the current local snapshot. */ function sameExecution(item) { return item.execution_id === button.dataset.executionId; });
+      if (!task) { return; }
+      var action = button.dataset.taskAction;
+      if (action === "expand") {
+        imageTaskOpenId = imageTaskOpenId === task.execution_id ? "" : task.execution_id;
+        renderImageTasks();
+      } else if (action === "logs") {
+        logRequestFilter = task.request_id;
+        serviceFilter.value = "";
+        document.getElementById("requestLogFilter").hidden = false;
+        document.getElementById("requestLogFilterText").textContent = "请求 " + task.request_id + " · 如无匹配日志，可能已被淘汰或服务已重启。同请求可能包含多张图片。";
+        selectDiagnosticsTab(false);
+        renderLogs();
+      } else if (action === "copy-local" || action === "copy-provider") {
+        try {
+          await navigator.clipboard.writeText(action === "copy-local" ? task.execution_id : task.provider_task_id);
+          button.textContent = "已复制";
+        } catch (error) { button.textContent = "请选中 ID 复制"; }
+      }
+    }
+
+    var imageFailures = [];
+    var imageFailurePage = 0;
+    var imageFailureOpenId = "";
+    var imageFailureSignature = "";
+    var imageFailureLoading = false;
+    var imageFailureLoaded = false;
+    var imageFailureLoadError = "";
+    var imageFailureDetails = new Map();
+    var imageFailureRows = document.getElementById("imageFailureRows");
+    var imageFailureSearch = document.getElementById("imageFailureSearch");
+    var imageFailureSource = document.getElementById("imageFailureSource");
+    var imageFailureStage = document.getElementById("imageFailureStage");
+    var failureStageLabels = { preparing: "本地准备", reference_download: "参考图读取", provider_submit: "提交上游", provider_poll: "查询上游", provider_generation: "上游生成", result_validation: "生成结果校验", result_download: "结果下载", cache_write: "缓存写入", cache_validation: "缓存校验", state_persistence: "状态保存" };
+
+    /** Filter final failures locally and keep newest terminal results first. */
+    function filteredImageFailures() {
+      var query = imageFailureSearch.value.trim().toLowerCase();
+      return imageFailures.filter(/** Match failure metadata without needing full-URL details. */ function matches(task) {
+        return (!imageFailureSource.value || task.source === imageFailureSource.value)
+          && (!imageFailureStage.value || task.stage === imageFailureStage.value)
+          && (!query || [task.execution_id, task.provider_task_id, task.temu_main_id, task.sku_id, task.request_id, task.error_code, task.provider_code, task.http_status, task.final_message, task.url_display].join(" ").toLowerCase().indexOf(query) >= 0);
+      }).sort(/** Sort terminal records by actual failure time. */ function newest(a, b) { return Date.parse(b.finished_at) - Date.parse(a.finished_at); });
+    }
+
+    /** Create one delegated read-only control for a failure or its full URL. */
+    function failureButton(label, action, task, eventIndex) {
+      var button = taskText("button", label);
+      button.type = "button";
+      button.dataset.failureAction = action;
+      button.dataset.executionId = task.execution_id;
+      if (eventIndex !== undefined) { button.dataset.eventIndex = String(eventIndex); }
+      return button;
+    }
+
+    /** Render bounded error attempts using text nodes only, with signed URLs collapsed by default. */
+    function createFailureDetails(task) {
+      var row = document.createElement("tr");
+      row.className = "task-detail";
+      var cell = taskText("td", "");
+      cell.colSpan = 6;
+      var detail = imageFailureDetails.get(task.execution_id);
+      if (!detail || detail.loading || detail.error) {
+        cell.appendChild(taskText("p", detail && detail.error || "正在读取本机失败明细…", "task-note"));
+      } else {
+        cell.appendChild(taskText("p", "最终错误：" + detail.error_code + " · " + detail.final_message));
+        cell.appendChild(taskText("p", "本地执行 " + detail.execution_id + " · task_id " + (detail.provider_task_id || "未分配") + " · 请求 " + (detail.request_id || "—"), "task-note"));
+        cell.appendChild(taskText("p", "商品 " + (detail.temu_main_id || "—") + " · SKU " + (detail.sku_id || "—")
+          + (detail.carousel_page_index === undefined ? "" : " · 轮播第 " + (detail.carousel_page_index + 1) + " 页")
+          + (detail.candidate_index === undefined ? "" : " · 候选第 " + (detail.candidate_index + 1) + " 张"), "task-note"));
+        if (detail.phase === "timeout") { cell.appendChild(taskText("p", "本地已停止等待，上游最终结果未知，仍可能完成并计费。", "task-note task-warning")); }
+        if (detail.omitted_events) { cell.appendChild(taskText("p", "已省略较早的 " + detail.omitted_events + " 条错误，以下显示最近保留明细。", "task-note task-warning")); }
+        var attempts = document.createElement("div");
+        attempts.className = "failure-attempts";
+        for (var index = detail.events.length - 1; index >= 0; index -= 1) {
+          var event = detail.events[index];
+          var article = document.createElement("article");
+          article.className = "failure-attempt";
+          article.appendChild(taskText("strong", (failureStageLabels[event.stage] || event.stage) + " · " + imageTaskTime(event.time)
+            + (event.attempt === undefined ? "" : " · 尝试 #" + event.attempt)
+            + (event.source_index === undefined ? "" : " · 参考图 #" + (event.source_index + 1))));
+          article.appendChild(taskText("p", "错误码 " + event.code + " · 上游错误码 " + (event.provider_code || "—") + " · HTTP " + (event.http_status || "无响应/不适用") + " · " + (event.method || "本地操作")));
+          article.appendChild(taskText("p", event.message));
+          if (event.error_name || event.cause) { article.appendChild(taskText("p", (event.error_name || "") + (event.cause ? " · 底层原因：" + event.cause : ""), "task-note")); }
+          if (event.url) {
+            var urlDetails = document.createElement("details");
+            urlDetails.appendChild(taskText("summary", "失败 URL：" + event.url_display + "（展开完整地址）"));
+            urlDetails.appendChild(taskText("code", event.url, "failure-url"));
+            urlDetails.appendChild(failureButton("复制完整 URL", "copy-url", task, index));
+            article.appendChild(urlDetails);
+          }
+          attempts.appendChild(article);
+        }
+        cell.appendChild(attempts);
+      }
+      row.appendChild(cell);
+      return row;
+    }
+
+    /** Render a compact 50-task failure page and preserve unchanged details on periodic refreshes. */
+    function renderImageFailures() {
+      var filtered = filteredImageFailures();
+      var pages = Math.max(1, Math.ceil(filtered.length / 50));
+      imageFailurePage = Math.max(0, Math.min(imageFailurePage, pages - 1));
+      var visible = filtered.slice(imageFailurePage * 50, (imageFailurePage + 1) * 50);
+      document.getElementById("imageFailureSummary").textContent = "最终失败/超时 " + imageFailures.length + " · 筛选结果 " + filtered.length;
+      if (!imageFailureLoaded && imageFailureLoadError) { document.getElementById("imageFailureSummary").textContent = "失败任务数量未知：尚未成功读取后端记录"; }
+      document.getElementById("imageFailurePage").textContent = (imageFailurePage + 1) + " / " + pages + " 页";
+      document.getElementById("imageFailurePrev").disabled = imageFailurePage === 0;
+      document.getElementById("imageFailureNext").disabled = imageFailurePage >= pages - 1;
+      var signature = JSON.stringify([visible, imageFailureOpenId, imageFailureDetails.get(imageFailureOpenId), imageFailureLoadError]);
+      if (imageFailureSignature === signature) { return; }
+      imageFailureSignature = signature;
+      var fragment = document.createDocumentFragment();
+      if (!visible.length) {
+        var empty = document.createElement("tr");
+        var emptyCell = taskText("td", imageFailureLoadError ? "记录读取失败，不能据此判断是否有失败任务。请查看上方错误提示。" : imageFailures.length ? "没有匹配的失败记录。" : "暂无最终失败记录。成功任务的中途错误不会保存在这里。", "empty");
+        emptyCell.colSpan = 6;
+        empty.appendChild(emptyCell);
+        fragment.appendChild(empty);
+      }
+      for (var index = 0; index < visible.length; index += 1) {
+        var task = visible[index];
+        var row = document.createElement("tr");
+        var ids = taskText("td", "");
+        ids.appendChild(taskText("div", taskSourceLabels[task.source] || "图片"));
+        var localId = taskText("span", task.execution_id, "task-id");
+        localId.title = task.execution_id;
+        ids.appendChild(localId);
+        ids.appendChild(failureButton("复制本地 ID", "copy-local", task));
+        var providerId = taskText("span", task.provider_task_id || "task_id 未分配", "task-id");
+        providerId.title = task.provider_task_id || "";
+        ids.appendChild(providerId);
+        if (task.provider_task_id) { ids.appendChild(failureButton("复制 task_id", "copy-provider", task)); }
+        row.appendChild(ids);
+        var stage = taskText("td", failureStageLabels[task.stage] || "本地准备");
+        if (task.phase === "timeout") { stage.appendChild(taskText("p", "超时 · 上游结果未知", "task-note task-warning")); }
+        row.appendChild(stage);
+        var code = taskText("td", task.error_code || "IMAGE_TASK_FAILED");
+        code.appendChild(taskText("p", "HTTP " + (task.http_status || "—") + (task.provider_code ? " · " + task.provider_code : ""), "task-note"));
+        row.appendChild(code);
+        var reason = taskText("td", task.final_message, "failure-reason");
+        if (task.url_display) { reason.appendChild(taskText("p", task.url_display, "task-note")); }
+        row.appendChild(reason);
+        var time = taskText("td", "");
+        time.appendChild(taskText("time", imageTaskTime(task.finished_at)));
+        row.appendChild(time);
+        var actions = taskText("td", "");
+        var expand = failureButton(task.execution_id === imageFailureOpenId ? "收起明细" : "查看 " + task.event_count + " 条明细", "expand", task);
+        expand.setAttribute("aria-expanded", String(task.execution_id === imageFailureOpenId));
+        actions.appendChild(expand);
+        row.appendChild(actions);
+        fragment.appendChild(row);
+        if (task.execution_id === imageFailureOpenId) { fragment.appendChild(createFailureDetails(task)); }
+      }
+      imageFailureRows.textContent = "";
+      imageFailureRows.appendChild(fragment);
+    }
+
+    /** Fetch masked local failure summaries only; discard detail caches when records expire. */
+    async function loadImageFailures() {
+      if (imageFailureLoading) { return; }
+      imageFailureLoading = true;
+      var status = document.getElementById("imageFailuresStatus");
+      try {
+        var response = await fetch("/api/v1/image-failures", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+        var payload = await readImageDiagnosticsResponse(response, "/api/v1/image-failures");
+        imageFailures = payload.data.tasks;
+        imageFailureLoaded = true;
+        imageFailureLoadError = "";
+        var ids = new Set(imageFailures.map(/** Collect retained execution identities. */ function identity(task) { return task.execution_id; }));
+        for (var id of imageFailureDetails.keys()) { if (!ids.has(id)) { imageFailureDetails.delete(id); } }
+        if (imageFailureOpenId && !ids.has(imageFailureOpenId)) { imageFailureOpenId = ""; }
+        var warning = document.getElementById("imageFailureWarning");
+        warning.textContent = payload.data.storage_warning || "";
+        warning.hidden = !warning.textContent;
+        status.className = "status is-online";
+        status.textContent = "本地失败记录 · " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        renderImageFailures();
+      } catch (error) {
+        imageFailureLoadError = showImageDiagnosticsError(error, status, document.getElementById("imageFailureWarning"), imageFailureLoaded);
+        renderImageFailures();
+      } finally { imageFailureLoading = false; }
+    }
+
+    /** Retrieve full evidence only for the explicitly expanded execution, never fetch image URLs. */
+    async function loadImageFailureDetail(executionId) {
+      var cached = imageFailureDetails.get(executionId);
+      if (cached && !cached.error) { return; }
+      imageFailureDetails.set(executionId, { loading: true });
+      renderImageFailures();
+      try {
+        var response = await fetch("/api/v1/image-failures/" + encodeURIComponent(executionId), { cache: "no-store", signal: AbortSignal.timeout(5000) });
+        var payload = await response.json();
+        if (!response.ok || !payload.ok || !payload.data || !payload.data.task || !Array.isArray(payload.data.task.events)) { throw new Error("失败明细读取失败，记录可能已过期；收起后可重新展开重试。"); }
+        imageFailureDetails.set(executionId, payload.data.task);
+      } catch (error) { imageFailureDetails.set(executionId, { error: error.message || "本地明细读取失败。" }); }
+      renderImageFailures();
+    }
+
+    /** Handle only local expansion and explicit clipboard operations, with no retry/download actions. */
+    async function handleImageFailureAction(event) {
+      var button = event.target.closest("button[data-failure-action]");
+      if (!button) { return; }
+      var task = imageFailures.find(/** Resolve the clicked failure in the latest masked snapshot. */ function same(item) { return item.execution_id === button.dataset.executionId; });
+      if (!task) { return; }
+      var action = button.dataset.failureAction;
+      if (action === "expand") {
+        imageFailureOpenId = imageFailureOpenId === task.execution_id ? "" : task.execution_id;
+        renderImageFailures();
+        if (imageFailureOpenId) { await loadImageFailureDetail(task.execution_id); }
+      } else {
+        var detail = imageFailureDetails.get(task.execution_id);
+        var attempt = detail && detail.events && detail.events[Number(button.dataset.eventIndex)];
+        var value = action === "copy-local" ? task.execution_id : action === "copy-provider" ? task.provider_task_id : action === "copy-url" && attempt ? attempt.url : "";
+        if (!value) { return; }
+        try { await navigator.clipboard.writeText(value); button.textContent = "已复制"; } catch (error) { button.textContent = "请选中文字复制"; }
+      }
+    }
+
+    /** Reset failure pagination whenever the local search or stage/source filter changes. */
+    function handleImageFailureFilter() { imageFailurePage = 0; renderImageFailures(); }
+
+    document.getElementById("imageFailuresTab").addEventListener("click", /** Open the independent final-failure history. */ function showFailures() { selectDiagnosticsTab("failures"); });
+    imageFailureSearch.addEventListener("input", handleImageFailureFilter);
+    imageFailureSource.addEventListener("change", handleImageFailureFilter);
+    imageFailureStage.addEventListener("change", handleImageFailureFilter);
+    imageFailureRows.addEventListener("click", handleImageFailureAction);
+    document.getElementById("imageFailurePrev").addEventListener("click", /** Show the previous failure history page. */ function previousFailures() { imageFailurePage -= 1; renderImageFailures(); });
+    document.getElementById("imageFailureNext").addEventListener("click", /** Show the next failure history page. */ function nextFailures() { imageFailurePage += 1; renderImageFailures(); });
+
+    document.getElementById("logsTab").addEventListener("click", /** Select the existing log view. */ function showLogs() { selectDiagnosticsTab(false); });
+    document.getElementById("imageTasksTab").addEventListener("click", /** Select the read-only image task view. */ function showImageTasks() { selectDiagnosticsTab(true); });
+    document.getElementById("clearRequestLogFilter").addEventListener("click", /** Remove only the request filter, preserving logs. */ function clearRequestFilter() { logRequestFilter = ""; document.getElementById("requestLogFilter").hidden = true; renderLogs(); });
+    imageTaskSearch.addEventListener("input", handleImageTaskFilter);
+    imageTaskSource.addEventListener("change", handleImageTaskFilter);
+    imageTaskPhase.addEventListener("change", handleImageTaskFilter);
+    imageTaskOrder.addEventListener("change", handleImageTaskFilter);
+    imageTaskRows.addEventListener("click", handleImageTaskAction);
+    document.getElementById("imageTaskPrev").addEventListener("click", /** Show the previous retained-history page. */ function previousPage() { imageTaskPage -= 1; renderImageTasks(); });
+    document.getElementById("imageTaskNext").addEventListener("click", /** Show the next retained-history page. */ function nextPage() { imageTaskPage += 1; renderImageTasks(); });
 
     serviceFilter.addEventListener("change", handleServiceFilterChange);
     pauseButton.addEventListener("click", handlePauseClick);

@@ -350,6 +350,9 @@ button { cursor: pointer; }
 .image-editor-header span { color: #64748b; font-size: 11px; }
 .image-editor-header .image-editor-header-status { align-self: center; padding: 6px 10px; border: 1px solid rgba(234, 88, 12, .24); border-radius: 999px; background: rgba(255, 247, 237, .82); color: #c2410c; font-size: 12px; font-weight: 750; line-height: 1.2; letter-spacing: .01em; }
 .image-editor-header button { width: 30px; height: 30px; border: 0; border-radius: 50%; background: #f1f5f9; color: #475569; cursor: pointer; font-size: 20px; line-height: 30px; }
+.image-editor-header .image-editor-header-tool { width: auto; min-width: 78px; margin-left: auto; padding: 0 12px; border: 1px solid rgba(91, 112, 161, .2); border-radius: 9px; background: rgba(239, 246, 255, .72); color: #466ba8; font-size: 12px; font-weight: 800; line-height: 28px; }
+.image-editor-header .image-editor-header-tool:hover:not(:disabled) { background: rgba(255, 255, 255, .9); }
+.image-editor-header .image-editor-header-tool:disabled { cursor: wait; opacity: .5; }
 .image-editor-stage { position: relative; display: grid; min-height: 360px; max-height: 52vh; place-items: center; overflow: hidden; border: 1px solid rgba(255, 255, 255, .78); border-radius: 14px; background: rgba(255, 255, 255, .34); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .75); }
 .image-editor-stage.has-result { height: min(520px, 56vh); max-height: none; }
 .image-editor-stage-label { position: absolute; top: 11px; left: 11px; z-index: 2; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 999px; background: rgba(247, 249, 251, .7); box-shadow: 0 5px 14px rgba(54, 65, 83, .09); color: #64748b; font-size: 10px; font-weight: 700; backdrop-filter: blur(12px); }
@@ -989,13 +992,31 @@ body::before {
 .workflow-prompt-dialog { width: min(680px, calc(100vw - 40px)); }
 .workflow-prompt-dialog .image-editor-prompt { margin-top: 18px; }
 .workflow-prompt-dialog textarea { min-height: 170px; }
-.default-prompt-dialog { width: min(820px, calc(100vw - 40px)); max-height: calc(100vh - 70px); overflow: hidden; }
+.default-prompt-dialog { display: flex; width: min(1040px, calc(100vw - 40px)); max-height: calc(100vh - 70px); flex-direction: column; overflow: hidden; }
+.default-prompt-content { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.default-prompt-workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 14px; min-height: 420px; overflow: hidden; }
+.default-template-sidebar { display: flex; min-height: 0; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 12px; background: rgba(255, 255, 255, .24); }
+.default-template-sidebar > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.default-template-sidebar > header strong { color: #273142; font-size: 14px; }
+.default-template-sidebar button { padding: 7px 9px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 8px; background: rgba(255, 255, 255, .44); color: #596476; font-size: 11px; font-weight: 800; }
+.default-template-sidebar button:hover:not(:disabled) { background: rgba(255, 255, 255, .78); color: #313846; }
+.default-template-sidebar button:disabled { cursor: not-allowed; opacity: .5; }
+.default-template-list { display: grid; align-content: start; gap: 7px; min-height: 0; overflow: auto; }
+.default-template-list > button { display: grid; gap: 3px; text-align: left; }
+.default-template-list > button.active { border-color: rgba(70, 107, 168, .42); background: rgba(225, 236, 255, .7); color: #34598f; }
+.default-template-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.default-template-list small { color: #8a96a8; font-size: 10px; font-weight: 650; }
+.default-template-actions { display: grid; gap: 6px; margin-top: auto; }
+.default-template-editor { min-width: 0; min-height: 0; overflow: hidden; }
+.default-template-editor > .image-editor-prompt { margin: 0 4px 10px 0; }
+.default-template-editor > .image-editor-prompt input { width: 100%; box-sizing: border-box; padding: 8px 9px; border: 1px solid rgba(255, 255, 255, .68); border-radius: 8px; outline: none; background: rgba(255, 255, 255, .46); }
 .default-prompt-list { display: grid; gap: 12px; max-height: min(64vh, 620px); overflow: auto; padding: 2px 4px 2px 0; scrollbar-color: rgba(111, 124, 145, .45) transparent; scrollbar-width: thin; }
 .default-prompt-list::-webkit-scrollbar { width: 6px; }
 .default-prompt-list::-webkit-scrollbar-track { background: transparent; }
 .default-prompt-list::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(111, 124, 145, .42); }
 .default-prompt-card { display: grid; gap: 9px; padding: 13px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 12px; background: rgba(255, 255, 255, .28); box-shadow: 0 12px 28px rgba(55, 64, 79, .08), inset 0 1px 0 rgba(255, 255, 255, .72); }
 .default-prompt-card > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.default-prompt-card > header > span { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .default-prompt-card > header strong { color: #1f2937; font-size: 14px; font-weight: 850; }
 .default-prompt-card > header button, .default-prompt-add { min-height: 30px; padding: 0 11px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 8px; background: rgba(255, 255, 255, .48); color: #596476; font-size: 11px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .82); }
 .default-prompt-card > header button:hover:not(:disabled), .default-prompt-add:hover:not(:disabled) { background: rgba(255, 255, 255, .74); color: #313846; }
@@ -1005,9 +1026,13 @@ body::before {
 .default-prompt-card textarea { min-height: 118px; resize: vertical; padding: 9px 10px; white-space: pre-wrap; }
 .default-prompt-card input:focus, .default-prompt-card textarea:focus { background: rgba(255, 255, 255, .76); box-shadow: 0 0 0 4px rgba(91, 112, 161, .1), inset 0 1px 0 #fff; }
 .default-prompt-add { justify-self: start; background: rgba(239, 246, 255, .58); color: #466ba8; }
+.default-prompt-unsaved { display: flex; align-items: center; justify-content: flex-end; gap: 7px; margin-top: 10px; padding: 9px 11px; border: 1px solid rgba(234, 179, 8, .24); border-radius: 9px; background: rgba(254, 249, 195, .68); color: #854d0e; font-size: 11px; }
+.default-prompt-unsaved > span { margin-right: auto; font-weight: 750; }
+.default-prompt-unsaved button { padding: 6px 9px; border: 1px solid rgba(161, 98, 7, .2); border-radius: 7px; background: rgba(255, 255, 255, .56); color: #854d0e; font-size: 11px; font-weight: 750; }
 .default-prompt-loading { min-height: 260px; }
 
 @media (max-width: 1180px) {
   .smart-source-images { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .smart-prompt-grid, .smart-result-grid { grid-template-columns: 1fr; }
 }
+@media (max-width: 760px) { .default-prompt-workspace { grid-template-columns: 1fr; overflow: auto; } .default-template-sidebar { min-height: 220px; } .default-prompt-list { max-height: none; } }

@@ -48,6 +48,9 @@ function createProviderRouter(options) {
   router.get("/clip/status", diagnostics.getClipStatus.bind(diagnostics));
   router.post("/clip/warmup", diagnostics.warmClip.bind(diagnostics));
   router.get("/queue", diagnostics.getQueue.bind(diagnostics));
+  router.get("/image-tasks", diagnostics.getImageTasks.bind(diagnostics));
+  router.get("/image-failures", diagnostics.getImageFailures.bind(diagnostics));
+  router.get("/image-failures/:executionId", diagnostics.getImageFailureDetail.bind(diagnostics));
   router.get("/queue/events", diagnostics.connectQueue.bind(diagnostics));
   return router;
 }

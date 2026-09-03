@@ -1,11 +1,11 @@
 const appModule = require("./app");
 const configModule = require("./config/config-loader");
 
-/** Keep synchronous provider requests bounded to five minutes. */
-const HTTP_REQUEST_TIMEOUT_MS = 300000;
+/** Allow legacy local HTTP clients to wait for 600s of polling plus bounded image downloads. */
+const HTTP_REQUEST_TIMEOUT_MS = 660000;
 
 /** Allow request headers to arrive slightly beyond the provider timeout boundary. */
-const HTTP_HEADERS_TIMEOUT_MS = 305000;
+const HTTP_HEADERS_TIMEOUT_MS = 665000;
 
 /** Start the standalone Express API process on its configured local port. */
 function startServer() {

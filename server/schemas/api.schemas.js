@@ -30,9 +30,20 @@ const defaultPromptPageSchema = z.object({
   prompt: z.string().trim().min(1).max(10000)
 });
 
-const defaultPromptUpdateSchema = z.object({
+const defaultPromptTemplateSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  name: z.string().trim().min(1).max(100),
   pages: z.array(defaultPromptPageSchema).min(1).max(10)
 });
+
+const defaultPromptUpdateSchema = z.union([
+  z.object({
+    system_prompt: z.string().max(10000).optional(),
+    default_template_id: z.string().trim().min(1).max(100),
+    templates: z.array(defaultPromptTemplateSchema).min(1).max(50)
+  }),
+  z.object({ pages: z.array(defaultPromptPageSchema).min(1).max(10) })
+]);
 
 const jsonImportSchema = z.object({ json_text: z.string().min(2) });
 

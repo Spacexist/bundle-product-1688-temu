@@ -1,5 +1,5 @@
-/** Keep one synchronous workflow generation request bounded to five minutes. */
-const WORKFLOW_GENERATION_TIMEOUT_MS = 300000;
+/** Keep the local response open for upstream polling and the three bounded download attempts. */
+const WORKFLOW_GENERATION_TIMEOUT_MS = 660000;
 
 /** Intelligent-packing HTTP controller backed by the workflow domain service. */
 class WorkflowController {

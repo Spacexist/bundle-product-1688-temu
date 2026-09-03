@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const DEFAULT_IMAGE_TIMEOUT_MS = 300000;
+const DEFAULT_IMAGE_TIMEOUT_MS = 660000;
 
 /** Create one carousel error with an HTTP status and stable code. */
 function createCarouselError(message, statusCode, code, details) {
@@ -19,6 +19,7 @@ class CarouselRuntimeService {
     const settings = options || {};
     this.runtimeDirectory = path.join(settings.cacheDirectory, "runtime", "carousel");
     this.readConfig = settings.readConfig;
+    this.readDefaultPromptConfig = settings.readDefaultPromptConfig;
     this.getKimiEndpoint = settings.getKimiEndpoint;
     this.readImageSource = settings.readImageSource;
     this.writeLog = settings.writeLog;
@@ -28,7 +29,9 @@ class CarouselRuntimeService {
     this.generationControllers = Object.create(null);
     this.cancelledTaskIds = Object.create(null);
     fs.mkdirSync(this.runtimeDirectory, { recursive: true });
+    this.recoveringTasks = true;
     this.recoverInterruptedTasks();
+    this.recoveringTasks = false;
   }
 
   /** Return one filesystem-safe task identifier. */
@@ -43,7 +46,8 @@ class CarouselRuntimeService {
 
   /** Return whether one task was explicitly abandoned during this server process. */
   isTaskCancelled(taskId) {
-    return Boolean(this.cancelledTaskIds[this.normalizeTaskId(taskId)]);
+    return Boolean(this.cancelledTaskIds[this.normalizeTaskId(taskId)])
+      || fs.existsSync(this.getTaskPath(taskId) + ".cancelled");
   }
 
   /** Stop processing when a deleted task must no longer be persisted or reported. */
@@ -76,7 +80,7 @@ class CarouselRuntimeService {
   readTask(taskId) {
     const safeTaskId = this.normalizeTaskId(taskId);
     const filePath = this.getTaskPath(safeTaskId);
-    if (!safeTaskId || !fs.existsSync(filePath)) {
+    if (!safeTaskId || this.isTaskCancelled(safeTaskId) || !fs.existsSync(filePath)) {
       return null;
     }
     try {
@@ -86,18 +90,15 @@ class CarouselRuntimeService {
     }
   }
 
-  /** Return the configured image timeout used to release stale carousel pages. */
+  /** Allow fixed Tuba polling plus bounded downloads before considering an unowned page stale. */
   getImageTimeoutMs() {
-    const config = this.readConfig ? this.readConfig() || {} : {};
-    const image = config.image && typeof config.image === "object" ? config.image : config;
-    const timeoutMs = Number(image.image_timeout_ms || image.timeout_ms || DEFAULT_IMAGE_TIMEOUT_MS);
-    return Math.max(10000, Math.min(timeoutMs, 900000));
+    return DEFAULT_IMAGE_TIMEOUT_MS;
   }
 
   /** Mark pages that have been generating too long as failed before the UI reads them. */
   recoverStaleGeneratingPages(task) {
     const target = task && typeof task === "object" ? task : null;
-    if (!target || !Array.isArray(target.pages)) {
+    if (!target || !Array.isArray(target.pages) || this.recoveringTasks) {
       return target;
     }
     const now = Date.now();
@@ -108,6 +109,9 @@ class CarouselRuntimeService {
       if (!page || page.status !== "generating") {
         continue;
       }
+      if (this.generationControllers[this.getGenerationControllerKey(target.id, index, page.generation_id)]) {
+        continue;
+      }
       const startedAt = Date.parse(page.generation_started_at || target.updated_at || target.created_at || 0);
       if (!Number.isFinite(startedAt) || now - startedAt < staleMs) {
         continue;
@@ -115,7 +119,6 @@ class CarouselRuntimeService {
       page.status = "failed";
       page.error = "图片生成超过配置超时时间未完成，已自动释放任务锁。";
       page.error_code = "IMAGE_GENERATION_STALE";
-      page.generation_id = "";
       changed = true;
     }
     if (changed) {
@@ -613,6 +616,10 @@ class CarouselRuntimeService {
     task.pages[index].status = "generating";
     task.pages[index].generation_id = String(generationId || "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8));
     task.pages[index].generation_started_at = new Date().toISOString();
+    task.pages[index].provider_status = "";
+    task.pages[index].provider_task_id = "";
+    task.pages[index].provider_image_url = "";
+    task.pages[index].provider_error_code = "";
     task.pages[index].error = "";
     task.pages[index].error_code = "";
     return this.writeTask(task);
@@ -634,7 +641,6 @@ class CarouselRuntimeService {
     task.pages[index].status = "succeeded";
     task.pages[index].image_url = String(imageUrl || "");
     task.pages[index].selected = true;
-    task.pages[index].generation_id = "";
     task.pages[index].generation_started_at = "";
     this.refreshGenerationStatus(task);
     const savedTask = this.writeTask(task);
@@ -657,7 +663,6 @@ class CarouselRuntimeService {
     task.pages[index].status = "failed";
     task.pages[index].error = String(error && error.message || "图片生成失败。");
     task.pages[index].error_code = String(error && error.code || "IMAGE_GENERATION_FAILED");
-    task.pages[index].generation_id = "";
     task.pages[index].generation_started_at = "";
     this.refreshGenerationStatus(task);
     return this.writeTask(task);
@@ -678,6 +683,32 @@ class CarouselRuntimeService {
     task.status = pending || running ? "generating" : "generated";
   }
 
+  /** Bind protocol state only to the page execution that still owns this generation ID. */
+  persistProviderState(taskId, pageIndex, generationId, state) {
+    this.assertTaskAvailable(taskId);
+    const task = this.readTask(taskId);
+    const page = task.pages[Number(pageIndex)];
+    if (!page || page.generation_id !== generationId) {
+      throw createCarouselError("当前分镜执行已被替换。", 409, "IMAGE_TASK_CANCELLED");
+    }
+    if (page.provider_task_id && page.provider_task_id !== state.provider_task_id) {
+      throw createCarouselError("分镜执行不能替换上游 task_id。", 409, "PROVIDER_TASK_ID_CONFLICT");
+    }
+    Object.assign(page, state);
+    return this.writeTask(task);
+  }
+
+  /** Prefix manual-template pages with the dedicated storyboard system prompt. */
+  buildCarouselPagePrompt(task, page) {
+    const pagePrompt = String(page && page.prompt || "").trim();
+    if (!task || task.mode !== "manual" || typeof this.readDefaultPromptConfig !== "function") {
+      return pagePrompt;
+    }
+    const config = this.readDefaultPromptConfig() || {};
+    const systemPrompt = String(config.system_prompt || "").trim();
+    return systemPrompt ? "【全局商品约束】\n" + systemPrompt + "\n\n【当前分镜要求】\n" + pagePrompt : pagePrompt;
+  }
+
   /** Generate one persisted carousel page independently from its initiating browser request. */
   async generatePage(taskId, pageIndex, requestId) {
     const generationId = "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
@@ -692,15 +723,23 @@ class CarouselRuntimeService {
       const service = this;
       const result = await this.providers.editImages({
         carousel_task_id: task.id,
+        temu_main_id: task.temu_main_id,
+        temu_platform_id: task.temu_platform_id,
         carousel_page_index: Number(pageIndex),
         generation_id: generationId,
         image_urls: task.source_image_urls.slice(),
-        prompt: String(page.prompt || ""),
+        prompt: this.buildCarouselPagePrompt(task, page),
         size: normalizedSize,
         cancel_signal: controller.signal,
+        /** Store the task ID against this page execution rather than its multi-page parent. */
+        on_provider_state: function persistCarouselProviderState(state) {
+          service.persistProviderState(task.id, pageIndex, generationId, state);
+        },
         /** Return whether the owning carousel task or generation slot has been abandoned. */
         is_cancelled: function isCarouselPageGenerationCancelled() {
-          return service.isTaskCancelled(task.id) || !service.readTask(task.id);
+          const current = service.readTask(task.id);
+          return service.isTaskCancelled(task.id) || !current || !current.pages[Number(pageIndex)]
+            || current.pages[Number(pageIndex)].generation_id !== generationId;
         }
       }, "fusion", pageRequestId);
       this.assertTaskAvailable(task.id);
@@ -774,6 +813,18 @@ class CarouselRuntimeService {
   deleteTask(taskId, removeImages) {
     const safeTaskId = this.normalizeTaskId(taskId);
     const task = this.readTask(safeTaskId);
+    if (safeTaskId && !fs.existsSync(this.getTaskPath(safeTaskId) + ".cancelled")) {
+      const ids = [];
+      for (const page of task && task.pages || []) {
+        if (page.provider_task_id) {
+          ids.push({ generation_id: page.generation_id, provider_task_id: page.provider_task_id });
+        }
+      }
+      // This tombstone stops local ownership only; upstream tasks can still finish and bill.
+      fs.writeFileSync(this.getTaskPath(safeTaskId) + ".cancelled", JSON.stringify({
+        id: safeTaskId, pages: ids, cancelled_at: new Date().toISOString()
+      }), "utf8");
+    }
     this.cancelledTaskIds[safeTaskId] = true;
     const planningController = this.planningControllers[safeTaskId];
     if (planningController) {
@@ -813,8 +864,9 @@ class CarouselRuntimeService {
         for (let pageIndex = 0; pageIndex < task.pages.length; pageIndex += 1) {
           if (task.pages[pageIndex].status === "generating") {
             task.pages[pageIndex].status = "failed";
-            task.pages[pageIndex].error = task.error;
-            task.pages[pageIndex].error_code = task.error_code;
+            const uncertain = task.pages[pageIndex].provider_status === "submitting";
+            task.pages[pageIndex].error = uncertain ? "服务器在提交时重启，提交结果不确定；请核查上游记录后手动重试。" : task.error;
+            task.pages[pageIndex].error_code = uncertain ? "PROVIDER_SUBMISSION_UNKNOWN" : task.error_code;
             task.pages[pageIndex].generation_started_at = "";
           }
         }

@@ -1,9 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-
-/** Keep one synchronous image generation request bounded by local config. */
-const DEFAULT_IMAGE_TIMEOUT_MS = 300000;
+const { TubaAsyncImageService } = require("./services/tuba-async-image.service");
 
 /** Keep manual CLIP keyword translation from delaying the user's search too long. */
 const CLIP_KEYWORD_TRANSLATE_TIMEOUT_MS = 3500;
@@ -123,26 +121,6 @@ async function translateKeywordWithGoogletrans(keyword, timeoutMs) {
   }
 }
 
-/** Read one generated image from common OpenAI-compatible response fields. */
-function readWorkflowGeneratedImage(payload) {
-  if (!payload || typeof payload !== "object") {
-    return "";
-  }
-  const candidates = Array.isArray(payload.data) ? payload.data : [];
-  for (let index = 0; index < candidates.length; index += 1) {
-    const item = candidates[index] || {};
-    const encoded = item.b64_json || item.base64 || item.data;
-    if (encoded && typeof encoded === "string") {
-      return "data:image/png;base64," + encoded.replace(/[\r\n\s]/g, "");
-    }
-    const imageUrl = item.url || item.image_url || item.imageUrl;
-    if (imageUrl) {
-      return String(imageUrl);
-    }
-  }
-  return "";
-}
-
 /** Extract one concise upstream provider error message. */
 function readWorkflowProviderError(payload, fallbackText) {
   if (payload && payload.error) {
@@ -155,13 +133,6 @@ function readWorkflowProviderError(payload, fallbackText) {
   }
   const text = String(fallbackText || "").trim();
   return text ? text.slice(0, 300) : "上游服务请求失败。";
-}
-
-/** Return the configured timeout for image generation calls. */
-function normalizeWorkflowImageTimeoutMs(config) {
-  const source = config && config.image && typeof config.image === "object" ? config.image : config || {};
-  const timeoutMs = Number(source.image_timeout_ms || source.timeout_ms || DEFAULT_IMAGE_TIMEOUT_MS);
-  return Math.max(10000, Math.min(timeoutMs, 900000));
 }
 
 /** Preserve one valid upstream HTTP error status for the workflow API. */
@@ -252,6 +223,7 @@ class WorkflowService {
     this.readImageSource = settings.readImageSource;
     this.cacheGeneratedImage = settings.cacheGeneratedImage;
     this.imageTaskQueue = settings.imageTaskQueue;
+    this.asyncImages = settings.asyncImages || new TubaAsyncImageService();
     this.clipWorker = settings.clipWorker;
     this.writeLog = settings.writeLog;
     this.formatTime = settings.formatTime;
@@ -372,7 +344,7 @@ class WorkflowService {
     if (status === "generating") {
       return "generating";
     }
-    if (status === "generation_error" || status === "search_error") {
+    if (status === "generation_error" || status === "search_error" || status === "interrupted") {
       return "error";
     }
     if (status === "prompts_ready") {
@@ -998,83 +970,64 @@ class WorkflowService {
     return { ok: true, task: task };
   }
 
-  /** Execute one candidate image request through the configured BeeAPI endpoint. */
-  async executeGeneratedImageRequest(config, prompt, requestId) {
-    const baseurl = String(config && config.baseurl || "").trim();
-    const endpointPath = String(config && config.generation_endpoint || "").trim();
-    if (!baseurl || !endpointPath) {
-      throw createWorkflowError("server/config.json 未配置 BeeAPI 生图 endpoint。", 500);
+  /** Submit and poll one candidate, then download it before the shared slot can be released. */
+  async executeGeneratedImageRequest(config, prompt, requestId, options) {
+    const image = config && config.image && typeof config.image === "object" ? config.image : config || {};
+    const settings = options || {};
+    if (!image.baseurl || !image.generation_endpoint) {
+      throw createWorkflowError("未配置 Tuba 生图 endpoint。", 500);
     }
-    const endpoint = new URL(endpointPath, baseurl).toString();
-    const providerRequestPayload = {
-      model: String(config.model || "gpt-image-2"),
-      prompt: String(prompt || "").trim(),
-      size: "1024x1024",
-      quality: normalizeWorkflowImageQuality(config.quality),
-      n: 1
-    };
-    this.writeLog("OUTBOUND", "BeeAPI generation POST " + endpoint, providerRequestPayload, requestId);
-    const controller = new AbortController();
-    const timeoutMs = normalizeWorkflowImageTimeoutMs(config);
-    /** Abort one BeeAPI generation request after the configured image timeout. */
-    const timeoutHandle = setTimeout(function abortWorkflowGenerationRequest() {
-      controller.abort();
-    }, timeoutMs);
-    let providerResponse;
-    let providerText;
-    try {
-      providerResponse = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Authorization": "Bearer " + String(config.apikey),
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(providerRequestPayload),
-        signal: controller.signal
-      });
-      providerText = await providerResponse.text();
-    } catch (error) {
-      if (error && error.name === "AbortError") {
-        throw createWorkflowError("BeeAPI 生图请求超过配置超时时间。", 504, "BEEAPI_TIMEOUT");
-      }
-      throw createWorkflowError("BeeAPI 网络请求失败：" + (error.message || "未知错误。"), 502, "BEEAPI_NETWORK_ERROR");
-    } finally {
-      clearTimeout(timeoutHandle);
+    const imageUrl = await this.asyncImages.generate({
+      endpoint: new URL(image.generation_endpoint, image.baseurl).toString(),
+      apiKey: String(image.apikey || ""),
+      body: {
+        model: String(image.model || "gpt-image-2"),
+        prompt: String(prompt || "").trim(),
+        size: "1024x1024",
+        quality: normalizeWorkflowImageQuality(image.quality),
+        n: 1
+      },
+      isCancelled: settings.isCancelled,
+      onState: settings.onState,
+      onFailure: settings.onFailure,
+      writeLog: this.writeLog,
+      requestId: requestId
+    });
+    if (typeof this.cacheGeneratedImage !== "function") {
+      throw createWorkflowError("未配置本地图片缓存，无法完成生成任务。", 500, "DOWNLOAD_FAILED");
     }
-    let providerPayload = {};
-    try {
-      providerPayload = JSON.parse(providerText || "{}");
-    } catch (error) {
-      providerPayload = {};
-    }
-    this.writeLog("UPSTREAM", "BeeAPI generation response " + providerResponse.status, Object.keys(providerPayload).length ? providerPayload : providerText, requestId);
-    if (!providerResponse.ok) {
-      const upstreamMessage = providerPayload && providerPayload.error
-        ? readWorkflowProviderError(providerPayload, providerText)
-        : "BeeAPI 上游返回 HTTP " + providerResponse.status + "。";
-      const statusCode = normalizeWorkflowStatusCode(providerResponse.status);
-      const errorCode = readWorkflowProviderCode(providerPayload, "BEEAPI_HTTP_" + statusCode);
-      throw createWorkflowError(upstreamMessage, statusCode, errorCode);
-    }
-    const imageUrl = readWorkflowGeneratedImage(providerPayload);
-    if (!imageUrl) {
-      throw createWorkflowError("BeeAPI 已响应，但没有找到生成图片。", 502, "BEEAPI_EMPTY_IMAGE");
-    }
-    if (typeof this.cacheGeneratedImage === "function") {
-      return this.cacheGeneratedImage(imageUrl);
-    }
-    return imageUrl;
+    return this.cacheGeneratedImage(imageUrl, { isCancelled: settings.isCancelled, onProgress: settings.onProgress, onFailure: settings.onFailure });
   }
 
-  /** Queue one generation provider request behind the shared edits limit. */
-  async generateOneImage(config, prompt, requestId) {
+  /** Keep submission, polling, and download within the same shared queue slot. */
+  async generateOneImage(config, prompt, requestId, options) {
     if (this.imageTaskQueue && typeof this.imageTaskQueue.run === "function") {
       const service = this;
+      const settings = Object.assign({}, options);
+      const executionId = String(settings.generation_id || crypto.randomUUID());
+      const persistProviderState = settings.onState;
+      /** Retain attempt failures only if the candidate ultimately fails. */
+      settings.onFailure = function observeCandidateFailure(event) {
+        service.imageTaskQueue.recordFailure(executionId, event);
+      };
+      /** Track provider progress independently of mutable candidate runtime data. */
+      settings.onState = function observeCandidateProvider(state) {
+        service.imageTaskQueue.observeProviderState(executionId, state);
+        if (typeof persistProviderState === "function") { return persistProviderState(state); }
+      };
+      /** Track the bounded local download stage within the same queue slot. */
+      settings.onProgress = function observeCandidateDownload(progress) {
+        service.imageTaskQueue.updateTask(executionId, { phase: "downloading", download_attempt: progress.attempt });
+      };
+      /** Execute one text-to-image candidate when the shared slot is available. */
       return this.imageTaskQueue.run(function executeQueuedImageGeneration() {
-        return service.executeGeneratedImageRequest(config, prompt, requestId);
-      }, { type: "gen", request_id: requestId });
+        return service.executeGeneratedImageRequest(config, prompt, requestId, settings);
+      }, {
+        type: "gen", source: "text-to-image", request_id: requestId, execution_id: executionId,
+        generation_id: settings.generation_id, temu_main_id: settings.temu_main_id, candidate_index: settings.candidate_index
+      });
     }
-    return this.executeGeneratedImageRequest(config, prompt, requestId);
+    return this.executeGeneratedImageRequest(config, prompt, requestId, options);
   }
 
   /** Reset generation markers left behind when the server stopped mid-task. */
@@ -1099,11 +1052,12 @@ class WorkflowService {
           hasGeneratedImage = true;
         }
         if (prompt.status === "queued" || prompt.status === "generating") {
-          prompt.status = "prompt_ready";
-          prompt.error = "";
+          prompt.status = "interrupted";
+          prompt.error_code = prompt.provider_status === "submitting" ? "PROVIDER_SUBMISSION_UNKNOWN" : "WORKFLOW_SERVER_RESTARTED";
+          prompt.error = "服务器重启中断了图片任务，不会恢复；上游可能仍会完成并计费。";
         }
       }
-      task.status = hasGeneratedImage ? "images_ready" : "prompts_ready";
+      task.status = hasGeneratedImage ? "images_ready" : "interrupted";
       task.error = "上次后台生图在服务器重启时中断，请重新提交。";
       changed = true;
     }
@@ -1169,12 +1123,12 @@ class WorkflowService {
   }
 
   /** Persist one candidate image state without overwriting other candidates. */
-  persistGeneratedImageState(temuMainId, index, updates, requestId) {
+  persistGeneratedImageState(temuMainId, index, updates, requestId, generationId) {
     const workflow = this.readPayload();
     const task = this.findTask(workflow, temuMainId, "legacy");
     const prompts = task && Array.isArray(task.prompts) ? task.prompts : [];
     const item = prompts[index];
-    if (!item) {
+    if (!item || (generationId && item.generation_id !== generationId)) {
       return null;
     }
     const patch = updates && typeof updates === "object" ? updates : {};
@@ -1195,9 +1149,31 @@ class WorkflowService {
   }
 
   /** Generate one candidate image and persist its success or failure state. */
-  generateOneWorkflowCandidate(config, temuMainId, index, prompt, requestId) {
+  generateOneWorkflowCandidate(config, temuMainId, index, prompt, requestId, generationId) {
     const service = this;
-    return this.generateOneImage(config, prompt, requestId).then(
+    const options = {
+      generation_id: generationId,
+      temu_main_id: temuMainId,
+      candidate_index: index,
+      /** Stop a queued or polling candidate when the product or execution was replaced. */
+      isCancelled: function isCandidateSuperseded() {
+        const task = service.findTask(service.readPayload(), temuMainId, "legacy");
+        return !task || !task.prompts[index] || task.prompts[index].generation_id !== generationId;
+      },
+      /** Store one upstream identity on the current candidate execution only. */
+      onState: function persistCandidateProviderState(state) {
+        const task = service.findTask(service.readPayload(), temuMainId, "legacy");
+        const item = task && task.prompts[index];
+        if (!item || item.generation_id !== generationId) {
+          throw createWorkflowError("候选图执行已被替换。", 409, "IMAGE_TASK_CANCELLED");
+        }
+        if (item.provider_task_id && item.provider_task_id !== state.provider_task_id) {
+          throw createWorkflowError("候选图执行不能替换上游 task_id。", 409, "PROVIDER_TASK_ID_CONFLICT");
+        }
+        service.persistGeneratedImageState(temuMainId, index, state, requestId, generationId);
+      }
+    };
+    return this.generateOneImage(config, prompt, requestId, options).then(
       /** Persist one successful candidate response. */
       function handleWorkflowCandidateSuccess(imageUrl) {
         service.persistGeneratedImageState(temuMainId, index, {
@@ -1206,7 +1182,7 @@ class WorkflowService {
           error: "",
           error_code: "",
           error_status: 0
-        }, requestId);
+        }, requestId, generationId);
         return { generated: true, error: "", error_code: "", error_status: 0 };
       },
       /** Persist one failed candidate response. */
@@ -1219,7 +1195,7 @@ class WorkflowService {
           error: message,
           error_code: code,
           error_status: statusCode
-        }, requestId);
+        }, requestId, generationId);
         return { generated: false, error: message, error_code: code, error_status: statusCode };
       }
     );
@@ -1253,6 +1229,11 @@ class WorkflowService {
         if (requestedPrompts[index] !== undefined) {
           item.prompt = String(requestedPrompts[index] || "").trim();
         }
+        item.generation_id = "workflow-image-" + crypto.randomUUID();
+        item.provider_status = "";
+        item.provider_task_id = "";
+        item.provider_image_url = "";
+        item.provider_error_code = "";
         item.status = "generating";
         item.error = "";
         item.error_code = "";
@@ -1261,7 +1242,7 @@ class WorkflowService {
         item.search_status = "";
         item.search_error = "";
         this.writePayload(currentWorkflow, requestId);
-        generationJobs.push(this.generateOneWorkflowCandidate(config, temuMainId, index, item.prompt, requestId));
+        generationJobs.push(this.generateOneWorkflowCandidate(config, temuMainId, index, item.prompt, requestId, item.generation_id));
       }
       const results = await Promise.all(generationJobs);
       let failedCount = 0;
@@ -1349,7 +1330,7 @@ class WorkflowService {
       throw createWorkflowError("生图索引无效。", 400);
     }
     const config = this.readConfig();
-    if (!config || !config.apikey || !config.generation_endpoint) {
+    if (!config || !(config.image || config).apikey || !(config.image || config).generation_endpoint) {
       throw createWorkflowError("server/config.json 未配置完整的 BeeAPI 生图接口。", 500);
     }
     for (let index = 0; index < task.prompts.length; index += 1) {

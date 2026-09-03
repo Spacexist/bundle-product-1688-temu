@@ -6,6 +6,9 @@ function attachRequestContext(request, response, next) {
     || pathname === "/api/v1/logs/events"
     || pathname === "/api/v1/clip/status"
     || pathname === "/api/v1/queue"
+    || pathname === "/api/v1/image-tasks"
+    || pathname === "/api/v1/image-failures"
+    || pathname.startsWith("/api/v1/image-failures/")
     || pathname === "/api/v1/queue/events") {
     next();
     return;

@@ -37,7 +37,8 @@ class DirectImageRuntimeService {
 
   /** Return whether one direct-image task was abandoned during this server process. */
   isTaskCancelled(taskId) {
-    return Boolean(this.cancelledTaskIds[this.normalizeTaskId(taskId)]);
+    return Boolean(this.cancelledTaskIds[this.normalizeTaskId(taskId)])
+      || fs.existsSync(this.getTaskPath(taskId) + ".cancelled");
   }
 
   /** Stop direct-image processing when the task no longer owns its result. */
@@ -51,7 +52,7 @@ class DirectImageRuntimeService {
   readTask(taskId) {
     const safeTaskId = this.normalizeTaskId(taskId);
     const filePath = this.getTaskPath(safeTaskId);
-    if (!safeTaskId || !fs.existsSync(filePath)) {
+    if (!safeTaskId || this.isTaskCancelled(safeTaskId) || !fs.existsSync(filePath)) {
       return null;
     }
     try {
@@ -123,6 +124,9 @@ class DirectImageRuntimeService {
   createTask(input) {
     const source = input && typeof input === "object" ? input : {};
     const taskId = this.normalizeTaskId(source.client_task_id);
+    if (taskId && this.isTaskCancelled(taskId)) {
+      throw createDirectImageError("此任务已终止，重试必须使用新的本地任务 ID。", 409, "DIRECT_IMAGE_TASK_CANCELLED");
+    }
     const existing = this.readTask(taskId);
     if (existing) {
       return { task: existing, existing: true };
@@ -147,6 +151,9 @@ class DirectImageRuntimeService {
       prompt: String(source.prompt || ""),
       size: String(source.size || "1024x1024"),
       status: "queued",
+      provider_status: "",
+      provider_task_id: "",
+      provider_image_url: "",
       image_url: "",
       image_ready: false,
       undo_token: "",
@@ -178,7 +185,7 @@ class DirectImageRuntimeService {
   /** Start one persisted direct-image task and retain its eventual provider result. */
   async startTask(taskId, requestId) {
     const task = this.readTask(taskId);
-    if (!task || this.isTaskCancelled(taskId) || task.status === "generating" || task.status === "succeeded") {
+    if (!task || this.isTaskCancelled(taskId) || task.status !== "queued" || task.provider_status || task.provider_task_id) {
       return task;
     }
     task.status = "generating";
@@ -192,10 +199,25 @@ class DirectImageRuntimeService {
       const service = this;
       const result = await this.providers.editImages({
         direct_task_id: task.id,
+        task_scope: this.taskScope,
+        temu_main_id: task.temu_main_id,
+        temu_platform_id: task.temu_platform_id,
+        sku_id: task.sku_id,
+        sku_index: task.sku_index,
         image_urls: task.source_image_urls,
         prompt: task.prompt,
         size: task.size,
         cancel_signal: controller.signal,
+        /** Persist exactly one upstream ID for this local execution, without resurrecting deleted work. */
+        on_provider_state: function persistDirectProviderState(state) {
+          service.assertTaskAvailable(task.id);
+          const current = service.readTask(task.id);
+          if (current.provider_task_id && state.provider_task_id !== current.provider_task_id) {
+            throw createDirectImageError("本地任务不能替换上游 task_id。", 409, "PROVIDER_TASK_ID_CONFLICT");
+          }
+          Object.assign(current, state);
+          service.writeTask(current);
+        },
         /** Return whether the owning direct-image task has been abandoned. */
         is_cancelled: function isDirectImageTaskCancelled() {
           return service.isTaskCancelled(task.id) || !service.readTask(task.id);
@@ -238,7 +260,7 @@ class DirectImageRuntimeService {
   /** Create one task and start it without tying completion to the HTTP response. */
   createAndStartTask(input, requestId) {
     const created = this.createTask(input);
-    if (!created.existing || created.task.status === "failed" || created.task.status === "interrupted") {
+    if (!created.existing) {
       /** Prevent one unexpected persistence failure from becoming an unhandled Promise rejection. */
       function ignoreDirectImageStartFailure() {
         return;
@@ -288,6 +310,14 @@ class DirectImageRuntimeService {
     const safeTaskId = this.normalizeTaskId(taskId);
     const task = this.readTask(safeTaskId);
     const filePath = this.getTaskPath(safeTaskId);
+    if (safeTaskId && !fs.existsSync(filePath + ".cancelled")) {
+      // Retain only identifiers: deleting local work cannot cancel or refund the Tuba task.
+      fs.writeFileSync(filePath + ".cancelled", JSON.stringify({
+        id: safeTaskId,
+        provider_task_id: String(task && task.provider_task_id || ""),
+        cancelled_at: new Date().toISOString()
+      }), "utf8");
+    }
     this.cancelledTaskIds[safeTaskId] = true;
     const controller = this.activeControllers[safeTaskId];
     if (controller) {
@@ -324,8 +354,10 @@ class DirectImageRuntimeService {
         continue;
       }
       tasks[index].status = "interrupted";
-      tasks[index].error = "服务器重启中断了图片任务，请重新生成。";
-      tasks[index].error_code = "DIRECT_IMAGE_SERVER_RESTARTED";
+      const uncertain = tasks[index].provider_status === "submitting";
+      tasks[index].error = uncertain ? "服务器在提交时重启，提交结果不确定；请核查上游记录后手动重试。"
+        : "服务器重启中断了图片任务，不会自动恢复；上游可能仍会完成并计费。";
+      tasks[index].error_code = uncertain ? "PROVIDER_SUBMISSION_UNKNOWN" : "DIRECT_IMAGE_SERVER_RESTARTED";
       this.writeTask(tasks[index]);
     }
   }

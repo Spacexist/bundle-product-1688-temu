@@ -6,6 +6,8 @@ const cacheModule = require("./repositories/cache.repository");
 const eventModule = require("./events/event-hub");
 const diagnosticsModule = require("./services/diagnostics.service");
 const imageQueueModule = require("./services/image-task-queue");
+const imageHistoryModule = require("./services/image-task-history.service");
+const imageFailureModule = require("./services/image-failure.service");
 const viewModelModule = require("./services/view-model.service");
 const productModule = require("./services/product.service");
 const collectionModule = require("./services/collection.service");
@@ -68,6 +70,8 @@ function createApp() {
     return Math.max(1, Math.min(32, Math.floor(configured)));
   }
   const imageTaskQueue = new imageQueueModule.ImageTaskQueue({
+    history: new imageHistoryModule.ImageTaskHistoryService({ cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory) }),
+    failures: new imageFailureModule.ImageFailureService({ cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory) }),
     getConcurrency: getImageTaskConcurrency,
     onChange: diagnostics.handleQueueChange.bind(diagnostics)
   });
@@ -82,6 +86,7 @@ function createApp() {
   const carousel = new carouselRuntimeModule.CarouselRuntimeService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     readConfig: configModule.readServerConfig,
+    readDefaultPromptConfig: configControllerModule.readDefaultPromptConfig,
     getKimiEndpoint: providers.getKimiEndpoint.bind(providers),
     readImageSource: providers.readImageSource.bind(providers),
     writeLog: diagnostics.write.bind(diagnostics),
@@ -111,9 +116,9 @@ function createApp() {
     getKimiEndpoint: providers.getKimiEndpoint.bind(providers),
     compactValue: providers.compactValue.bind(providers),
     readImageSource: providers.readImageSource.bind(providers),
-    /** Cache one workflow result without discarding a successful provider URL on CDN failure. */
-    cacheGeneratedImage: function cacheWorkflowGeneratedImage(source) {
-      return images.cacheGeneratedImage(source);
+    /** Require a downloaded local image before releasing a workflow queue slot. */
+    cacheGeneratedImage: function cacheWorkflowGeneratedImage(source, options) {
+      return images.cacheGeneratedImage(source, options);
     },
     imageTaskQueue: imageTaskQueue,
     clipWorker: clipWorker,

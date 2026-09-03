@@ -1,6 +1,8 @@
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { assertImageActive, waitForImageTick, imageError } = require("./tuba-async-image.service");
+const { reportImageFailure } = require("./image-failure.service");
 
 /** Persist product images as content-addressed files under the external cache. */
 class ImageCacheService {
@@ -239,38 +241,54 @@ class ImageCacheService {
   }
 
   /** Download one remote image through the backend to avoid browser CDN restrictions. */
-  async readRemoteUrl(source) {
-    const response = await fetch(String(source), {
-      signal: AbortSignal.timeout(15000),
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Referer: "https://www.1688.com/"
+  async readRemoteUrl(source, options) {
+    const settings = options || {};
+    assertImageActive(settings);
+    const timeoutSignal = AbortSignal.timeout(15000);
+    let response;
+    try {
+      response = await fetch(String(source), {
+        signal: settings.signal ? AbortSignal.any([settings.signal, timeoutSignal]) : timeoutSignal,
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+          Referer: "https://www.1688.com/"
+        }
+      });
+      if (!response.ok) {
+        throw imageError("图片下载失败，HTTP " + response.status + "。", "IMAGE_HTTP_" + response.status);
       }
-    });
-    if (!response.ok) {
-      throw new Error("图片下载失败，HTTP " + response.status + "。");
+      const mimeType = String(response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+      if (mimeType.indexOf("image/") !== 0) {
+        throw imageError("远程地址返回的不是图片（" + mimeType + "）。", "IMAGE_CONTENT_TYPE");
+      }
+      return { mimeType: mimeType, buffer: Buffer.from(await response.arrayBuffer()), http_status: response.status, failure_url: response.url || String(source) };
+    } catch (error) {
+      let failure = error;
+      if (!error.code || typeof error.code === "number") {
+        failure = Object.assign(imageError(error.message, error.name === "TimeoutError" ? "IMAGE_DOWNLOAD_TIMEOUT" : "IMAGE_DOWNLOAD_NETWORK"), { cause: error });
+      }
+      throw Object.assign(failure, {
+        image_stage: "result_download", failure_url: response && response.url || String(source),
+        http_status: response && response.status || 0
+      });
     }
-    const mimeType = String(response.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-    if (mimeType.indexOf("image/") !== 0) {
-      throw new Error("远程地址返回的不是图片。");
-    }
-    return { mimeType: mimeType, buffer: Buffer.from(await response.arrayBuffer()) };
   }
 
   /** Read one Base64 or HTTP image source without changing the original on failure. */
-  async readSource(source) {
+  async readSource(source, options) {
     const dataImage = this.readDataUrl(source);
     if (dataImage) {
       return dataImage;
     }
     if (/^https?:\/\//i.test(String(source || ""))) {
-      return this.readRemoteUrl(source);
+      return this.readRemoteUrl(source, options);
     }
     return null;
   }
 
   /** Persist one image by content hash and return its stable local API URL. */
-  async cacheImage(source, platform, kind, generated, productPath) {
+  async cacheImage(source, platform, kind, generated, productPath, options) {
+    assertImageActive(options);
     if (!source) {
       return String(source || "");
     }
@@ -286,12 +304,15 @@ class ImageCacheService {
     if (existingUrl) {
       return existingUrl;
     }
-    const image = await this.readSource(source);
+    const image = await this.readSource(source, options);
+    assertImageActive(options);
     if (!image || !image.buffer.length) {
+      if (generated) { throw Object.assign(imageError("生成结果内容为空。", "IMAGE_EMPTY_CONTENT"), { image_stage: "result_validation", http_status: image && image.http_status }); }
       return String(source || "");
     }
     const extension = this.getExtension(image.mimeType);
     if (!extension) {
+      if (generated) { throw Object.assign(imageError("生成结果格式不受支持：" + image.mimeType, "IMAGE_UNSUPPORTED_TYPE"), { image_stage: "result_validation", http_status: image.http_status }); }
       return String(source || "");
     }
     const hash = crypto.createHash("sha256").update(image.buffer).digest("hex");
@@ -301,26 +322,52 @@ class ImageCacheService {
       : path.join(safePlatform, safeKind);
     const directory = path.join(this.imageDirectory, relativeDirectory);
     const filePath = path.join(directory, fileName);
-    fs.mkdirSync(directory, { recursive: true });
-    if (!fs.existsSync(filePath)) {
-      fs.writeFileSync(filePath, image.buffer);
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+      if (!fs.existsSync(filePath)) {
+        fs.writeFileSync(filePath, image.buffer);
+      }
+      const localUrl = this.toLocalUrl(path.join(relativeDirectory, fileName));
+      this.rememberSourceCache(source, localUrl, productPath);
+      return localUrl;
+    } catch (error) {
+      error.image_stage = "cache_write";
+      throw error;
     }
-    const localUrl = this.toLocalUrl(path.join(relativeDirectory, fileName));
-    this.rememberSourceCache(source, localUrl, productPath);
-    return localUrl;
   }
 
-  /** Retry generated-image caching and retain the provider URL when local download remains unavailable. */
-  async cacheGeneratedImage(source) {
+  /** Require a real local image after three bounded downloads; never return an uncached provider URL. */
+  async cacheGeneratedImage(source, options) {
     const value = String(source || "");
+    const settings = options || {};
+    let lastError;
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      assertImageActive(settings);
+      if (typeof settings.onProgress === "function") {
+        try { settings.onProgress({ attempt: attempt + 1 }); } catch (observerError) { /* Diagnostics must not interrupt a paid image download. */ }
+      }
       try {
-        return await this.cacheImage(value, "transfer", "generated", true);
+        const localUrl = await this.cacheImage(value, "transfer", "generated", true, undefined, settings);
+        assertImageActive(settings);
+        if (!this.isLocalImageUrl(localUrl) || !this.localUrlExists(localUrl)) {
+          throw Object.assign(imageError("生成结果未写入本地图片缓存。", "IMAGE_CACHE_MISSING"), { image_stage: "cache_validation" });
+        }
+        return localUrl;
       } catch (error) {
-        continue;
+        assertImageActive(settings);
+        lastError = error;
+        reportImageFailure(settings, error, {
+          stage: "cache_write", method: error.image_stage === "result_download" ? "GET" : "",
+          attempt: attempt + 1, url: value
+        });
+        if (attempt < 2) {
+          await waitForImageTick(2000, settings.signal);
+        }
       }
     }
-    return value;
+    throw Object.assign(imageError("图片连续三次下载或缓存失败，请手动重新生成。", "DOWNLOAD_FAILED"), {
+      cause: lastError, image_failure_event: lastError && lastError.image_failure_event
+    });
   }
 
   /** Read the compact product-reference index used for quick generated-image cleanup. */

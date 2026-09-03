@@ -785,10 +785,10 @@ class ProductService {
     }
   }
 
-  /** Apply selected carousel outputs to source positions or replace the complete main gallery. */
+  /** Append selected carousel outputs while preserving originals, or explicitly replace the whole gallery. */
   async applyCarouselTask(task, selectedIndices, requestId, replaceAll) {
     const service = this;
-    const transaction = await this.repository.mutate(async function mutateCarouselImages(payload) {
+    const transaction = await this.repository.mutate(/** Save images and an undo snapshot in one product transaction. */ async function mutateCarouselImages(payload) {
       const found = task.temu_platform_id
         ? service.findRecord(payload.records, "temu", task.temu_platform_id)
         : service.findRecordByMainId(payload.records, "temu", task.temu_main_id);
@@ -812,32 +812,13 @@ class ProductService {
         }
       }
       if (!generatedUrls.length) {
-        const error = new Error("没有选择可替换的成功图片。");
+        const error = new Error("没有选择可确认的成功图片。");
         error.statusCode = 400;
         error.code = "CAROUSEL_OUTPUT_EMPTY";
         throw error;
       }
       const currentGallery = Array.isArray(found.record.gallery_image_urls) ? found.record.gallery_image_urls : [];
-      const taskSourceIndices = Array.isArray(task.source_indices) ? task.source_indices : [];
-      const resolvedSourceIndices = replaceAll ? [] : service.resolveCarouselReplacementIndices(currentGallery.length, taskSourceIndices);
-      let gallery = generatedUrls.slice();
-      if (!replaceAll) {
-        gallery = currentGallery.slice();
-        const sourceIndices = resolvedSourceIndices.slice();
-        /** Order source positions so removal cannot shift a later target. */
-        sourceIndices.sort(function sortCarouselSourceIndices(first, second) {
-          return Number(first) - Number(second);
-        });
-        const insertIndex = Number(sourceIndices[0] || 0);
-        for (let index = sourceIndices.length - 1; index >= 0; index -= 1) {
-          if (sourceIndices[index] >= 0 && sourceIndices[index] < gallery.length) {
-            gallery.splice(sourceIndices[index], 1);
-          }
-        }
-        for (let index = 0; index < generatedUrls.length; index += 1) {
-          gallery.splice(insertIndex + index, 0, generatedUrls[index]);
-        }
-      }
+      const gallery = replaceAll ? generatedUrls.slice() : currentGallery.concat(generatedUrls);
       const undoToken = service.repository.createHistorySnapshot(found.record, "carousel_images");
       found.record.gallery_image_urls = gallery;
       found.record.main_image_url = gallery[0] || "";

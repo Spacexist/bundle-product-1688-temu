@@ -105,7 +105,7 @@ function createPublicServerConfig(config) {
       endpoint: image.endpoint || "",
       generation_endpoint: image.generation_endpoint || "",
       generation_size: image.generation_size || "1024x1024",
-      image_timeout_ms: Number(image.image_timeout_ms || image.timeout_ms || 300000),
+      image_timeout_ms: 600000,
       quality: ["low", "medium", "high"].includes(String(image.quality || "medium").toLowerCase())
         ? String(image.quality || "medium").toLowerCase()
         : "medium",

@@ -49,12 +49,25 @@ class ProviderController {
     try {
       if (taskId && this.carousel) {
         const carouselTask = this.carousel.markPageGenerating(taskId, pageIndex);
+        input.temu_main_id = carouselTask.temu_main_id;
+        input.temu_platform_id = carouselTask.temu_platform_id;
         generationId = String(carouselTask.pages[pageIndex].generation_id || "");
         pageStarted = true;
         input.image_urls = carouselTask.source_image_urls.slice();
         input.prompt = String(carouselTask.pages[pageIndex].prompt || "");
         input.size = String(carouselTask.size || "1024x1024");
         input.generation_id = generationId;
+        const carousel = this.carousel;
+        /** Retain the legacy HTTP response while tracking this carousel execution's upstream ID. */
+        input.on_provider_state = function persistLegacyCarouselProviderState(state) {
+          carousel.persistProviderState(taskId, pageIndex, generationId, state);
+        };
+        /** Ignore late legacy HTTP results after the owning carousel was deleted or replaced. */
+        input.is_cancelled = function isLegacyCarouselCancelled() {
+          const current = carousel.readTask(taskId);
+          return carousel.isTaskCancelled(taskId) || !current || !current.pages[pageIndex]
+            || current.pages[pageIndex].generation_id !== generationId;
+        };
       }
       const result = await this.providers.editImages(input, "fusion", request.requestId);
       if (taskId && this.carousel) {

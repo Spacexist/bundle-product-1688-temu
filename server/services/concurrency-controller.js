@@ -121,6 +121,7 @@ class ConcurrencyController {
     return {
       id: task ? task.id : 0,
       type: String(metadata.type || "image"),
+      execution_id: String(metadata.execution_id || ""),
       request_id: String(metadata.request_id || ""),
       state: String(task && task.state || "waiting"),
       enqueued_at: String(task && task.enqueued_at || ""),

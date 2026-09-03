@@ -58,9 +58,37 @@ class DiagnosticsController {
     });
   }
 
+  /** Return retained image execution metadata without polling the provider. */
+  getImageTasks(request, response) {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      ok: true,
+      data: this.diagnostics.imageTaskQueue.getTaskHistory(),
+      error: null,
+      meta: { request_id: request.requestId || "" }
+    });
+  }
+
   /** Open the image task queue SSE stream. */
   connectQueue(request, response) {
     this.diagnostics.connectQueue(request, response);
+  }
+
+  /** Return masked summaries of independently retained final image failures. */
+  getImageFailures(request, response) {
+    response.setHeader("Cache-Control", "no-store");
+    response.json({ ok: true, data: this.diagnostics.imageTaskQueue.getFailures(), error: null, meta: { request_id: request.requestId || "" } });
+  }
+
+  /** Return one failure's full-URL detail only when explicitly expanded locally. */
+  getImageFailureDetail(request, response) {
+    const task = this.diagnostics.imageTaskQueue.getFailureDetail(String(request.params.executionId || ""));
+    response.setHeader("Cache-Control", "no-store");
+    response.status(task ? 200 : 404).json({
+      ok: Boolean(task), data: task ? { task: task } : null,
+      error: task ? null : { code: "IMAGE_FAILURE_NOT_FOUND", message: "失败记录不存在或已超过保留期限。" },
+      meta: { request_id: request.requestId || "" }
+    });
   }
 }
 
