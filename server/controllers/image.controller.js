@@ -29,6 +29,28 @@ class ImageController {
     }
   }
 
+  /** Serve displayed candidates through persistent cache without changing workflow results or their loading UI. */
+  async getCandidateImage(request, response, next) {
+    const source = request.validatedQuery.source;
+    response.setHeader("Cache-Control", "no-store");
+    try {
+      const localUrl = await this.images.cacheCandidateImage(source);
+      if (!this.images.localUrlExists(localUrl)) {
+        response.redirect(302, source);
+        return;
+      }
+      response.removeHeader("Cache-Control");
+      response.sendFile(this.images.resolveLocalImagePath(localUrl), { immutable: true, maxAge: "365d" });
+    } catch (error) {
+      if (error.code === "CACHE_CLEARING" || error.code === "IMAGE_TASK_CANCELLED") {
+        next(error);
+        return;
+      }
+      // Preserve the original browser loading/error behavior if this ordinary cache download fails.
+      response.redirect(302, source);
+    }
+  }
+
   /** Search 1688 with one selected product image and return its search page. */
   async search1688(request, response, next) {
     try {

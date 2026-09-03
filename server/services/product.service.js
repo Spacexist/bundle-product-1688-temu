@@ -20,12 +20,21 @@ class ProductService {
 
   /** Clear every product, image, workflow and JSON entry from the cache directory. */
   async clearAll(requestId) {
-    const emptyPayload = await this.repository.clearDirectory();
-    if (this.images && typeof this.images.ensureDirectories === "function") {
-      this.images.ensureDirectories();
+    if (this.images && typeof this.images.pauseCandidateCache === "function") {
+      this.images.pauseCandidateCache();
     }
-    this.events.publish({ resource: "product", action: "cache_directory_cleared", ids: [], version: 1 }, requestId);
-    return this.viewModels.createWorkbench(emptyPayload);
+    try {
+      const emptyPayload = await this.repository.clearDirectory();
+      if (this.images && typeof this.images.ensureDirectories === "function") {
+        this.images.ensureDirectories();
+      }
+      this.events.publish({ resource: "product", action: "cache_directory_cleared", ids: [], version: 1 }, requestId);
+      return this.viewModels.createWorkbench(emptyPayload);
+    } finally {
+      if (this.images && typeof this.images.resumeCandidateCache === "function") {
+        this.images.resumeCandidateCache();
+      }
+    }
   }
 
   /** Delete one cached product using its stable platform identifier. */

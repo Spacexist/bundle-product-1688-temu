@@ -15,7 +15,77 @@ class ImageCacheService {
     this.sourceIndexPath = path.join(this.imageDirectory, "source-index.json");
     this.referenceIndexPath = path.join(this.imageDirectory, "reference-index.json");
     this.productRootDirectory = path.join(this.imageDirectory, "products");
+    this.candidateRequests = new Map();
+    this.candidateQueue = [];
+    this.candidateActiveCount = 0;
+    this.candidateCachePauses = 0;
     this.ensureDirectories();
+  }
+
+  /** Cache displayed CLIP images in the shared store, coalescing identical in-flight URLs. */
+  cacheCandidateImage(source) {
+    if (this.candidateCachePauses) {
+      return Promise.reject(imageError("正在清空缓存。", "CACHE_CLEARING", 409));
+    }
+    const value = String(source || "");
+    const cachedUrl = this.findSourceCache(value, "", "main");
+    if (cachedUrl) {
+      return Promise.resolve(cachedUrl);
+    }
+    const existing = this.candidateRequests.get(value);
+    if (existing) {
+      return existing.promise;
+    }
+    const controller = new AbortController();
+    const entry = { controller: controller };
+    const service = this;
+    entry.promise = new Promise(/** Queue one ordinary image download without using the generation queue. */ function queueCandidate(resolve, reject) {
+      entry.reject = reject;
+      /** Download once, release the slot on every outcome, and retain newer requests after clearing. */
+      entry.run = async function runCandidateDownload() {
+        try {
+          resolve(await service.cacheImage(value, "temu", "main", false, undefined, { signal: controller.signal }));
+        } catch (error) {
+          reject(error);
+        } finally {
+          if (service.candidateRequests.get(value) === entry) {
+            service.candidateRequests.delete(value);
+          }
+          service.candidateActiveCount -= 1;
+          service.drainCandidateQueue();
+        }
+      };
+    });
+    this.candidateRequests.set(value, entry);
+    this.candidateQueue.push(entry);
+    this.drainCandidateQueue();
+    return entry.promise;
+  }
+
+  /** Limit on-demand candidate downloads across all connected browsers to four at once. */
+  drainCandidateQueue() {
+    while (!this.candidateCachePauses && this.candidateActiveCount < 4 && this.candidateQueue.length) {
+      const entry = this.candidateQueue.shift();
+      this.candidateActiveCount += 1;
+      entry.run();
+    }
+  }
+
+  /** Cancel candidate downloads before clearing files, including writes after a late response. */
+  pauseCandidateCache() {
+    this.candidateCachePauses += 1;
+    for (const entry of this.candidateRequests.values()) {
+      entry.controller.abort();
+      entry.reject(imageError("候选图片缓存已清空。", "CACHE_CLEARING", 409));
+    }
+    this.candidateQueue = [];
+    this.candidateRequests.clear();
+  }
+
+  /** Allow future candidate downloads once every concurrent cache clear has finished. */
+  resumeCandidateCache() {
+    this.candidateCachePauses = Math.max(0, this.candidateCachePauses - 1);
+    this.drainCandidateQueue();
   }
 
   /** Create every stable platform and image-kind directory. */

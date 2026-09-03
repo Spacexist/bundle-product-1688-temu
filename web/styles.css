@@ -12,6 +12,13 @@ button, select, input { font: inherit; }
 button { cursor: pointer; }
 
 .shell { min-height: 100vh; }
+.image-placement-notice { position: fixed; right: 24px; bottom: 24px; z-index: 45; width: min(390px, calc(100vw - 48px)); padding: 18px; border: 1px solid rgba(16, 185, 129, .28); border-radius: 16px; background: rgba(247, 253, 250, .96); color: #1f2937; box-shadow: 0 12px 32px rgba(48, 61, 89, .18); }
+.image-placement-notice strong { color: #047857; }
+.image-placement-notice p { margin: 8px 0; line-height: 1.6; overflow-wrap: anywhere; }
+.image-placement-notice .image-placement-product { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #64748b; font-size: 12px; }
+.image-placement-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.image-placement-leave-active { transition: opacity .3s ease; pointer-events: none; }
+.image-placement-leave-to { opacity: 0; }
 .topbar { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 18px 32px; background: #111827; color: #fff; }
 .cloud-auth-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: rgba(218, 225, 234, .46); backdrop-filter: blur(24px) saturate(125%); -webkit-backdrop-filter: blur(24px) saturate(125%); }
 .cloud-auth-dialog.panel { width: min(420px, calc(100vw - 48px)); padding: 24px; border: 1px solid var(--glass-border); border-radius: 22px; background: var(--glass-strong); box-shadow: var(--glass-shadow); color: var(--ink); backdrop-filter: blur(28px) saturate(142%); -webkit-backdrop-filter: blur(28px) saturate(142%); animation: glass-rise .46s cubic-bezier(.2, .8, .2, 1) both; }
@@ -408,6 +415,17 @@ button { cursor: pointer; }
 .carousel-slide-viewer { position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px; align-items: center; justify-content: center; gap: 10px; width: 100%; height: 100%; min-height: 0; padding: 18px 12px 48px; box-sizing: border-box; }
 .carousel-result-card { position: relative; align-self: center; justify-self: center; width: min(100%, 500px, calc(56vh - 80px)); aspect-ratio: 1 / 1; min-height: 0; overflow: hidden; border: 1px solid rgba(148,163,184,.24); border-radius: 15px; background: rgba(248,250,252,.32); box-shadow: 0 14px 34px rgba(55, 65, 81, .12), inset 0 1px 0 rgba(255,255,255,.72); }
 .carousel-result-card img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: cover; }
+.carousel-page-feedback { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 22px; background: rgba(248, 250, 252, .78); color: #334155; text-align: center; }
+.carousel-page-feedback small { color: #64748b; }
+.carousel-page-feedback.is-error { background: rgba(255, 247, 247, .88); color: #b91c1c; }
+.carousel-page-feedback > span { max-height: 50%; overflow: auto; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.carousel-feedback-spinner { width: 28px; height: 28px; flex: 0 0 28px; border: 3px solid #cbd5e1; border-top-color: #365fa8; border-radius: 50%; animation: image-editor-spin .8s linear infinite; }
+.carousel-feedback-slot { position: absolute; top: 0; left: 54px; right: 54px; z-index: 3; height: 28px; display: flex; justify-content: center; pointer-events: none; }
+.carousel-run-feedback { padding: 5px 12px; border-radius: 999px; background: rgba(248, 250, 252, .95); color: #365fa8; font-size: 12px; white-space: nowrap; }
+.carousel-feedback-leave-active { transition: opacity .3s ease; }
+.carousel-feedback-leave-to { opacity: 0; }
+.image-editor-actions.is-carousel-results > button { flex: 0 0 104px; width: 104px; white-space: nowrap; }
+.image-editor-actions.is-carousel-results > button:hover:not(:disabled) { transform: none; }
 .carousel-slide-arrow { width: 42px; height: 42px; border: 1px solid rgba(148,163,184,.5); border-radius: 50%; background: rgba(255,255,255,.82); color: #475569; cursor: pointer; font-size: 30px; line-height: 36px; box-shadow: 0 6px 18px rgba(71,85,105,.14); }
 .carousel-slide-arrow:disabled { cursor: default; opacity: .28; }
 .carousel-slide-meta { position: absolute; bottom: 8px; left: 50%; display: flex; align-items: center; gap: 8px; transform: translateX(-50%); }

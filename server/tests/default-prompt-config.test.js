@@ -47,6 +47,10 @@ test("legacy page-only file migrates in place without losing its prompt", /** Ve
   assert.equal(config.templates[0].pages[0].prompt, "保留这条提示词");
   assert.equal(config.system_prompt, DEFAULT_STORYBOARD_SYSTEM_PROMPT);
   assert.match(config.system_prompt, /必须全部使用英文，不得出现中文或其他语言/);
+  assert.match(config.system_prompt, /英文约束优先于分镜中的其他语言要求/);
+  assert.match(config.system_prompt, /【负面提示词】禁止产品扭曲、拉伸变形、比例失真/);
+  assert.match(config.system_prompt, /两件商品自然融入同一场景，保持各自结构独立/);
+  assert.match(config.system_prompt, /避免生硬拼贴、明显接缝、抠图白边和不合理遮挡/);
   const persisted = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.equal(persisted.pages, undefined);
   assert.equal(persisted.templates[0].pages[0].purpose, "旧分镜");

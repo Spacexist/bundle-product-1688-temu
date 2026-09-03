@@ -372,6 +372,14 @@ const TaskStatusIndicator = {
 const app = createApp({
   template: `
     <div class="shell">
+      <Transition name="image-placement">
+      <aside v-if="imagePlacementNotice && cloudAuth.authorized && !imageEditorOpen" class="image-placement-notice" role="status" aria-live="polite">
+        <strong>图片已保存</strong>
+        <p class="image-placement-product" :title="imagePlacementNotice.product_label">商品：{{ imagePlacementNotice.product_label }}</p>
+        <p>{{ imagePlacementNotice.message }}</p>
+        <div class="image-placement-actions"><button v-if="imagePlacementNotice.image_url && !imagePlacementNotice.unavailable" type="button" class="glass-action-button" @click="revealConfirmedCarouselImage">查看图片</button></div>
+      </aside>
+      </Transition>
       <div v-if="!cloudAuth.authorized" class="cloud-auth-overlay">
         <section class="cloud-auth-dialog panel" role="dialog" aria-modal="true" aria-label="自动组货授权登录">
           <header>
@@ -511,7 +519,7 @@ const app = createApp({
               <header><span>01</span><div><strong>组货建议</strong><small>{{ workflowMode === 'clip' ? '新版 CLIP 返回真实候选商品，点击搜索按钮走 1688 搜图。' : '四个候选方向会自动生成图片，生成完成后可直接搜图。' }}</small></div></header>
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
-                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" :draggable="!!item.image_url" :title="item.image_url ? '拖到 Temu 主图、轮播图或 SKU 图片' : ''" @dragstart.stop="startWorkflowImageDrag($event, item, index)" @dragend="endAliImageDrag" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="imageSource(item.image_url)" referrerpolicy="no-referrer" alt="AI 组货候选图" draggable="false" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" :draggable="!!item.image_url" :title="item.image_url ? '拖到 Temu 主图、轮播图或 SKU 图片' : ''" @dragstart.stop="startWorkflowImageDrag($event, item, index)" @dragend="endAliImageDrag" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="workflowCandidateImageSource(item)" referrerpolicy="no-referrer" alt="AI 组货候选图" draggable="false" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
                   <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.match_query || item.product_intro }}</span><em v-if="item.product_name && item.product_name !== (item.match_query || item.product_intro)" class="smart-result-title">{{ item.product_name }}</em><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
                 </article>
               </div>
@@ -584,10 +592,17 @@ const app = createApp({
               <span v-if="shouldShowImageEditorStageLabel()" class="image-editor-stage-label">{{ imageEditorStageLabel() }}</span>
               <div v-if="shouldShowImageEditorLoading()" class="image-editor-loading"><span></span><strong>{{ imageEditorLoadingTitle() }}</strong><small>{{ imageEditorLoadingHint() }}</small></div>
               <div v-else-if="shouldShowCarouselViewer()" class="carousel-slide-viewer">
+                <div class="carousel-feedback-slot" aria-live="polite"><Transition name="carousel-feedback"><span v-if="carouselRunFeedbackText()" class="carousel-run-feedback">{{ carouselRunFeedbackText() }}</span></Transition></div>
                 <button class="carousel-slide-arrow previous" type="button" :disabled="imageCarouselPageIndex <= 0" aria-label="上一张轮播图" @click="changeCarouselPage(-1)">‹</button>
                 <article class="carousel-result-card">
                   <img v-if="currentCarouselPage().image_url" :src="imageSource(currentCarouselPage().image_url)" :alt="'轮播图 ' + (imageCarouselPageIndex + 1)">
-                  <div v-else class="carousel-result-placeholder"><span>{{ currentCarouselPage().status === 'generating' ? '生成中…' : currentCarouselPage().status === 'failed' ? '[' + currentCarouselPage().error_code + '] ' + currentCarouselPage().error : '等待生成' }}</span><button v-if="currentCarouselPage().status === 'failed'" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex)" @click="retryCarouselPage(imageCarouselPageIndex)">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '重试中…' : '重试' }}</button></div>
+                  <div v-if="carouselPageFeedback().title && (currentCarouselPage().image_url || !carouselPageFeedback().error)" class="carousel-page-feedback" :class="{ 'is-error': carouselPageFeedback().error }" role="status" aria-live="polite">
+                    <i v-if="!carouselPageFeedback().error" class="carousel-feedback-spinner" aria-hidden="true"></i>
+                    <strong>第 {{ imageCarouselPageIndex + 1 }} 张 · {{ carouselPageFeedback().title }}</strong>
+                    <span v-if="carouselPageFeedback().error">{{ carouselPageFeedback().error }}</span>
+                    <small v-if="currentCarouselPage().image_url">下方为上一次生成的图片{{ carouselPageFeedback().error ? '，未被替换' : '，正在等待新结果' }}</small>
+                  </div>
+                  <div v-if="!currentCarouselPage().image_url" class="carousel-result-placeholder"><span>{{ currentCarouselPage().status === 'generating' ? '生成中…' : currentCarouselPage().status === 'failed' ? '[' + currentCarouselPage().error_code + '] ' + currentCarouselPage().error : '等待生成' }}</span><button v-if="currentCarouselPage().status === 'failed'" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex)" @click="retryCarouselPage(imageCarouselPageIndex)">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '重试中…' : '重试' }}</button></div>
                 </article>
                 <button class="carousel-slide-arrow next" type="button" :disabled="imageCarouselPageIndex >= imageCarouselTask.pages.length - 1" aria-label="下一张轮播图" @click="changeCarouselPage(1)">›</button>
                 <div class="carousel-slide-meta"><span class="carousel-slide-counter">{{ imageCarouselPageIndex + 1 }} / {{ imageCarouselTask.pages.length }}</span><label v-if="currentCarouselPage().status === 'succeeded'" class="carousel-result-select" :class="{ 'is-selected': currentCarouselPage().selected !== false }"><input type="checkbox" v-model="currentCarouselPage().selected"><span>{{ currentCarouselPage().selected === false ? '点击选用' : '已选用' }}</span></label></div>
@@ -611,7 +626,7 @@ const app = createApp({
               <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy" @click="regenerateAllCarouselPages">{{ imageCarouselGenerationBusy ? '全部生成中…' : '全部重生' }}</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !String(currentCarouselPage().prompt || '').trim()" @click="regenerateCurrentCarouselPage">{{ isCarouselPageBusy(imageCarouselPageIndex) ? '单张生成中…' : '单独重生' }}</button><button v-if="canApplyCarouselReplacement(true)" class="image-editor-main-apply" type="button" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '确认' : '确认替换' }}</button></footer>
+            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">放弃轮播任务</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy || hasCarouselSubmission(imageCarouselTask)" @click="regenerateAllCarouselPages">全部重生</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !String(currentCarouselPage().prompt || '').trim()" @click="regenerateCurrentCarouselPage">单独重生</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '确认' : '确认替换' }}</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -699,6 +714,8 @@ const app = createApp({
       sourceFileName: "",
       statusText: "请导入统一 JSON 文件。",
       statusType: "normal",
+      imagePlacementNotice: null,
+      imagePlacementNoticeTimer: null,
       restoreProgress: {
         active: false,
         status: "waiting",
@@ -710,6 +727,9 @@ const app = createApp({
       dragSkuReference: null,
       dragDropTarget: null,
       dragImageReference: null,
+      imageDragScrollFrame: null,
+      imageDragScrollSpeed: 0,
+      imageDragScrollTime: 0,
       imageDropTarget: null,
       imageReorderReference: null,
       imageReorderTarget: null,
@@ -751,6 +771,7 @@ const app = createApp({
       imageCarouselTasksByMainId: {},
       imageCarouselIgnoredTaskIds: {},
       imageCarouselPageBusyKeys: {},
+      imageCarouselFeedback: {},
       imageCarouselPageIndex: 0,
       imageCarouselGenerationBusy: false,
       imageCarouselEstimatedTokens: 0,
@@ -867,6 +888,10 @@ const app = createApp({
   },
   /** Start cache subscription after the Vue view is mounted. */
   mounted: function mountedApp() {
+    window.addEventListener("dragover", this.handleImageDragScroll, true);
+    window.addEventListener("dragleave", this.handleImageDragLeave, true);
+    window.addEventListener("wheel", this.handleImageDragWheel, { capture: true, passive: false });
+    window.addEventListener("drop", this.stopImageDragScroll, true);
     window.addEventListener("dragend", this.clearImageDragState, true);
     window.addEventListener("drop", this.clearImageDragState);
     window.addEventListener("blur", this.clearImageDragState);
@@ -877,6 +902,18 @@ const app = createApp({
   },
   /** Close the cache subscription before the Vue view is destroyed. */
   beforeUnmount: function cleanupRealtimeCache() {
+    for (const run of Object.values(this.imageCarouselFeedback)) {
+      if (run.timer) { window.clearTimeout(run.timer); }
+    }
+    if (this.imagePlacementNoticeTimer) {
+      window.clearTimeout(this.imagePlacementNoticeTimer);
+      this.imagePlacementNoticeTimer = null;
+    }
+    this.stopImageDragScroll();
+    window.removeEventListener("dragover", this.handleImageDragScroll, true);
+    window.removeEventListener("dragleave", this.handleImageDragLeave, true);
+    window.removeEventListener("wheel", this.handleImageDragWheel, true);
+    window.removeEventListener("drop", this.stopImageDragScroll, true);
     window.removeEventListener("dragend", this.clearImageDragState, true);
     window.removeEventListener("drop", this.clearImageDragState);
     window.removeEventListener("blur", this.clearImageDragState);
@@ -3500,7 +3537,7 @@ const app = createApp({
         return;
       }
       const record = targetRecord || this.selectedTemuRecord;
-      if (!record || !window.confirm("确认删除当前 Temu 缓存？")) {
+      if (!record) {
         return;
       }
       try {
@@ -3584,6 +3621,15 @@ const app = createApp({
         return new URL(apiUrl("")).origin + source;
       }
       return source;
+    },
+
+    /** Load current and historic CLIP candidates through shared cache without prewarming other products. */
+    workflowCandidateImageSource: function workflowCandidateImageSource(item) {
+      const source = String(item && item.image_url || "").trim();
+      if (item && item.source_mode === "clip" && /^https?:\/\//i.test(source) && !this.isLocalCachedImageUrl(source)) {
+        return apiUrl("/cache/candidate-image?source=" + encodeURIComponent(source));
+      }
+      return this.imageSource(source);
     },
 
     /** Return whether one image URL points to the server-side local image cache. */
@@ -7121,7 +7167,7 @@ const app = createApp({
     /** Return whether the final replacement button should be shown. */
     canShowImageEditorConfirm: function canShowImageEditorConfirm() {
       if (this.imageEditorState().hasCarouselTask) {
-        return this.canApplyCarouselReplacement(false);
+        return this.canRegenerateCarouselPages() || this.canApplyCarouselReplacement(false);
       }
       return Boolean(this.imageEditorGeneratedUrl);
     },
@@ -7300,6 +7346,7 @@ const app = createApp({
         return;
       }
       this.imageCarouselTask = task || null;
+      this.updateCarouselFeedback(task);
       if (this.imageCarouselTask) {
         this.imageCarouselReviewOnly = String(this.imageCarouselTask.mode || "") === "advanced";
       }
@@ -7316,6 +7363,7 @@ const app = createApp({
     /** Return whether the current carousel task has confirmed results ready to apply. */
     canApplyCarouselReplacement: function canApplyCarouselReplacement(includeUnselected) {
       return Boolean(this.imageCarouselTask
+        && !this.hasCarouselSubmission(this.imageCarouselTask)
         && !this.isCarouselTaskGenerating(this.imageCarouselTask)
         && this.successfulCarouselPageCount(includeUnselected) > 0);
     },
@@ -7540,6 +7588,7 @@ const app = createApp({
         throw new Error(getApiErrorMessage(payload, "轮播后台任务提交失败。"));
       }
       const submittedTask = payload.data && payload.data.task ? payload.data.task : task;
+      this.updateCarouselFeedback(submittedTask, pageIndices);
       if (this.imageCarouselTask && String(this.imageCarouselTask.id || "") === String(submittedTask.id || "")) {
         this.applyCarouselTaskSnapshot(submittedTask);
         this.scheduleCarouselTaskPoll();
@@ -7551,7 +7600,7 @@ const app = createApp({
     /** Submit every carousel page once and let the backend execute them concurrently. */
     async generateCarouselPages() {
       const task = this.imageCarouselTask;
-      if (!task || !Array.isArray(task.pages) || !task.pages.length || task.status === "generating") {
+      if (!task || !Array.isArray(task.pages) || !task.pages.length || task.status === "generating" || this.hasCarouselSubmission(task)) {
         return;
       }
       const pageIndices = [];
@@ -7560,12 +7609,104 @@ const app = createApp({
       }
       this.imageCarouselGenerationBusy = true;
       this.imageEditorError = "";
+      this.beginCarouselFeedback(task, pageIndices);
       try {
         await this.startCarouselGeneration(task, pageIndices);
       } catch (error) {
-        this.imageCarouselGenerationBusy = false;
-        this.imageEditorError = error.message || "轮播后台任务提交失败。";
+        this.failCarouselFeedback(task, pageIndices, error);
+        if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
+          this.imageCarouselGenerationBusy = this.isCarouselTaskGenerating(this.imageCarouselTask);
+          this.imageEditorError = error.message || "轮播后台任务提交失败。";
+        }
       }
+    },
+
+    /** Start immediate per-page feedback; overlapping single-page requests share the current run. */
+    beginCarouselFeedback(task, indices) {
+      let run = this.imageCarouselFeedback[task.id];
+      if (!run || Object.values(run.pages).every(/** Test whether the previous run has finished. */ function isFinished(page) { return page.status === "succeeded" || page.status === "failed"; })) {
+        if (run && run.timer) { window.clearTimeout(run.timer); }
+        run = { pages: {}, dismissed: false, timer: null };
+        this.imageCarouselFeedback[task.id] = run;
+      }
+      for (const index of indices) {
+        run.pages[index] = { status: "submitting", generation_id: "", error: "" };
+      }
+    },
+
+    /** Report a submission failure without hiding the old preview or affecting a different task. */
+    failCarouselFeedback(task, indices, error) {
+      const run = this.imageCarouselFeedback[task.id];
+      if (!run) { return; }
+      for (const index of indices) {
+        run.pages[index] = { status: "failed", generation_id: "", error: "[" + getWorkflowErrorCode(error) + "] " + (error.message || "提交失败") };
+      }
+    },
+
+    /** Bind feedback to accepted generation IDs so old successful snapshots never count as new results. */
+    updateCarouselFeedback(task, acceptedIndices) {
+      const run = task && this.imageCarouselFeedback[task.id];
+      if (!run) { return; }
+      for (const key of Object.keys(run.pages)) {
+        const entry = run.pages[key];
+        const page = task.pages && task.pages[Number(key)];
+        if (!page) { continue; }
+        if (acceptedIndices && acceptedIndices.indexOf(Number(key)) >= 0) {
+          entry.generation_id = String(page.generation_id || "");
+        }
+        if (!entry.generation_id || entry.generation_id !== String(page.generation_id || "")) { continue; }
+        entry.status = String(page.status || "generating");
+        entry.provider_status = String(page.provider_status || "");
+        entry.error = page.status === "failed" ? "[" + (page.error_code || "IMAGE_GENERATION_FAILED") + "] " + (page.error || "生成失败") : "";
+      }
+      if (!run.timer && !run.dismissed && Object.values(run.pages).every(/** Fade only a fully successful run; failures remain visible. */ function allSucceeded(page) { return page.status === "succeeded"; })) {
+        run.timer = window.setTimeout(/** Leave 300ms for the fade, totaling two seconds. */ function dismissCompletedRun() {
+          run.dismissed = true;
+          run.timer = null;
+        }, 1700);
+      }
+    },
+
+    /** Detect local submission before the server has returned any running page state. */
+    hasCarouselSubmission(task, pageIndex) {
+      const run = task && this.imageCarouselFeedback[task.id];
+      if (!run) { return false; }
+      if (pageIndex !== undefined) { return Boolean(run.pages[pageIndex] && run.pages[pageIndex].status === "submitting"); }
+      return Object.values(run.pages).some(/** Keep repeat submission and apply buttons disabled until acceptance. */ function isSubmitting(page) { return page.status === "submitting"; });
+    },
+
+    /** Render stage feedback independently of image_url, which intentionally retains the old preview. */
+    carouselPageFeedback() {
+      const task = this.imageCarouselTask;
+      let page = this.currentCarouselPage();
+      const run = task && this.imageCarouselFeedback[task.id];
+      const entry = run && run.pages[this.imageCarouselPageIndex];
+      if (entry && entry.status === "submitting") { return { title: "正在提交…", error: "" }; }
+      if (entry && entry.status === "failed" && !entry.generation_id) { return { title: "提交失败", error: entry.error }; }
+      if (entry && entry.generation_id && page.generation_id !== entry.generation_id && entry.status === "generating") {
+        page = entry;
+      }
+      if (page.status === "failed") {
+        return { title: "生成失败", error: "[" + (page.error_code || "IMAGE_GENERATION_FAILED") + "] " + (page.error || "请重试") };
+      }
+      if (page.status === "generating") {
+        const labels = { submitting: "正在提交生图…", queued: "排队中…", running: "生成中…", completed: "图片下载中…" };
+        return { title: labels[page.provider_status] || "排队／准备中…", error: "" };
+      }
+      return { title: "", error: "" };
+    },
+
+    /** Summarize only the current run; on reopening use an explicitly labeled whole-task snapshot. */
+    carouselRunFeedbackText() {
+      const task = this.imageCarouselTask;
+      if (!task) { return ""; }
+      const run = this.imageCarouselFeedback[task.id];
+      if (run && run.dismissed) { return ""; }
+      const pages = run ? Object.values(run.pages) : task.pages || [];
+      if (!run && !pages.some(/** Restore progress only for a still-running task. */ function isRunning(page) { return page.status === "generating"; })) { return ""; }
+      const succeeded = pages.filter(/** Count completed local downloads, never upstream URLs alone. */ function isSuccess(page) { return page.status === "succeeded"; }).length;
+      const failed = pages.filter(/** Keep terminal failures separate from successes. */ function isFailure(page) { return page.status === "failed"; }).length;
+      return (run ? "本次重生" : "任务进度") + "：完成 " + (succeeded + failed) + "/" + pages.length + " 张 · 成功 " + succeeded + " 张" + (failed ? " · 失败 " + failed + " 张" : "");
     },
 
     /** Build one task-and-page key for an individual carousel request. */
@@ -7577,7 +7718,7 @@ const app = createApp({
     /** Return whether one carousel page has an active Fusion request. */
     isCarouselPageBusy: function isCarouselPageBusy(pageIndex) {
       const page = this.imageCarouselTask && this.imageCarouselTask.pages ? this.imageCarouselTask.pages[Number(pageIndex)] : null;
-      return Boolean(page && page.status === "generating") || Boolean(this.imageCarouselPageBusyKeys[this.carouselPageBusyKey(pageIndex)]);
+      return Boolean(page && page.status === "generating") || this.hasCarouselSubmission(this.imageCarouselTask, pageIndex) || Boolean(this.imageCarouselPageBusyKeys[this.carouselPageBusyKey(pageIndex)]);
     },
 
     /** Persist the current carousel page text without changing other page states. */
@@ -7614,11 +7755,16 @@ const app = createApp({
         return;
       }
       this.imageCarouselPageBusyKeys[busyKey] = true;
+      this.imageEditorError = "";
+      this.beginCarouselFeedback(task, [Number(pageIndex)]);
       try {
         await this.saveCarouselPage(pageIndex);
         await this.startCarouselGeneration(task, [Number(pageIndex)]);
       } catch (error) {
-        this.imageEditorError = error.message || "轮播后台任务提交失败。";
+        this.failCarouselFeedback(task, [Number(pageIndex)], error);
+        if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
+          this.imageEditorError = error.message || "轮播后台任务提交失败。";
+        }
       } finally {
         delete this.imageCarouselPageBusyKeys[busyKey];
       }
@@ -8013,15 +8159,82 @@ const app = createApp({
         const product = result.product || {};
         this.carouselUndoTokens[this.productCacheEventKey(product)] = String(result.undo_token || "");
         this.persistCarouselUndoTokens();
-        await this.reloadWorkbenchAfterCarousel();
+        let refreshFailed = false;
+        try {
+          await this.reloadWorkbenchAfterCarousel();
+        } catch (error) {
+          // The apply already succeeded; a refresh failure must not invite a duplicate confirmation.
+          refreshFailed = true;
+        }
         this.setStatus(replaceAll ? "全部主图已替换为本次轮播生成图。" : "已确认，选中的轮播图片已追加到末尾，原图保持不变。", "success");
         delete this.imageCarouselTasksByMainId[String(task.temu_main_id || "")];
         this.closeGalleryImageEditor(true);
+        this.showCarouselPlacementNotice(product, task, selectedIndices, replaceAll);
+        if (refreshFailed) {
+          this.imagePlacementNotice.message += " 工作台刷新失败，请刷新页面查看，无需再次确认。";
+          this.imagePlacementNotice.unavailable = true;
+        }
       } catch (error) {
         this.imageEditorError = error.message || (replaceAll ? "轮播替换失败。" : "轮播确认失败。");
       } finally {
         this.imageCarouselGenerationBusy = false;
       }
+    },
+
+    /** Describe the actual saved gallery positions using the server's post-apply product snapshot. */
+    showCarouselPlacementNotice: function showCarouselPlacementNotice(product, task, selectedIndices, replaceAll) {
+      const gallery = this.galleryImages(product);
+      const count = Math.min(gallery.length, selectedIndices.filter(/** Count only outputs the backend can actually apply. */ function hasSavedOutput(index) {
+        const page = task.pages[index];
+        return page && page.status === "succeeded" && page.image_url;
+      }).length);
+      const start = gallery.length - count;
+      const position = count ? "第 " + (start + 1) + (count > 1 ? "–" + gallery.length : "") + " 张（共 " + count + " 张）" : "末尾";
+      const productId = String(product.platform_id || task.temu_platform_id || product.main_id || task.temu_main_id || "");
+      this.imagePlacementNotice = {
+        product_label: String(product.product_name || "Temu 商品") + (productId ? " · " + productId : ""),
+        platform_id: String(product.platform_id || task.temu_platform_id || ""),
+        main_id: String(product.main_id || task.temu_main_id || ""),
+        image_url: count ? String(gallery[start]) : "",
+        gallery_index: start,
+        message: replaceAll ? "全部主图已替换，新图位于主图列表" + position + "。" : "已追加到主图列表" + position + "，原图保持不变。"
+      };
+      if (this.imagePlacementNoticeTimer) {
+        window.clearTimeout(this.imagePlacementNoticeTimer);
+      }
+      const view = this;
+      this.imagePlacementNoticeTimer = window.setTimeout(/** Begin the 300ms fade so the notice is gone within two seconds. */ function dismissPlacementNotice() {
+        view.imagePlacementNotice = null;
+        view.imagePlacementNoticeTimer = null;
+      }, 1700);
+    },
+
+    /** Reveal the saved product/image without changing its gallery, even after switching products or reordering. */
+    revealConfirmedCarouselImage: function revealConfirmedCarouselImage() {
+      const notice = this.imagePlacementNotice;
+      if (!notice || notice.unavailable) {
+        return;
+      }
+      const record = this.records.find(/** Match the saved product, not whichever product is currently selected. */ function matchSavedProduct(item) {
+        return item.platform === "temu" && (notice.platform_id
+          ? String(item.platform_id) === notice.platform_id : String(item.main_id) === notice.main_id);
+      });
+      const gallery = this.galleryImages(record);
+      const index = gallery[notice.gallery_index] === notice.image_url ? notice.gallery_index : gallery.lastIndexOf(notice.image_url);
+      if (!record || index < 0) {
+        notice.message = record ? "图片已保存过，但已从当前主图列表移除，无法定位。" : "图片已保存过，但该商品已不在当前工作台，无法定位。";
+        notice.unavailable = true;
+        return;
+      }
+      this.selectTemuRecord(record);
+      this.selectedTemuGalleryIndex = index;
+      this.selectedGalleryIndex = index;
+      this.$nextTick(/** Scroll the exact selected thumbnail and its gallery into view after Vue renders. */ function revealSavedThumbnail() {
+        const thumbnail = document.querySelectorAll(".temu-render .gallery-thumbs .thumb-item")[index];
+        if (thumbnail) {
+          thumbnail.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      });
     },
 
     /** Reload the workbench after one server-owned carousel mutation. */
@@ -8120,6 +8333,74 @@ const app = createApp({
       return images[index] || images[0] || "";
     },
 
+    /** Scroll only app image drags near the viewport edges, even over stopped drop-zone events. */
+    handleImageDragScroll: function handleImageDragScroll(event) {
+      if (!this.dragImageReference && !this.imageReorderReference) {
+        this.stopImageDragScroll();
+        return;
+      }
+      const height = window.innerHeight;
+      const y = Number(event.clientY);
+      const x = Number(event.clientX);
+      if (!Number.isFinite(y) || y < 0 || y > height || x < 0 || x > window.innerWidth) {
+        this.stopImageDragScroll();
+        return;
+      }
+      const edge = Math.min(100, height / 4);
+      this.imageDragScrollSpeed = y < edge
+        ? -900 * (1 - y / edge)
+        : y > height - edge ? 900 * (1 - (height - y) / edge) : 0;
+      if (!this.imageDragScrollSpeed) {
+        this.stopImageDragScroll();
+        return;
+      }
+      if (this.imageDragScrollFrame === null) {
+        this.imageDragScrollTime = 0;
+        this.imageDragScrollFrame = window.requestAnimationFrame(this.tickImageDragScroll);
+      }
+    },
+
+    /** Keep scrolling while the pointer rests at an edge, with frame-rate-independent speed. */
+    tickImageDragScroll: function tickImageDragScroll(timestamp) {
+      this.imageDragScrollFrame = null;
+      if ((!this.dragImageReference && !this.imageReorderReference) || !this.imageDragScrollSpeed) {
+        this.stopImageDragScroll();
+        return;
+      }
+      const elapsed = this.imageDragScrollTime ? Math.min(50, timestamp - this.imageDragScrollTime) : 16;
+      this.imageDragScrollTime = timestamp;
+      window.scrollBy({ top: this.imageDragScrollSpeed * elapsed / 1000, left: 0, behavior: "instant" });
+      this.imageDragScrollFrame = window.requestAnimationFrame(this.tickImageDragScroll);
+    },
+
+    /** Honor wheel movement during image dragging when the browser delivers native wheel events. */
+    handleImageDragWheel: function handleImageDragWheel(event) {
+      if ((!this.dragImageReference && !this.imageReorderReference) || event.ctrlKey || !event.deltaY) {
+        return;
+      }
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+      window.scrollBy({ top: event.deltaY * unit, left: 0, behavior: "instant" });
+    },
+
+    /** Stop the animation when a native drag leaves the browser viewport. */
+    handleImageDragLeave: function handleImageDragLeave(event) {
+      if (!event.relatedTarget && (event.target === document.documentElement || event.target === document
+        || event.clientX <= 0 || event.clientX >= window.innerWidth || event.clientY <= 0 || event.clientY >= window.innerHeight)) {
+        this.stopImageDragScroll();
+      }
+    },
+
+    /** Stop scrolling without clearing the image payload before a target drop handler consumes it. */
+    stopImageDragScroll: function stopImageDragScroll() {
+      if (this.imageDragScrollFrame !== null) {
+        window.cancelAnimationFrame(this.imageDragScrollFrame);
+      }
+      this.imageDragScrollFrame = null;
+      this.imageDragScrollSpeed = 0;
+      this.imageDragScrollTime = 0;
+    },
+
     /** Start dragging one source image to its matching Temu image target. */
     startAliImageDrag: function startAliImageDrag(event, record, image, sourceType, index) {
       const imageUrl = String(image || "").trim();
@@ -8162,6 +8443,7 @@ const app = createApp({
 
     /** Clear the active source-image drag state after a completed or cancelled drag. */
     endAliImageDrag: function endAliImageDrag() {
+      this.stopImageDragScroll();
       this.dragImageReference = null;
       this.imageDropTarget = null;
       this.imageReorderReference = null;
@@ -8193,6 +8475,7 @@ const app = createApp({
 
     /** Clear stale image drop highlights after a browser drag ends or leaves the page. */
     clearImageDragState: function clearImageDragState(event) {
+      this.stopImageDragScroll();
       this.imageDropTarget = null;
       this.imageReorderTarget = null;
       if (!event || event.type === "dragend" || event.type === "blur") {
@@ -8272,6 +8555,7 @@ const app = createApp({
 
     /** End a same-list image reorder drag without clearing another image drag source. */
     endImageReorder: function endImageReorder() {
+      this.stopImageDragScroll();
       this.imageReorderReference = null;
       this.imageReorderTarget = null;
       this.imageDropTarget = null;

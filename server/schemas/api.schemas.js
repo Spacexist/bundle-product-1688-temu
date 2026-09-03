@@ -230,6 +230,8 @@ const workflowCompleteSchema = z.object({
 
 const detailImagesQuerySchema = z.object({ url: z.string().min(1) });
 
+const candidateImageQuerySchema = z.object({ source: z.string().url().max(16000).regex(/^https?:\/\//i) });
+
 module.exports = {
   moduleSaveSchema: moduleSaveSchema,
   collectionSchema: collectionSchema,
@@ -240,6 +242,7 @@ module.exports = {
   miaoshouImportSchema: miaoshouImportSchema,
   miaoshouCookieSchema: miaoshouCookieSchema,
   imageCacheSchema: imageCacheSchema,
+  candidateImageQuerySchema: candidateImageQuerySchema,
   imageSearchSchema: imageSearchSchema,
   dollarTransferSchema: dollarTransferSchema,
   replaceSkuSchema: replaceSkuSchema,

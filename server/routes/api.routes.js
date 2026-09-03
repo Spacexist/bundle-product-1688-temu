@@ -76,6 +76,7 @@ function createApiRouter(options) {
   router.put("/config/default-prompts", validationModule.validate(schemaModule.defaultPromptUpdateSchema, "body"), config.updateDefaultPrompts.bind(config));
   router.post("/DollarTransfer", validationModule.validate(schemaModule.dollarTransferSchema, "body"), currency.convert.bind(currency));
   router.post("/cache/images", validationModule.validate(schemaModule.imageCacheSchema, "body"), images.cacheImage.bind(images));
+  router.get("/cache/candidate-image", validationModule.validate(schemaModule.candidateImageQuerySchema, "query"), images.getCandidateImage.bind(images));
   router.post("/images/search-1688", validationModule.validate(schemaModule.imageSearchSchema, "body"), images.search1688.bind(images));
   return router;
 }
