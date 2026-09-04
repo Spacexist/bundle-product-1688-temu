@@ -125,8 +125,14 @@ const directImageTaskSchema = z.object({
   source_type: z.enum(["gallery", "detail"]),
   source_indices: z.array(z.number().int().nonnegative()).max(1).optional(),
   detail_index: z.number().int().min(-1).optional(),
+  reference_mode: z.enum(["original", "current"]).optional(),
+  parent_task_id: z.string().regex(/^direct-[a-zA-Z0-9-]+$/).optional(),
   prompt: z.string().min(1),
   size: z.string().optional()
+});
+
+const directImageVersionSelectSchema = z.object({
+  version_index: z.number().int().min(0).max(1)
 });
 
 const skuBlendTaskSchema = z.object({
@@ -206,7 +212,12 @@ const carouselPageUpdateSchema = z.object({
 });
 
 const carouselGenerationSchema = z.object({
-  page_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10)
+  page_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10),
+  reference_mode: z.enum(["original", "current"]).optional()
+});
+
+const carouselVersionSelectSchema = z.object({
+  version_index: z.number().int().min(0).max(1)
 });
 
 const carouselApplySchema = z.object({
@@ -252,6 +263,7 @@ module.exports = {
   workbenchFocusSchema: workbenchFocusSchema,
   imageEditSchema: imageEditSchema,
   directImageTaskSchema: directImageTaskSchema,
+  directImageVersionSelectSchema: directImageVersionSelectSchema,
   skuBlendTaskSchema: skuBlendTaskSchema,
   workflowPromptSchema: workflowPromptSchema,
   clipWorkflowAssembleSchema: clipWorkflowAssembleSchema,
@@ -262,6 +274,7 @@ module.exports = {
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
   carouselPageUpdateSchema: carouselPageUpdateSchema,
   carouselGenerationSchema: carouselGenerationSchema,
+  carouselVersionSelectSchema: carouselVersionSelectSchema,
   carouselApplySchema: carouselApplySchema,
   workflowGenerateSchema: workflowGenerateSchema,
   workflowCompleteSchema: workflowCompleteSchema,

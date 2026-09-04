@@ -1,3 +1,6 @@
+const configModule = require("../config/config-loader");
+const cloudAuthModule = require("../services/cloud-auth.service");
+
 /** Diagnostics HTTP controller for the local log and image queue pages. */
 class DiagnosticsController {
   /** Store the shared diagnostics service. */
@@ -72,6 +75,28 @@ class DiagnosticsController {
   /** Open the image task queue SSE stream. */
   connectQueue(request, response) {
     this.diagnostics.connectQueue(request, response);
+  }
+
+  /** Return the complete local effective configuration with every secret masked. */
+  getServerConfig(request, response) {
+    const config = configModule.readServerConfig();
+    const publicConfig = configModule.createPublicServerConfig(config);
+    const sync = cloudAuthModule.getConfigSyncStatus();
+    response.setHeader("Cache-Control", "no-store");
+    response.json({
+      ok: true,
+      data: {
+        effective: {
+          quality: publicConfig.image.quality,
+          model: publicConfig.image.model,
+          config_version: sync.configVersion
+        },
+        sync: sync,
+        config: configModule.createRedactedServerConfig(config)
+      },
+      error: null,
+      meta: { request_id: request.requestId || "" }
+    });
   }
 
   /** Return masked summaries of independently retained final image failures. */

@@ -606,9 +606,14 @@ async function handleRollbackConfig(request, environment) {
   if (!previous || !previous.config) {
     throw new Error("没有可回滚的上一版配置。");
   }
+  const next = {
+    version: Math.max(0, Math.floor(Number(current.version) || 0)) + 1,
+    updatedAt: new Date().toISOString(),
+    config: readConfigObject(previous.config)
+  };
   await requireVault(environment).put(PREVIOUS_CONFIG, JSON.stringify(current));
-  await requireVault(environment).put(CURRENT_CONFIG, JSON.stringify(previous));
-  return jsonResponse({ ok: true, data: { version: previous.version, updatedAt: previous.updatedAt }, error: null });
+  await requireVault(environment).put(CURRENT_CONFIG, JSON.stringify(next));
+  return jsonResponse({ ok: true, data: { version: next.version, updatedAt: next.updatedAt }, error: null });
 }
 
 /** Handle local client authorization and optional config download. */
@@ -618,18 +623,15 @@ async function handleUserConfig(request, environment) {
   const verified = await verifyMacBinding(environment, account, body);
   const selectedConfig = await readConfigForAccount(environment, verified);
   const current = selectedConfig.package;
-  const localVersion = Math.max(0, Math.floor(Number(body.localVersion) || 0));
   const remoteVersion = Number(current.version || 0);
   const data = {
     account: publicAccount(verified),
     configChannel: selectedConfig.channel,
     configVersion: remoteVersion,
     updatedAt: String(current.updatedAt || ""),
-    configChanged: selectedConfig.channel === "test" ? remoteVersion !== localVersion : remoteVersion > localVersion
+    configChanged: true,
+    config: current.config || {}
   };
-  if (data.configChanged) {
-    data.config = current.config || {};
-  }
   return jsonResponse({ ok: true, data: data, error: null });
 }
 

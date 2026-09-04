@@ -37,6 +37,8 @@ EXCLUDE_PATTERNS = [
     'bundle/_delete_pending_python_gpu',
     'server/config.json',
     'bundle/clip/config.json',
+    'runtime/*credential*',
+    'runtime/cloud-config-state.json',
     '*cublas64_*.dll',
     '*cublasLt64_*.dll',
     '*cudart64_*.dll',

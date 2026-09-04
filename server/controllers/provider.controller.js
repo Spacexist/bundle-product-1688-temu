@@ -130,10 +130,23 @@ class ProviderController {
     }
   }
 
+  /** Select one retained direct-image version without creating a provider task. */
+  selectDirectImageTaskVersion(request, response, next) {
+    try {
+      const task = this.directImages.selectTaskVersion(request.params.taskId, request.validatedBody.version_index);
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Delete one retained direct-image task after apply or explicit abandonment. */
   deleteDirectImageTask(request, response, next) {
     try {
-      const task = this.directImages.deleteTask(request.params.taskId);
+      const cleanup = request.query && (request.query.cleanup === "all" || request.query.cleanup === "alternates")
+        ? request.query.cleanup
+        : "none";
+      const task = this.directImages.deleteTask(request.params.taskId, cleanup);
       response.json({ ok: true, data: { deleted: Boolean(task) }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

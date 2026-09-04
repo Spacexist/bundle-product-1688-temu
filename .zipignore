@@ -46,6 +46,8 @@ test_*.py
 cache/
 server/config.json
 bundle/clip/config.json
+runtime/*credential*
+runtime/cloud-config-state.json
 bundle/python/
 bundle/_delete_pending_python_gpu/
 

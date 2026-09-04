@@ -140,6 +140,41 @@ function createPublicServerConfig(config) {
   };
 }
 
+/** Return whether one configuration key must never expose its raw value. */
+function isSensitiveConfigKey(key) {
+  return /(?:api[_-]?key|app[_-]?id|private[_-]?key|secret|password|passwd|token|cookie|authorization|credential|access[_-]?(?:code|hash))/i.test(String(key || ""));
+}
+
+/** Fully hide one present diagnostic credential regardless of its original length. */
+function maskConfigSecret(value) {
+  return value === undefined || value === null || String(value) === "" ? "" : "••••••";
+}
+
+/** Recursively clone server configuration while masking every credential-shaped field. */
+function redactServerConfigValue(value, key) {
+  if (isSensitiveConfigKey(key)) {
+    return maskConfigSecret(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(/** Redact nested array values without mutating the live configuration. */ function redactArrayItem(item) {
+      return redactServerConfigValue(item, "");
+    });
+  }
+  if (value && typeof value === "object") {
+    const result = {};
+    for (const childKey of Object.keys(value)) {
+      result[childKey] = redactServerConfigValue(value[childKey], childKey);
+    }
+    return result;
+  }
+  return value;
+}
+
+/** Return the complete local server configuration with secrets masked for diagnostics. */
+function createRedactedServerConfig(config) {
+  return redactServerConfigValue(config || readServerConfig(), "");
+}
+
 /** Mask a secret without revealing enough characters to reconstruct it. */
 function maskSecret(value) {
   const text = String(value || "");
@@ -153,5 +188,6 @@ module.exports = {
   ensureServerConfigFile: ensureServerConfigFile,
   readServerConfig: readServerConfig,
   writeServerConfig: writeServerConfig,
-  createPublicServerConfig: createPublicServerConfig
+  createPublicServerConfig: createPublicServerConfig,
+  createRedactedServerConfig: createRedactedServerConfig
 };

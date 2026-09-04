@@ -400,6 +400,8 @@ button { cursor: pointer; }
 .image-editor-loading { display: grid; place-items: center; gap: 7px; color: #475569; }
 .image-editor-loading span { width: 28px; height: 28px; border: 3px solid #dbeafe; border-top-color: #2563eb; border-radius: 50%; animation: image-editor-spin .8s linear infinite; }
 .image-editor-loading small { color: #94a3b8; font-weight: 400; }
+.direct-image-result-viewer { position: relative; display: grid; width: min(100%, 500px, calc(56vh - 80px)); aspect-ratio: 1 / 1; place-items: center; overflow: visible; border-radius: 15px; }
+.direct-image-result-viewer .image-editor-generated-image { width: 100%; height: 100%; border-radius: inherit; object-fit: contain; }
 @keyframes image-editor-spin { to { transform: rotate(360deg); } }
 .image-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 12px; }
 .image-editor-actions button { min-height: 32px; padding: 6px 11px; border-radius: 9px; box-shadow: 0 5px 14px rgba(64, 74, 92, .08), inset 0 1px 0 rgba(255, 255, 255, .88); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); cursor: pointer; font-size: 12px; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease; }
@@ -413,9 +415,13 @@ button { cursor: pointer; }
 .carousel-mode-note.is-reasoning { border-color: rgba(239,68,68,.3); background: rgba(254,242,242,.72); color: #b91c1c; }
 .carousel-mode-note.is-reasoning i { background: #ef4444; box-shadow: 0 0 0 1px rgba(185,28,28,.25), 0 0 7px rgba(239,68,68,.5); }
 .carousel-slide-viewer { position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr) 42px; align-items: center; justify-content: center; gap: 10px; width: 100%; height: 100%; min-height: 0; padding: 18px 12px 48px; box-sizing: border-box; }
-.carousel-result-card { position: relative; align-self: center; justify-self: center; width: min(100%, 500px, calc(56vh - 80px)); aspect-ratio: 1 / 1; min-height: 0; overflow: hidden; border: 1px solid rgba(148,163,184,.24); border-radius: 15px; background: rgba(248,250,252,.32); box-shadow: 0 14px 34px rgba(55, 65, 81, .12), inset 0 1px 0 rgba(255,255,255,.72); }
-.carousel-result-card img { display: block; width: 100%; height: 100%; min-height: 0; object-fit: cover; }
-.carousel-page-feedback { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 22px; background: rgba(248, 250, 252, .78); color: #334155; text-align: center; }
+.carousel-result-card { position: relative; align-self: center; justify-self: center; width: min(100%, 500px, calc(56vh - 80px)); aspect-ratio: 1 / 1; min-height: 0; overflow: visible; border: 1px solid rgba(148,163,184,.24); border-radius: 15px; background: rgba(248,250,252,.32); box-shadow: 0 14px 34px rgba(55, 65, 81, .12), inset 0 1px 0 rgba(255,255,255,.72); }
+.carousel-result-card img { display: block; width: 100%; height: 100%; min-height: 0; border-radius: inherit; object-fit: cover; }
+.carousel-version-dots { position: absolute; top: 50%; left: -42px; z-index: 4; display: flex; flex-direction: column; gap: 10px; transform: translateY(-50%); padding: 9px 7px; border: 1px solid rgba(148,163,184,.24); border-radius: 999px; background: rgba(248,250,252,.82); box-shadow: 0 7px 20px rgba(15,23,42,.1); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+.carousel-version-dots button { width: 8px; height: 8px; padding: 0; border: 1px solid #64748b; border-radius: 50%; background: rgba(255,255,255,.72); cursor: pointer; transition: transform .18s cubic-bezier(.22,1,.36,1), border-color .18s ease, background .18s ease, box-shadow .18s ease; }
+.carousel-version-dots button.active { border-color: #365fa8; background: #365fa8; box-shadow: 0 0 0 4px rgba(54,95,168,.13); transform: scale(1.22); }
+.carousel-version-dots button:disabled { cursor: wait; opacity: .55; }
+.carousel-page-feedback { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 22px; border-radius: inherit; background: rgba(248, 250, 252, .78); color: #334155; text-align: center; }
 .carousel-page-feedback small { color: #64748b; }
 .carousel-page-feedback.is-error { background: rgba(255, 247, 247, .88); color: #b91c1c; }
 .carousel-page-feedback > span { max-height: 50%; overflow: auto; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }

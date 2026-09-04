@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const DEFAULT_IMAGE_TIMEOUT_MS = 660000;
+const CURRENT_IMAGE_EDIT_PREFIX = "以唯一输入图片为基础进行编辑，保留现有商品身份、结构、数量、颜色、材质、整体构图和已正确内容，不要重新设计商品。下方要求若提及第一张或第二张参考图，仅视为当前图中已有商品的描述，不要猜测其他输入图。仅按以下分镜要求优化：";
 
 /** Create one carousel error with an HTTP status and stable code. */
 function createCarouselError(message, statusCode, code, details) {
@@ -602,6 +603,64 @@ class CarouselRuntimeService {
     return this.writeTask(task);
   }
 
+  /** Return up to two distinct retained image URLs in their stable display order. */
+  normalizePageImageVersions(page) {
+    const source = page && Array.isArray(page.image_versions) ? page.image_versions : [];
+    const versions = [];
+    for (let index = 0; index < source.length; index += 1) {
+      const value = String(source[index] || "").trim();
+      if (value && versions.indexOf(value) < 0) {
+        versions.push(value);
+      }
+    }
+    const current = String(page && page.image_url || "").trim();
+    if (current && versions.indexOf(current) < 0) {
+      versions.push(current);
+    }
+    return versions.slice(-2);
+  }
+
+  /** Require one current generated image that still exists in the local cache. */
+  assertCurrentPageImageAvailable(page) {
+    const imageUrl = String(page && page.image_url || "").trim();
+    if (!imageUrl) {
+      throw createCarouselError("当前分镜还没有成功图片，无法基于当前图重生。", 409, "CAROUSEL_CURRENT_IMAGE_REQUIRED");
+    }
+    if (!this.images || typeof this.images.localUrlExists !== "function" || !this.images.localUrlExists(imageUrl)) {
+      throw createCarouselError("当前图片缓存不存在，无法基于当前图重生。", 409, "CAROUSEL_CURRENT_IMAGE_MISSING");
+    }
+    return imageUrl;
+  }
+
+  /** Select one retained image version and make it the page's active result. */
+  selectTaskPageVersion(taskId, pageIndex, versionIndex) {
+    const task = this.readTask(taskId);
+    const index = Number(pageIndex);
+    const selectedIndex = Number(versionIndex);
+    if (!task || !task.pages[index]) {
+      throw createCarouselError("轮播分镜不存在。", 404, "CAROUSEL_PAGE_NOT_FOUND");
+    }
+    const page = task.pages[index];
+    if (page.status === "generating") {
+      throw createCarouselError("当前分镜正在生成，暂时不能切换版本。", 409, "CAROUSEL_PAGE_GENERATING");
+    }
+    const versions = this.normalizePageImageVersions(page);
+    if (!Number.isInteger(selectedIndex) || !versions[selectedIndex]) {
+      throw createCarouselError("图片版本不存在。", 404, "CAROUSEL_VERSION_NOT_FOUND");
+    }
+    if (!this.images || typeof this.images.localUrlExists !== "function" || !this.images.localUrlExists(versions[selectedIndex])) {
+      throw createCarouselError("所选图片版本的缓存不存在。", 409, "CAROUSEL_VERSION_IMAGE_MISSING");
+    }
+    page.image_versions = versions;
+    page.active_image_version = selectedIndex;
+    page.image_url = versions[selectedIndex];
+    page.status = "succeeded";
+    page.error = "";
+    page.error_code = "";
+    this.refreshGenerationStatus(task);
+    return this.writeTask(task);
+  }
+
   /** Mark one page as running before its shared Fusion request starts. */
   markPageGenerating(taskId, pageIndex, generationId) {
     const task = this.readTask(taskId);
@@ -625,8 +684,8 @@ class CarouselRuntimeService {
     return this.writeTask(task);
   }
 
-  /** Persist one successful Fusion page result. */
-  markPageSucceeded(taskId, pageIndex, imageUrl, generationId) {
+  /** Persist one successful page result by appending the second slot or replacing the edited slot. */
+  markPageSucceeded(taskId, pageIndex, imageUrl, generationId, retainedInputUrl, replacementVersionIndex) {
     const task = this.readTask(taskId);
     const index = Number(pageIndex);
     if (!task || !task.pages[index]) {
@@ -635,17 +694,37 @@ class CarouselRuntimeService {
     if (generationId && task.pages[index].generation_id && String(task.pages[index].generation_id) !== String(generationId)) {
       return null;
     }
-    const previousImageUrl = task.pages[index].image_url && task.pages[index].image_url !== imageUrl
-      ? String(task.pages[index].image_url)
-      : "";
-    task.pages[index].status = "succeeded";
-    task.pages[index].image_url = String(imageUrl || "");
-    task.pages[index].selected = true;
-    task.pages[index].generation_started_at = "";
+    const page = task.pages[index];
+    const oldVersions = this.normalizePageImageVersions(page);
+    const retainedUrl = String(retainedInputUrl || page.image_url || "").trim();
+    const nextImageUrl = String(imageUrl || "").trim();
+    const requestedIndex = Number(replacementVersionIndex);
+    const replacesExistingSlot = oldVersions.length >= 2
+      && Number.isInteger(requestedIndex)
+      && Boolean(oldVersions[requestedIndex]);
+    const nextVersions = replacesExistingSlot ? oldVersions.slice(0, 2) : [];
+    if (replacesExistingSlot) {
+      nextVersions[requestedIndex] = nextImageUrl;
+    } else {
+      if (retainedUrl && retainedUrl !== nextImageUrl) {
+        nextVersions.push(retainedUrl);
+      }
+      if (nextImageUrl) {
+        nextVersions.push(nextImageUrl);
+      }
+    }
+    page.status = "succeeded";
+    page.image_versions = nextVersions;
+    page.active_image_version = replacesExistingSlot ? requestedIndex : Math.max(0, nextVersions.length - 1);
+    page.image_url = nextImageUrl;
+    page.selected = true;
+    page.generation_started_at = "";
     this.refreshGenerationStatus(task);
     const savedTask = this.writeTask(task);
-    if (previousImageUrl) {
-      this.deleteGeneratedImage(previousImageUrl);
+    for (let versionIndex = 0; versionIndex < oldVersions.length; versionIndex += 1) {
+      if (nextVersions.indexOf(oldVersions[versionIndex]) < 0) {
+        this.deleteGeneratedImage(oldVersions[versionIndex]);
+      }
     }
     return savedTask;
   }
@@ -709,9 +788,24 @@ class CarouselRuntimeService {
     return systemPrompt ? "【全局商品约束】\n" + systemPrompt + "\n\n【当前分镜要求】\n" + pagePrompt : pagePrompt;
   }
 
+  /** Wrap one existing page prompt with current-image editing constraints without changing saved text. */
+  buildCurrentImageEditPrompt(task, page) {
+    return CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + this.buildCarouselPagePrompt(task, page);
+  }
+
   /** Generate one persisted carousel page independently from its initiating browser request. */
-  async generatePage(taskId, pageIndex, requestId) {
+  async generatePage(taskId, pageIndex, requestId, referenceMode) {
     const generationId = "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+    const initialTask = this.readTask(taskId);
+    const initialPage = initialTask && initialTask.pages[Number(pageIndex)];
+    if (!initialTask || !initialPage) {
+      throw createCarouselError("轮播分镜不存在。", 404, "CAROUSEL_PAGE_NOT_FOUND");
+    }
+    const useCurrentImage = String(referenceMode || "original") === "current";
+    const retainedInputUrl = String(initialPage.image_url || "");
+    const initialVersions = this.normalizePageImageVersions(initialPage);
+    const replacementVersionIndex = useCurrentImage ? initialVersions.indexOf(retainedInputUrl) : -1;
+    const imageUrls = useCurrentImage ? [this.assertCurrentPageImageAvailable(initialPage)] : initialTask.source_image_urls.slice();
     const task = this.markPageGenerating(taskId, pageIndex, generationId);
     const page = task.pages[Number(pageIndex)];
     const pageRequestId = String(requestId || task.id) + "-p" + Number(pageIndex) + "-" + generationId;
@@ -727,8 +821,8 @@ class CarouselRuntimeService {
         temu_platform_id: task.temu_platform_id,
         carousel_page_index: Number(pageIndex),
         generation_id: generationId,
-        image_urls: task.source_image_urls.slice(),
-        prompt: this.buildCarouselPagePrompt(task, page),
+        image_urls: imageUrls,
+        prompt: useCurrentImage ? this.buildCurrentImageEditPrompt(task, page) : this.buildCarouselPagePrompt(task, page),
         size: normalizedSize,
         cancel_signal: controller.signal,
         /** Store the task ID against this page execution rather than its multi-page parent. */
@@ -741,9 +835,9 @@ class CarouselRuntimeService {
           return service.isTaskCancelled(task.id) || !current || !current.pages[Number(pageIndex)]
             || current.pages[Number(pageIndex)].generation_id !== generationId;
         }
-      }, "fusion", pageRequestId);
+      }, useCurrentImage ? "edit" : "fusion", pageRequestId);
       this.assertTaskAvailable(task.id);
-      const completedTask = this.markPageSucceeded(task.id, pageIndex, result.image_url, generationId);
+      const completedTask = this.markPageSucceeded(task.id, pageIndex, result.image_url, generationId, retainedInputUrl, replacementVersionIndex);
       if (!completedTask) {
         this.deleteGeneratedImage(result.image_url);
       }
@@ -757,8 +851,8 @@ class CarouselRuntimeService {
     }
   }
 
-  /** Start several Fusion pages concurrently and return the durable task immediately. */
-  startGeneration(taskId, pageIndices, requestId) {
+  /** Start selected original-Fusion or current-image Edit pages and return immediately. */
+  startGeneration(taskId, pageIndices, requestId, referenceMode) {
     const task = this.readTask(taskId);
     if (!task || !this.providers) {
       throw createCarouselError("轮播任务不存在或图片服务未初始化。", 404, "CAROUSEL_TASK_NOT_FOUND");
@@ -774,6 +868,13 @@ class CarouselRuntimeService {
         uniqueIndices.push(pageIndex);
       }
     }
+    const normalizedReferenceMode = String(referenceMode || "original") === "current" ? "current" : "original";
+    if (normalizedReferenceMode === "current") {
+      if (uniqueIndices.length !== 1) {
+        throw createCarouselError("基于当前图重生一次只能提交一个分镜。", 400, "CAROUSEL_CURRENT_IMAGE_COUNT_INVALID");
+      }
+      this.assertCurrentPageImageAvailable(task.pages[uniqueIndices[0]]);
+    }
     for (let index = 0; index < uniqueIndices.length; index += 1) {
       const pageIndex = uniqueIndices[index];
       const currentTask = this.readTask(task.id);
@@ -784,7 +885,7 @@ class CarouselRuntimeService {
       function ignoreCarouselGenerationFailure() {
         return;
       }
-      this.generatePage(task.id, pageIndex, requestId).catch(ignoreCarouselGenerationFailure);
+      this.generatePage(task.id, pageIndex, requestId, normalizedReferenceMode).catch(ignoreCarouselGenerationFailure);
     }
     return this.readTask(task.id) || task;
   }
@@ -807,6 +908,19 @@ class CarouselRuntimeService {
       return true;
     }
     return false;
+  }
+
+  /** Delete retained alternatives after a confirmed task has removed its runtime references. */
+  deleteRetainedAlternates(task) {
+    const pages = task && Array.isArray(task.pages) ? task.pages : [];
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+      const versions = this.normalizePageImageVersions(pages[pageIndex]);
+      for (let versionIndex = 0; versionIndex < versions.length; versionIndex += 1) {
+        if (versions[versionIndex] !== String(pages[pageIndex].image_url || "")) {
+          this.deleteGeneratedImage(versions[versionIndex]);
+        }
+      }
+    }
   }
 
   /** Delete one task and optionally remove its un-applied generated images. */
@@ -846,7 +960,10 @@ class CarouselRuntimeService {
     }
     if (removeImages) {
       for (let index = 0; index < task.pages.length; index += 1) {
-        this.deleteGeneratedImage(task.pages[index].image_url);
+        const versions = this.normalizePageImageVersions(task.pages[index]);
+        for (let versionIndex = 0; versionIndex < versions.length; versionIndex += 1) {
+          this.deleteGeneratedImage(versions[versionIndex]);
+        }
       }
     }
     return task;

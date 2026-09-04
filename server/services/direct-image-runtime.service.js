@@ -1,6 +1,8 @@
 const fs = require("fs");
 const path = require("path");
 
+const CURRENT_IMAGE_EDIT_PREFIX = "以唯一输入图片为基础继续编辑。严格保留现有商品身份、结构、数量、颜色、材质、比例和已正确内容，不要重新设计商品；仅按以下要求修改：";
+
 /** Create one direct-image task error with a stable HTTP status and code. */
 function createDirectImageError(message, statusCode, code) {
   const error = new Error(String(message || "单结果图片任务处理失败。"));
@@ -104,6 +106,46 @@ class DirectImageRuntimeService {
     return tasks;
   }
 
+  /** Return at most two distinct retained image versions for one task. */
+  normalizeImageVersions(task) {
+    const item = task && typeof task === "object" ? task : {};
+    const source = Array.isArray(item.image_versions) ? item.image_versions : [];
+    const versions = [];
+    for (let index = 0; index < source.length; index += 1) {
+      const url = String(source[index] || "").trim();
+      if (url && versions.indexOf(url) < 0) {
+        versions.push(url);
+      }
+    }
+    const current = String(item.image_url || "").trim();
+    if (current && versions.indexOf(current) < 0) {
+      versions.push(current);
+    }
+    return versions.slice(-2);
+  }
+
+  /** Persist one active direct-image version without submitting new provider work. */
+  selectTaskVersion(taskId, versionIndex) {
+    const task = this.readTask(taskId);
+    if (!task) {
+      throw createDirectImageError("单图编辑任务不存在。", 404, "DIRECT_IMAGE_TASK_NOT_FOUND");
+    }
+    if (task.status === "queued" || task.status === "generating") {
+      throw createDirectImageError("图片生成期间不能切换版本。", 409, "DIRECT_IMAGE_VERSION_BUSY");
+    }
+    const versions = this.normalizeImageVersions(task);
+    const index = Number(versionIndex);
+    if (!Number.isInteger(index) || !versions[index]) {
+      throw createDirectImageError("图片版本不存在。", 400, "DIRECT_IMAGE_VERSION_INVALID");
+    }
+    task.image_versions = versions;
+    task.active_image_version = index;
+    task.image_url = versions[index];
+    task.image_ready = this.isGeneratedImageReady(task.image_url)
+      || task.source_image_urls.indexOf(task.image_url) >= 0;
+    return this.writeTask(task);
+  }
+
   /** Find the newest retained direct-image task for one Temu product. */
   findTaskByTemuMainId(temuMainId) {
     const key = String(temuMainId || "");
@@ -120,6 +162,20 @@ class DirectImageRuntimeService {
     return selectedTask;
   }
 
+  /** Return the one queued or generating direct-image task already owned by a product. */
+  findActiveTaskByTemuMainId(temuMainId) {
+    const key = String(temuMainId || "");
+    const tasks = this.readTasks();
+    for (let index = 0; index < tasks.length; index += 1) {
+      const status = String(tasks[index].status || "");
+      if (String(tasks[index].temu_main_id || "") === key
+        && (status === "queued" || status === "generating")) {
+        return tasks[index];
+      }
+    }
+    return null;
+  }
+
   /** Validate one direct-image request and create an idempotent persisted task. */
   createTask(input) {
     const source = input && typeof input === "object" ? input : {};
@@ -131,21 +187,44 @@ class DirectImageRuntimeService {
     if (existing) {
       return { task: existing, existing: true };
     }
+    const activeTask = this.taskScope === "sku" ? null : this.findActiveTaskByTemuMainId(source.temu_main_id);
+    if (activeTask) {
+      throw createDirectImageError("该商品已有单图编辑任务正在排队或生成，请等待完成后再提交。", 409, "DIRECT_IMAGE_TASK_ACTIVE");
+    }
     const mode = source.mode === "edit" ? "edit" : "fusion";
-    const imageUrls = Array.isArray(source.image_urls) ? source.image_urls.slice() : [];
+    const useCurrentImage = this.taskScope !== "sku" && source.reference_mode === "current";
+    const parentTask = useCurrentImage ? this.readTask(source.parent_task_id) : null;
+    if (useCurrentImage && !parentTask) {
+      throw createDirectImageError("当前图片版本已失效，请重新打开后再试。", 409, "DIRECT_IMAGE_PARENT_NOT_FOUND");
+    }
+    if (parentTask && String(parentTask.temu_main_id || "") !== String(source.temu_main_id || "")) {
+      throw createDirectImageError("当前图片版本不属于这个商品。", 409, "DIRECT_IMAGE_PARENT_MISMATCH");
+    }
+    const imageUrls = parentTask && Array.isArray(parentTask.source_image_urls)
+      ? parentTask.source_image_urls.slice()
+      : Array.isArray(source.image_urls) ? source.image_urls.slice() : [];
     const expectedCount = mode === "edit" ? 1 : 2;
     if (!taskId || imageUrls.length !== expectedCount) {
       throw createDirectImageError(mode === "edit" ? "单图编辑必须提交一张图片。" : "双图溶图必须提交两张图片。", 400, "DIRECT_IMAGE_SOURCE_INVALID");
     }
+    const editImageUrl = parentTask ? String(parentTask.image_url || "").trim() : String(imageUrls[0] || "").trim();
+    const editsOriginalSource = Boolean(parentTask && parentTask.source_image_urls.indexOf(editImageUrl) >= 0);
+    if (parentTask && (!editImageUrl || (!editsOriginalSource && !this.isGeneratedImageReady(editImageUrl)))) {
+      throw createDirectImageError("当前图片未写入本地缓存，不能继续编辑。", 409, "DIRECT_IMAGE_CURRENT_NOT_READY");
+    }
+    const inheritedVersions = parentTask ? this.normalizeImageVersions(parentTask) : [];
     const task = {
       id: taskId,
       temu_main_id: String(source.temu_main_id || ""),
       temu_platform_id: String(source.temu_platform_id || ""),
       mode: mode,
       source_image_urls: imageUrls,
-      source_type: source.source_type === "sku" ? "sku" : source.source_type === "detail" ? "detail" : "gallery",
-      source_indices: Array.isArray(source.source_indices) ? source.source_indices.slice() : [],
-      detail_index: Number(source.detail_index === undefined ? -1 : source.detail_index),
+      edit_image_url: editImageUrl,
+      reference_mode: parentTask ? "current" : "original",
+      parent_task_id: parentTask ? String(parentTask.id || "") : "",
+      source_type: parentTask ? String(parentTask.source_type || "gallery") : source.source_type === "sku" ? "sku" : source.source_type === "detail" ? "detail" : "gallery",
+      source_indices: parentTask && Array.isArray(parentTask.source_indices) ? parentTask.source_indices.slice() : Array.isArray(source.source_indices) ? source.source_indices.slice() : [],
+      detail_index: Number(parentTask ? parentTask.detail_index : source.detail_index === undefined ? -1 : source.detail_index),
       sku_id: String(source.sku_id || ""),
       sku_index: Number(source.sku_index === undefined ? -1 : source.sku_index),
       prompt: String(source.prompt || ""),
@@ -154,8 +233,10 @@ class DirectImageRuntimeService {
       provider_status: "",
       provider_task_id: "",
       provider_image_url: "",
-      image_url: "",
-      image_ready: false,
+      image_url: parentTask ? editImageUrl : "",
+      image_versions: inheritedVersions,
+      active_image_version: parentTask ? Math.max(0, inheritedVersions.indexOf(editImageUrl)) : -1,
+      image_ready: Boolean(parentTask),
       undo_token: "",
       error: "",
       error_code: "",
@@ -163,7 +244,7 @@ class DirectImageRuntimeService {
       updated_at: new Date().toISOString()
     };
     this.writeTask(task);
-    this.deleteConflictingTasks(source, task.id);
+    this.deleteConflictingTasks(source, task.id, Boolean(parentTask));
     return { task: task, existing: false };
   }
 
@@ -189,7 +270,7 @@ class DirectImageRuntimeService {
       return task;
     }
     task.status = "generating";
-    task.image_ready = false;
+    task.image_ready = Boolean(task.image_url);
     task.error = "";
     task.error_code = "";
     this.writeTask(task);
@@ -204,8 +285,10 @@ class DirectImageRuntimeService {
         temu_platform_id: task.temu_platform_id,
         sku_id: task.sku_id,
         sku_index: task.sku_index,
-        image_urls: task.source_image_urls,
-        prompt: task.prompt,
+        image_urls: task.mode === "edit"
+          ? [String(task.edit_image_url || task.source_image_urls[0] || "")]
+          : task.source_image_urls,
+        prompt: task.reference_mode === "current" ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
         size: task.size,
         cancel_signal: controller.signal,
         /** Persist exactly one upstream ID for this local execution, without resurrecting deleted work. */
@@ -233,20 +316,55 @@ class DirectImageRuntimeService {
         this.deleteGeneratedImage(result.image_url);
         throw createDirectImageError("图片生成完成，但本地缓存尚未写入，请重新生成。", 502, "DIRECT_IMAGE_CACHE_NOT_READY");
       }
+      if (this.taskScope === "sku") {
+        currentTask.status = "succeeded";
+        currentTask.image_url = String(result.image_url || "");
+        currentTask.image_ready = true;
+        currentTask.undo_token = String(result.undo_token || "");
+        currentTask.error = "";
+        currentTask.error_code = "";
+        return this.writeTask(currentTask);
+      }
+      const previousVersions = this.normalizeImageVersions(currentTask);
+      const retainedInputUrl = String(currentTask.edit_image_url || currentTask.image_url || "").trim();
+      const nextImageUrl = String(result.image_url || "");
+      const requestedIndex = Number(currentTask.active_image_version);
+      const replacesExistingSlot = previousVersions.length >= 2
+        && Number.isInteger(requestedIndex)
+        && Boolean(previousVersions[requestedIndex]);
+      const nextVersions = replacesExistingSlot ? previousVersions.slice(0, 2) : [];
+      if (replacesExistingSlot) {
+        nextVersions[requestedIndex] = nextImageUrl;
+      } else {
+        [retainedInputUrl, nextImageUrl].forEach(/** Append the initial input and result as the first two slots. */ function appendUniqueVersion(url) {
+          if (url && nextVersions.indexOf(url) < 0) {
+            nextVersions.push(url);
+          }
+        });
+      }
       currentTask.status = "succeeded";
-      currentTask.image_url = String(result.image_url || "");
+      currentTask.image_url = nextImageUrl;
+      currentTask.image_versions = nextVersions;
+      currentTask.active_image_version = replacesExistingSlot ? requestedIndex : Math.max(0, nextVersions.indexOf(nextImageUrl));
       currentTask.image_ready = true;
       currentTask.undo_token = String(result.undo_token || "");
       currentTask.error = "";
       currentTask.error_code = "";
-      return this.writeTask(currentTask);
+      const savedTask = this.writeTask(currentTask);
+      for (let versionIndex = 0; versionIndex < previousVersions.length; versionIndex += 1) {
+        if (nextVersions.indexOf(previousVersions[versionIndex]) < 0
+          && currentTask.source_image_urls.indexOf(previousVersions[versionIndex]) < 0) {
+          this.deleteGeneratedImage(previousVersions[versionIndex]);
+        }
+      }
+      return savedTask;
     } catch (error) {
       const failedTask = this.readTask(task.id);
       if (!failedTask || this.isTaskCancelled(task.id)) {
         return null;
       }
       failedTask.status = "failed";
-      failedTask.image_ready = false;
+      failedTask.image_ready = Boolean(failedTask.image_url);
       failedTask.error = String(error && error.message || "图片生成失败。");
       failedTask.error_code = String(error && error.code || "DIRECT_IMAGE_GENERATION_FAILED");
       return this.writeTask(failedTask);
@@ -271,10 +389,10 @@ class DirectImageRuntimeService {
   }
 
   /** Delete only the retained task that conflicts with the incoming product or SKU target. */
-  deleteConflictingTasks(source, retainedTaskId) {
+  deleteConflictingTasks(source, retainedTaskId, preserveImages) {
     const input = source && typeof source === "object" ? source : {};
     if (this.taskScope !== "sku") {
-      this.deleteTasksForProduct(input.temu_main_id, true, retainedTaskId);
+      this.deleteTasksForProduct(input.temu_main_id, !preserveImages, retainedTaskId);
       return;
     }
     const mainId = String(input.temu_main_id || "");
@@ -306,7 +424,7 @@ class DirectImageRuntimeService {
   }
 
   /** Delete one retained task and optionally remove its unreferenced generated image. */
-  deleteTask(taskId, removeImage) {
+  deleteTask(taskId, cleanupMode) {
     const safeTaskId = this.normalizeTaskId(taskId);
     const task = this.readTask(safeTaskId);
     const filePath = this.getTaskPath(safeTaskId);
@@ -332,8 +450,15 @@ class DirectImageRuntimeService {
     if (task && fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
-    if (task && removeImage) {
-      this.deleteGeneratedImage(task.image_url);
+    const cleanup = cleanupMode === true ? "all" : String(cleanupMode || "none");
+    if (task && (cleanup === "all" || cleanup === "alternates")) {
+      const versions = this.normalizeImageVersions(task);
+      for (let versionIndex = 0; versionIndex < versions.length; versionIndex += 1) {
+        if (task.source_image_urls.indexOf(versions[versionIndex]) < 0
+          && (cleanup === "all" || versions[versionIndex] !== String(task.image_url || ""))) {
+          this.deleteGeneratedImage(versions[versionIndex]);
+        }
+      }
     }
     return task;
   }

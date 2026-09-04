@@ -82,6 +82,7 @@ test("single regenerate shows immediate submission, then queue/generation/downlo
   await pending;
   assert.equal(fixture.requests.length, 2);
   assert.deepEqual(fixture.requests[1].body.page_indices, [1]);
+  assert.equal(fixture.requests[1].body.reference_mode, "current");
   assert.equal(view.carouselPageFeedback().title, "排队中…");
   for (const [state, title] of [["submitting", "正在提交生图…"], ["running", "生成中…"], ["completed", "图片下载中…"]]) {
     view.currentCarouselPage().provider_status = state;
@@ -103,6 +104,7 @@ test("batch regeneration starts at zero and only counts fresh downloaded results
   await view.regenerateAllCarouselPages();
   assert.equal(requests.length, 1);
   await pending;
+  assert.equal(requests[0].body.reference_mode, "original");
   view.updateCarouselFeedback(original);
   assert.match(view.carouselRunFeedbackText(), /完成 0\/3/);
   const snapshot = structuredClone(view.imageCarouselTask);
@@ -186,10 +188,12 @@ test("button positions and labels stay stable from results to submission and run
   const { view, options } = frontendFixture();
   compile(options.template);
   assert.match(options.template, /v-if="!currentCarouselPage\(\)\.image_url" class="carousel-result-placeholder"/);
+  assert.match(options.template, /<span v-if="!carouselPageFeedback\(\)\.title \|\| carouselPageFeedback\(\)\.error">/);
   assert.doesNotMatch(options.template, /v-else class="carousel-result-placeholder"/);
   const footer = options.template.match(/<footer class="image-editor-actions" :class=[\s\S]*?<\/footer>/)[0];
   assert.match(footer, /@click="regenerateAllCarouselPages">全部重生<\/button>/);
-  assert.match(footer, /@click="regenerateCurrentCarouselPage">单独重生<\/button>/);
+  assert.match(footer, /@click="regenerateCurrentCarouselPage">基于当前图重生<\/button>/);
+  assert.match(footer, /!currentCarouselPage\(\)\.image_url/);
   assert.doesNotMatch(footer, /全部生成中|单张生成中/);
   assert.match(footer, /v-if="canRegenerateCarouselPages\(\) \|\| canApplyCarouselReplacement\(true\)"/);
   assert.match(footer, /:disabled="!canApplyCarouselReplacement\(true\)"/);
@@ -203,6 +207,81 @@ test("button positions and labels stay stable from results to submission and run
   const css = fs.readFileSync(path.join(__dirname, "../../web/styles.css"), "utf8");
   assert.match(css, /\.image-editor-actions\.is-carousel-results > button \{[^}]*width: 104px/);
   assert.match(css, /\.carousel-feedback-leave-active \{ transition: opacity \.3s ease/);
+  assert.match(options.template, /class="carousel-version-dots"/);
+  assert.match(options.template, /@wheel="handleImageVersionWheel\(\$event, 'carousel'\)"/);
+  assert.match(options.template, /@wheel="handleImageVersionWheel\(\$event, 'direct'\)"/);
+  assert.match(css, /\.carousel-version-dots \{[^}]*top: 50%; left: -42px/);
+  assert.match(css, /\.carousel-version-dots \{[^}]*flex-direction: column/);
+});
+
+test("version dots select a retained image without starting generation", /** Exercise the persisted version-selection endpoint only. */ async function () {
+  const fixture = frontendFixture(/** Return the selected older version from the fake backend. */ async function transport(request) {
+    const task = structuredClone(fixture.view.imageCarouselTask);
+    task.pages[0].active_image_version = request.body.version_index;
+    task.pages[0].image_url = task.pages[0].image_versions[request.body.version_index];
+    return responseFixture(task);
+  });
+  const page = fixture.view.imageCarouselTask.pages[0];
+  page.image_versions = ["old-0", "new-0"];
+  page.active_image_version = 1;
+  page.image_url = "new-0";
+  assert.deepEqual(fixture.view.carouselPageVersions(), ["old-0", "new-0"]);
+  assert.equal(fixture.view.activeCarouselPageVersionIndex(), 1);
+  await fixture.view.selectCarouselPageVersion(0);
+  assert.equal(fixture.requests.length, 1);
+  assert.match(fixture.requests[0].url, /\/pages\/0\/version$/);
+  assert.deepEqual(fixture.requests[0].body, { version_index: 0 });
+  assert.equal(fixture.view.currentCarouselPage().image_url, "old-0");
+});
+
+test("direct status prefers the active child task over a stale completed parent", /** Prevent the green star from appearing before the current edit finishes downloading. */ function () {
+  const { view } = frontendFixture();
+  const record = { main_id: "temu-direct" };
+  view.imageEditorOpen = false;
+  view.imageCarouselTask = null;
+  view.imageDirectTasksByMainId[record.main_id] = {
+    id: "parent", temu_main_id: record.main_id, status: "succeeded", image_url: "old-result", image_ready: true,
+    created_at: "2026-09-04T01:00:00.000Z", updated_at: "2026-09-04T01:00:01.000Z"
+  };
+  view.imageDirectTask = {
+    id: "child", temu_main_id: record.main_id, status: "generating", image_url: "old-result", image_ready: true
+  };
+  assert.equal(view.hasOpenableDirectImageTask(record), true);
+  assert.equal(view.isDirectImageTaskComplete(record), false);
+
+  Object.assign(view.imageDirectTask, { status: "succeeded", image_url: "new-result", image_ready: true });
+  assert.equal(view.isDirectImageTaskComplete(record), true);
+});
+
+test("vertical wheel switches both carousel and direct image slots", /** Keep wheel navigation bounded to the two retained versions. */ function () {
+  const { view } = frontendFixture();
+  let prevented = 0;
+  const event = { deltaY: 80, cancelable: true, /** Record image-area scroll capture. */ preventDefault() { prevented += 1; } };
+  Object.assign(view.imageCarouselTask.pages[0], { image_versions: ["old", "new"], active_image_version: 0, image_url: "old" });
+  view.imageCarouselPageIndex = 0;
+  view.selectCarouselPageVersion = /** Capture the wheel-selected carousel slot. */ function selectCarousel(index) { this.wheelCarouselIndex = index; };
+  view.handleImageVersionWheel(event, "carousel");
+  assert.equal(view.wheelCarouselIndex, 1);
+
+  view.imageCarouselTask = null;
+  view.imageEditorBusy = false;
+  view.imageDirectTask = { id: "direct", image_versions: ["old", "new"], active_image_version: 1, image_url: "new" };
+  view.selectDirectImageVersion = /** Capture the wheel-selected direct slot. */ function selectDirect(index) { this.wheelDirectIndex = index; };
+  view.handleImageVersionWheel(Object.assign({}, event, { deltaY: -80 }), "direct");
+  assert.equal(view.wheelDirectIndex, 0);
+  assert.equal(prevented, 2);
+});
+
+test("a never-successful failed page retries from the original pair", /** Keep the failure retry distinct from current-image editing. */ async function () {
+  const original = taskFixture();
+  original.pages[0].status = "failed";
+  original.pages[0].image_url = "";
+  const fixture = frontendFixture(/** Echo save then accept one original-source retry. */ async function transport(request) {
+    return responseFixture(request.method === "PATCH" ? original : runningTask(original, request.body.page_indices));
+  });
+  fixture.view.imageCarouselTask = original;
+  await fixture.view.retryCarouselPage(0);
+  assert.equal(fixture.requests[1].body.reference_mode, "original");
 });
 
 test("unmount cancels every completion timer", /** Prevent delayed state writes after destroying the component. */ function () {

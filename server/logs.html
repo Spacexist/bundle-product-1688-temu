@@ -116,10 +116,15 @@
     .failure-attempt summary { cursor: pointer; color: var(--blue); overflow-wrap: anywhere; }
     .failure-url { display: block; padding: 10px; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
     .failure-reason { max-width: 400px; overflow-wrap: anywhere; }
+    .config-highlights { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+    .config-highlight { padding: 12px; border: 1px solid #26354e; border-radius: 10px; background: rgba(15, 23, 42, .72); }
+    .config-highlight span { display: block; color: var(--muted); font-size: 11px; }
+    .config-highlight strong { display: block; margin-top: 7px; overflow-wrap: anywhere; color: var(--strong); font: 700 16px Consolas, monospace; }
+    .config-json { max-height: 620px; margin: 0; white-space: pre; }
     @media (max-width: 980px) {
       header { align-items: flex-start; flex-wrap: wrap; }
       .actions { width: 100%; margin-left: 0; overflow-x: auto; }
-      .service-grid, .queue-lanes { grid-template-columns: 1fr; }
+      .service-grid, .queue-lanes, .config-highlights { grid-template-columns: 1fr; }
       .log-inspector { right: 8px; bottom: 8px; width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
     }
   </style>
@@ -149,6 +154,7 @@
       <button id="logsTab" type="button" role="tab" aria-selected="true" aria-controls="logsPanel">服务日志</button>
       <button id="imageTasksTab" type="button" role="tab" aria-selected="false" aria-controls="imageTasksPanel">图片任务</button>
       <button id="imageFailuresTab" type="button" role="tab" aria-selected="false" aria-controls="imageFailuresPanel">图片失败</button>
+      <button id="serverConfigTab" type="button" role="tab" aria-selected="false" aria-controls="serverConfigPanel">服务配置</button>
     </nav>
     <section class="queue-panel" aria-live="polite">
       <div class="queue-heading">
@@ -204,6 +210,17 @@
       <div class="task-table-wrap"><table class="task-table"><thead><tr><th>来源 / 执行 ID / task_id</th><th>失败阶段</th><th>最终错误码 / HTTP</th><th>错误原因 / URL（脱敏）</th><th>失败时间</th><th>操作</th></tr></thead><tbody id="imageFailureRows"></tbody></table></div>
       <div class="task-pagination"><button id="imageFailurePrev" type="button">上一页</button><span id="imageFailurePage"></span><button id="imageFailureNext" type="button">下一页</button></div>
       <p class="task-note">只读，不重新生成、不重新下载。每任务最多保留最近 200 条 / 256 KB 明细，超限注明省略数量。完整失败 URL 可能含临时签名，仅在本机详情按需展开和复制，请勿随意分享。历史细节从启用后开始记录。</p>
+    </section>
+    <section id="serverConfigPanel" class="task-panel" role="tabpanel" aria-labelledby="serverConfigTab" hidden>
+      <div class="queue-heading"><div><h2>当前生效的本地配置</h2><p>只读取本机 server/config.json，不触发云端同步或配置修改。</p></div><span id="serverConfigStatus" class="status">等待读取</span></div>
+      <div class="config-highlights">
+        <div class="config-highlight"><span>quality</span><strong id="serverConfigQuality">—</strong></div>
+        <div class="config-highlight"><span>model</span><strong id="serverConfigModel">—</strong></div>
+        <div class="config-highlight"><span>配置版本</span><strong id="serverConfigVersion">—</strong></div>
+      </div>
+      <p id="serverConfigMeta" class="task-note"></p>
+      <p id="serverConfigWarning" class="task-note task-warning" role="status" hidden></p>
+      <pre id="serverConfigJson" class="config-json">等待读取本地配置…</pre>
     </section>
     <section id="logsPanel" role="tabpanel" aria-labelledby="logsTab">
     <div id="requestLogFilter" class="task-note" hidden><span id="requestLogFilterText"></span> <button id="clearRequestLogFilter" type="button">显示全部请求</button></div>
@@ -262,6 +279,7 @@
     var pauseButton = document.getElementById("pauseButton");
     var clearButton = document.getElementById("clearButton");
     var connectionStatus = document.getElementById("connectionStatus");
+    var serverConfigLoading = false;
     var queueLiveStatus = document.getElementById("queueLiveStatus");
     var queueConcurrency = document.getElementById("queueConcurrency");
     var queueActiveCount = document.getElementById("queueActiveCount");
@@ -1082,6 +1100,39 @@
       queuePollTimer = window.setTimeout(pollImageQueue, 1000);
     }
 
+    /** Read and render the local effective config without triggering cloud synchronization. */
+    async function loadServerConfig() {
+      if (serverConfigLoading) { return; }
+      serverConfigLoading = true;
+      var status = document.getElementById("serverConfigStatus");
+      var warning = document.getElementById("serverConfigWarning");
+      try {
+        var response = await fetch("/api/v1/server-config", { cache: "no-store", signal: AbortSignal.timeout(5000) });
+        var payload = await response.json();
+        if (!response.ok || !payload || !payload.ok || !payload.data || !payload.data.config) {
+          throw new Error(payload && payload.error && payload.error.message || "本地配置读取失败。");
+        }
+        var data = payload.data;
+        var sync = data.sync || {};
+        document.getElementById("serverConfigQuality").textContent = String(data.effective && data.effective.quality || "—");
+        document.getElementById("serverConfigModel").textContent = String(data.effective && data.effective.model || "—");
+        document.getElementById("serverConfigVersion").textContent = sync.configVersion ? "v" + sync.configVersion : "未记录";
+        document.getElementById("serverConfigMeta").textContent = "通道：" + String(sync.configChannel || "未记录") + " · 云端配置时间：" + String(sync.configUpdatedAt || "未记录") + " · 本次启动同步：" + String(sync.lastSyncAt || "未记录");
+        document.getElementById("serverConfigJson").textContent = JSON.stringify(data.config, null, 2);
+        warning.hidden = true;
+        warning.textContent = "";
+        status.className = "status is-online";
+        status.textContent = "本地配置 · " + new Date().toLocaleTimeString("zh-CN", { hour12: false });
+      } catch (error) {
+        warning.textContent = String(error && error.message || "本地配置读取失败。");
+        warning.hidden = false;
+        status.className = "status";
+        status.textContent = "读取失败";
+      } finally {
+        serverConfigLoading = false;
+      }
+    }
+
     var imageTasks = [];
     var imageTaskPage = 0;
     var imageTaskOpenId = "";
@@ -1333,18 +1384,22 @@
     function selectDiagnosticsTab(showTasks) {
       var showFailures = showTasks === "failures";
       var showImages = showTasks === true;
+      var showConfig = showTasks === "config";
       document.getElementById("imageTasksPanel").hidden = !showImages;
       document.getElementById("imageFailuresPanel").hidden = !showFailures;
-      document.getElementById("logsPanel").hidden = showImages || showFailures;
+      document.getElementById("serverConfigPanel").hidden = !showConfig;
+      document.getElementById("logsPanel").hidden = showImages || showFailures || showConfig;
       document.getElementById("imageTasksTab").setAttribute("aria-selected", String(showImages));
       document.getElementById("imageFailuresTab").setAttribute("aria-selected", String(showFailures));
-      document.getElementById("logsTab").setAttribute("aria-selected", String(!showImages && !showFailures));
-      serviceFilter.hidden = showImages || showFailures;
-      pauseButton.hidden = showImages || showFailures;
-      clearButton.hidden = showImages || showFailures;
+      document.getElementById("serverConfigTab").setAttribute("aria-selected", String(showConfig));
+      document.getElementById("logsTab").setAttribute("aria-selected", String(!showImages && !showFailures && !showConfig));
+      serviceFilter.hidden = showImages || showFailures || showConfig;
+      pauseButton.hidden = showImages || showFailures || showConfig;
+      clearButton.hidden = showImages || showFailures || showConfig;
       closeLogInspector();
       if (showImages) { renderImageTasks(); loadImageTasks(); }
       if (showFailures) { renderImageFailures(); loadImageFailures(); }
+      if (showConfig) { loadServerConfig(); }
     }
 
     /** Apply filters immediately and reset pagination to the first result page. */
@@ -1581,6 +1636,7 @@
     function handleImageFailureFilter() { imageFailurePage = 0; renderImageFailures(); }
 
     document.getElementById("imageFailuresTab").addEventListener("click", /** Open the independent final-failure history. */ function showFailures() { selectDiagnosticsTab("failures"); });
+    document.getElementById("serverConfigTab").addEventListener("click", /** Open the local redacted server configuration. */ function showConfig() { selectDiagnosticsTab("config"); });
     imageFailureSearch.addEventListener("input", handleImageFailureFilter);
     imageFailureSource.addEventListener("change", handleImageFailureFilter);
     imageFailureStage.addEventListener("change", handleImageFailureFilter);

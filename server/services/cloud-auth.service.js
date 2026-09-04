@@ -77,7 +77,9 @@ function runDpapi(mode, value) {
     throw result.error;
   }
   if (result.status !== 0) {
-    throw new Error(String(result.stderr || "Windows DPAPI 操作失败。").trim());
+    const error = new Error(String(result.stderr || "Windows DPAPI 操作失败。").trim());
+    error.code = protect ? "DPAPI_PROTECT_FAILED" : "DPAPI_UNPROTECT_FAILED";
+    throw error;
   }
   return String(result.stdout || "").trim();
 }
@@ -279,17 +281,12 @@ async function requestWorker(workerUrl, pathname, payload) {
   }
 }
 
-/** Apply a newer cloud config to server/config.json and record its version. */
-function applyCloudConfigIfNewer(response, localState) {
+/** Apply the authoritative startup config even when a reused version number matches locally. */
+function applyCloudConfigResponse(response, localState) {
   const cloudVersion = Math.max(0, Math.floor(Number(response.configVersion) || 0));
   const currentState = localState || readConfigState();
-  if (!cloudVersion || cloudVersion <= currentState.version) {
-    return {
-      updated: false,
-      localVersion: currentState.version,
-      cloudVersion: cloudVersion,
-      updatedAt: String(response.updatedAt || currentState.updatedAt || "")
-    };
+  if (!Object.prototype.hasOwnProperty.call(response, "config")) {
+    throw new Error("云端未返回完整 config.json，启动同步已中止。");
   }
   const config = validateConfigPayload(response.config);
   writeJsonAtomic(CONFIG_PATH, config);
@@ -313,7 +310,7 @@ function buildClientIdentity() {
   };
 }
 
-/** Sync one access hash against Cloudflare and update local config only when needed. */
+/** Sync one access hash against Cloudflare and force one complete config download for this startup. */
 async function syncWithAccessHash(workerUrl, accessHash) {
   const normalizedUrl = normalizeWorkerUrl(workerUrl);
   const normalizedHash = String(accessHash || "").trim().toLocaleLowerCase();
@@ -324,22 +321,37 @@ async function syncWithAccessHash(workerUrl, accessHash) {
   const identity = buildClientIdentity();
   const response = await requestWorker(normalizedUrl, "/api/user/config", {
     accessHash: normalizedHash,
-    localVersion: localState.version,
+    localVersion: -1,
     deviceName: identity.deviceName,
     macHash: identity.macHash,
     macMissing: identity.macMissing
   });
-  const configSync = applyCloudConfigIfNewer(response, localState);
+  const configSync = applyCloudConfigResponse(response, localState);
   const account = response.account && typeof response.account === "object" ? response.account : {};
   return {
     authorized: true,
     accountName: String(account.name || ""),
     macBound: Boolean(account.macBound),
     macMissing: identity.macMissing,
+    configChannel: String(response.configChannel || "current"),
     configUpdated: configSync.updated,
     configVersion: configSync.cloudVersion || configSync.localVersion,
     lastSyncAt: new Date().toISOString(),
     workerUrl: normalizedUrl
+  };
+}
+
+/** Return the last startup sync metadata without contacting Cloudflare again. */
+function getConfigSyncStatus() {
+  const state = readConfigState();
+  const runtime = readRuntimeAuthorizedStatus();
+  return {
+    authorized: Boolean(runtime && runtime.authorized),
+    accountName: runtime ? String(runtime.accountName || "") : "",
+    configChannel: runtime ? String(runtime.configChannel || "current") : "",
+    configVersion: state.version,
+    configUpdatedAt: state.updatedAt,
+    lastSyncAt: state.lastSyncAt
   };
 }
 
@@ -364,11 +376,27 @@ async function syncSavedCredential() {
     return {
       authorized: false,
       hasCredential: false,
+      loginRequired: true,
       workerUrl: configuredWorkerUrl(),
       message: "尚未登录。"
     };
   }
-  const accessHash = runDpapi("unprotect", credential.encryptedAccessHash);
+  let accessHash = "";
+  try {
+    accessHash = runDpapi("unprotect", credential.encryptedAccessHash);
+  } catch (error) {
+    if (error && error.code === "DPAPI_UNPROTECT_FAILED") {
+      return {
+        authorized: false,
+        hasCredential: false,
+        loginRequired: true,
+        credentialUnreadable: true,
+        workerUrl: credential.workerUrl,
+        message: "本机授权凭据属于其他 Windows 用户或设备，请重新输入访问码。"
+      };
+    }
+    throw error;
+  }
   const result = await syncWithAccessHash(credential.workerUrl, accessHash);
   saveCredential(credential.workerUrl, accessHash, result.accountName || credential.accountName);
   return rememberRuntimeAuthorizedStatus(result, true);
@@ -403,6 +431,7 @@ function clearCredential() {
 
 module.exports = {
   clearCredential: clearCredential,
+  getConfigSyncStatus: getConfigSyncStatus,
   localStatus: localStatus,
   loginAndSync: loginAndSync,
   syncSavedCredential: syncSavedCredential

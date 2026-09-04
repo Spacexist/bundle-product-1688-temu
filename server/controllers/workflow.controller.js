@@ -194,10 +194,20 @@ class WorkflowController {
     }
   }
 
+  /** Select one retained carousel image version without starting a provider task. */
+  selectCarouselPageVersion(request, response, next) {
+    try {
+      const task = this.carousel.selectTaskPageVersion(request.params.taskId, request.params.pageIndex, request.validatedBody.version_index);
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** Start selected carousel pages in the background and return without waiting for Fusion completion. */
   generateCarouselTask(request, response, next) {
     try {
-      const task = this.carousel.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId);
+      const task = this.carousel.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode);
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
@@ -215,7 +225,8 @@ class WorkflowController {
         throw error;
       }
       const result = await this.products.applyCarouselTask(task, request.validatedBody.selected_indices, request.requestId, Boolean(request.validatedBody.replace_all));
-      this.carousel.deleteTask(task.id, false);
+      const deletedTask = this.carousel.deleteTask(task.id, false);
+      this.carousel.deleteRetainedAlternates(deletedTask);
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

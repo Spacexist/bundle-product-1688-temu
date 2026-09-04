@@ -19,6 +19,7 @@ function createProviderRouter(options) {
   router.get("/images/direct-tasks", providers.getDirectImageTasks.bind(providers));
   router.get("/images/direct-tasks/product/:temuMainId", providers.getDirectImageTaskForProduct.bind(providers));
   router.get("/images/direct-tasks/:taskId", providers.getDirectImageTask.bind(providers));
+  router.post("/images/direct-tasks/:taskId/version", validationModule.validate(schemaModule.directImageVersionSelectSchema, "body"), providers.selectDirectImageTaskVersion.bind(providers));
   router.delete("/images/direct-tasks/:taskId", providers.deleteDirectImageTask.bind(providers));
   router.post("/images/sku-blend-tasks", validationModule.validate(schemaModule.skuBlendTaskSchema, "body"), providers.createSkuBlendTask.bind(providers));
   router.get("/images/sku-blend-tasks", providers.getSkuBlendTasks.bind(providers));
@@ -37,6 +38,7 @@ function createProviderRouter(options) {
   router.get("/workflow/carousel/product/:temuMainId", workflow.getCarouselTask.bind(workflow));
   router.patch("/workflow/carousel/:taskId", validationModule.validate(schemaModule.carouselPlanUpdateSchema, "body"), workflow.updateCarouselTask.bind(workflow));
   router.patch("/workflow/carousel/:taskId/pages/:pageIndex", validationModule.validate(schemaModule.carouselPageUpdateSchema, "body"), workflow.updateCarouselPage.bind(workflow));
+  router.post("/workflow/carousel/:taskId/pages/:pageIndex/version", validationModule.validate(schemaModule.carouselVersionSelectSchema, "body"), workflow.selectCarouselPageVersion.bind(workflow));
   router.post("/workflow/carousel/:taskId/generate", validationModule.validate(schemaModule.carouselGenerationSchema, "body"), workflow.generateCarouselTask.bind(workflow));
   router.post("/workflow/carousel/:taskId/apply", validationModule.validate(schemaModule.carouselApplySchema, "body"), workflow.applyCarouselTask.bind(workflow));
   router.delete("/workflow/carousel/:taskId", workflow.deleteCarouselTask.bind(workflow));
@@ -45,6 +47,7 @@ function createProviderRouter(options) {
 
   router.get("/logs", diagnostics.getLogs.bind(diagnostics));
   router.get("/logs/events", diagnostics.connectLogs.bind(diagnostics));
+  router.get("/server-config", diagnostics.getServerConfig.bind(diagnostics));
   router.get("/clip/status", diagnostics.getClipStatus.bind(diagnostics));
   router.post("/clip/warmup", diagnostics.warmClip.bind(diagnostics));
   router.get("/queue", diagnostics.getQueue.bind(diagnostics));
