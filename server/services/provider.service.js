@@ -559,9 +559,16 @@ class ProviderService {
     const source = input && typeof input === "object" ? input : {};
     this.throwIfImageEditCancelled(source);
     const imageUrls = Array.isArray(source.image_urls) ? source.image_urls : [];
-    const expectedImageCount = requestMode === "edit" ? 1 : 2;
-    if (imageUrls.length !== expectedImageCount) {
-      throw createProviderError(requestMode === "edit" ? "单图编辑必须提交一张图片。" : "溶图必须提交两张图片。", 400);
+    const isMultiFusion = requestMode === "fusion"
+      && (source.task_scope === "multi-fusion" || source.multi_fusion_task_id);
+    const imageCountValid = requestMode === "edit"
+      ? imageUrls.length === 1
+      : isMultiFusion ? imageUrls.length >= 3 : imageUrls.length === 2;
+    if (!imageCountValid) {
+      const message = requestMode === "edit"
+        ? "单图编辑必须提交一张图片。"
+        : isMultiFusion ? "多图融合至少需要提交三张图片。" : "溶图必须提交两张图片。";
+      throw createProviderError(message, 400);
     }
     const config = this.getImageConfig();
     const endpoint = this.getImageEditEndpoint(config);
@@ -600,6 +607,8 @@ class ProviderService {
     this.writeLog("OUTBOUND", "Tuba async " + requestMode + " POST " + endpoint, {
       carousel_task_id: String(source.carousel_task_id || ""),
       carousel_page_index: source.carousel_page_index === undefined ? "" : Number(source.carousel_page_index),
+      multi_fusion_task_id: String(source.multi_fusion_task_id || ""),
+      multi_fusion_page_index: source.multi_fusion_page_index === undefined ? "" : Number(source.multi_fusion_page_index),
       generation_id: String(source.generation_id || ""),
       model: String(config.model || "gpt-image-2"),
       prompt: prompt,
@@ -684,7 +693,7 @@ class ProviderService {
     }, {
       type: "edits",
       execution_id: executionId,
-      source: source.carousel_task_id ? "carousel" : source.task_scope === "sku" ? "sku-fusion" : mode === "fusion" ? "fusion" : "single-edit",
+      source: source.multi_fusion_task_id ? "multi-fusion" : source.carousel_task_id ? "carousel" : source.task_scope === "sku" ? "sku-fusion" : mode === "fusion" ? "fusion" : "single-edit",
       temu_main_id: source.temu_main_id,
       temu_platform_id: source.temu_platform_id,
       sku_id: source.sku_id,
@@ -693,6 +702,8 @@ class ProviderService {
       direct_task_id: String(source.direct_task_id || ""),
       carousel_task_id: String(source.carousel_task_id || ""),
       carousel_page_index: source.carousel_page_index === undefined ? "" : Number(source.carousel_page_index),
+      multi_fusion_task_id: String(source.multi_fusion_task_id || ""),
+      multi_fusion_page_index: source.multi_fusion_page_index === undefined ? "" : Number(source.multi_fusion_page_index),
       generation_id: String(source.generation_id || "")
     });
   }

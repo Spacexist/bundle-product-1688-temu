@@ -5,8 +5,8 @@ const RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_FINISHED = 1000;
 const TERMINAL = new Set(["succeeded", "failed", "timeout", "cancelled", "interrupted"]);
 const PHASES = new Set(["queued", "preparing", "submitting", "upstream_queued", "upstream_running", "downloading", ...TERMINAL]);
-const TEXT_FIELDS = ["execution_id", "source", "request_id", "direct_task_id", "carousel_task_id", "generation_id", "temu_main_id", "temu_platform_id", "sku_id", "provider_task_id", "provider_status", "provider_submitted_at", "error_code"];
-const NUMBER_FIELDS = ["carousel_page_index", "candidate_index", "sku_index", "download_attempt"];
+const TEXT_FIELDS = ["execution_id", "source", "request_id", "direct_task_id", "carousel_task_id", "multi_fusion_task_id", "generation_id", "temu_main_id", "temu_platform_id", "sku_id", "provider_task_id", "provider_status", "provider_submitted_at", "error_code"];
+const NUMBER_FIELDS = ["carousel_page_index", "multi_fusion_page_index", "candidate_index", "sku_index", "download_attempt"];
 const TIME_FIELDS = ["created_at", "updated_at", "started_at", "finished_at"];
 
 /** Select only short identity/status metadata; never persist prompts, credentials, images or URLs. */

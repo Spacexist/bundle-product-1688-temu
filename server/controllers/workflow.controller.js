@@ -9,6 +9,7 @@ class WorkflowController {
     this.workflow = settings.workflow;
     this.binding = settings.binding;
     this.carousel = settings.carousel;
+    this.multiFusion = settings.multiFusion;
     this.directImages = settings.directImages;
     this.products = settings.products;
   }
@@ -237,6 +238,104 @@ class WorkflowController {
   deleteCarouselTask(request, response, next) {
     try {
       const task = this.carousel.deleteTask(request.params.taskId, true);
+      response.json({ ok: true, data: { deleted: Boolean(task) }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return the active or retained multi-fusion task for one Temu product. */
+  getMultiFusionTask(request, response, next) {
+    try {
+      const task = this.multiFusion.findTaskByTemuMainId(request.params.temuMainId);
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Return every retained multi-fusion task so the workbench can render reopen indicators. */
+  getMultiFusionTasks(request, response, next) {
+    try {
+      response.json({ ok: true, data: { tasks: this.multiFusion.readTasks() }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Create one multi-image fusion task and start generating all result slots. */
+  startMultiFusionTask(request, response, next) {
+    try {
+      const task = this.multiFusion.createAndStartTask(request.validatedBody, request.requestId);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Create one ready multi-image fusion task from manually configured storyboard prompts. */
+  startManualMultiFusionTask(request, response, next) {
+    try {
+      const task = this.multiFusion.createManualTask(request.validatedBody);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Save one non-running multi-fusion page without resetting the remaining task. */
+  updateMultiFusionPage(request, response, next) {
+    try {
+      const task = this.multiFusion.updateTaskPage(request.params.taskId, request.params.pageIndex, request.validatedBody);
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Select one retained multi-fusion image version without starting a provider task. */
+  selectMultiFusionPageVersion(request, response, next) {
+    try {
+      const task = this.multiFusion.selectTaskPageVersion(request.params.taskId, request.params.pageIndex, request.validatedBody.version_index);
+      response.json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Start selected multi-fusion result pages in the background and return immediately. */
+  generateMultiFusionTask(request, response, next) {
+    try {
+      const task = this.multiFusion.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode);
+      response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Append selected successful multi-fusion pages as one durable product image mutation. */
+  async applyMultiFusionTask(request, response, next) {
+    try {
+      const task = this.multiFusion.readTask(request.params.taskId);
+      if (!task) {
+        const error = new Error("多图融合任务不存在。");
+        error.statusCode = 404;
+        error.code = "MULTI_FUSION_TASK_NOT_FOUND";
+        throw error;
+      }
+      const result = await this.products.applyMultiFusionTask(task, request.validatedBody.selected_indices, request.requestId);
+      const deletedTask = this.multiFusion.deleteTask(task.id, false);
+      this.multiFusion.deleteRetainedAlternates(deletedTask);
+      response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /** Abandon one multi-fusion runtime task and remove its un-applied generated images. */
+  deleteMultiFusionTask(request, response, next) {
+    try {
+      const task = this.multiFusion.deleteTask(request.params.taskId, true);
       response.json({ ok: true, data: { deleted: Boolean(task) }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

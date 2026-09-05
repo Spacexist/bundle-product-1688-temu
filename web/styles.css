@@ -371,8 +371,10 @@ button { cursor: pointer; }
 .image-editor-stage-label { position: absolute; top: 11px; left: 11px; z-index: 2; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 999px; background: rgba(247, 249, 251, .7); box-shadow: 0 5px 14px rgba(54, 65, 83, .09); color: #64748b; font-size: 10px; font-weight: 700; backdrop-filter: blur(12px); }
 .image-editor-source-canvas { display: grid; width: 100%; min-height: 360px; max-height: 52vh; padding: 28px; box-sizing: border-box; place-items: center; }
 .image-editor-stage.has-two-sources .image-editor-source-canvas { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.image-editor-stage.has-multi-sources .image-editor-source-canvas { grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); align-content: start; align-items: stretch; gap: 12px; overflow-y: auto; place-items: stretch; }
 .image-editor-source-canvas img { display: block; max-width: 100%; max-height: calc(52vh - 56px); border-radius: 12px; box-shadow: 0 12px 28px rgba(56, 66, 84, .14); object-fit: contain; }
 .image-editor-stage.has-two-sources .image-editor-source-canvas img { width: 100%; height: calc(52vh - 56px); min-height: 280px; background: rgba(255, 255, 255, .28); }
+.image-editor-stage.has-multi-sources .image-editor-source-canvas img { width: 100%; height: 146px; max-height: none; background: rgba(255, 255, 255, .32); }
 .image-editor-generated-image { display: block; width: 100%; height: 100%; min-height: 360px; max-height: 52vh; object-fit: contain; }
 .carousel-task-failed-empty { display: grid; max-width: 520px; gap: 8px; place-items: center; padding: 24px; border: 1px solid rgba(239, 68, 68, .22); border-radius: 16px; background: rgba(254, 242, 242, .78); box-shadow: 0 12px 28px rgba(127, 29, 29, .1), inset 0 1px 0 rgba(255, 255, 255, .72); color: #991b1b; text-align: center; }
 .carousel-task-failed-empty strong { color: #7f1d1d; font-size: 16px; }

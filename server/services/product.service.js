@@ -844,6 +844,56 @@ class ProductService {
     return transaction.result;
   }
 
+  /** Append selected multi-fusion outputs while preserving every original gallery image. */
+  async applyMultiFusionTask(task, selectedIndices, requestId) {
+    const service = this;
+    const transaction = await this.repository.mutate(/** Save multi-fusion outputs and an undo snapshot in one product transaction. */ async function mutateMultiFusionImages(payload) {
+      const found = task.temu_platform_id
+        ? service.findRecord(payload.records, "temu", task.temu_platform_id)
+        : service.findRecordByMainId(payload.records, "temu", task.temu_main_id);
+      if (!found) {
+        const error = new Error("找不到多图融合任务对应的 Temu 商品。");
+        error.statusCode = 404;
+        error.code = "MULTI_FUSION_PRODUCT_NOT_FOUND";
+        throw error;
+      }
+      const generatedUrls = [];
+      const selectedPages = {};
+      for (let index = 0; index < selectedIndices.length; index += 1) {
+        const selectedIndex = Number(selectedIndices[index]);
+        if (selectedPages[selectedIndex]) {
+          continue;
+        }
+        selectedPages[selectedIndex] = true;
+        const page = task.pages[selectedIndex];
+        if (page && page.status === "succeeded" && page.image_url) {
+          generatedUrls.push(String(page.image_url));
+        }
+      }
+      if (!generatedUrls.length) {
+        const error = new Error("没有选择可确认的成功图片。");
+        error.statusCode = 400;
+        error.code = "MULTI_FUSION_OUTPUT_EMPTY";
+        throw error;
+      }
+      const currentGallery = Array.isArray(found.record.gallery_image_urls) ? found.record.gallery_image_urls : [];
+      const undoToken = service.repository.createHistorySnapshot(found.record, "multi_fusion_images");
+      const gallery = currentGallery.concat(generatedUrls);
+      found.record.gallery_image_urls = gallery;
+      found.record.main_image_url = gallery[0] || "";
+      await service.images.cacheEditableRecordImages(found.record);
+      found.record.version = Number(found.record.version || 1) + 1;
+      return { product: service.viewModels.normalizeRecord(found.record), undo_token: undoToken };
+    });
+    this.events.publish({
+      resource: "product",
+      action: "multi_fusion_applied",
+      ids: ["temu", String(transaction.result.product.platform_id)],
+      version: transaction.result.product.version
+    }, requestId);
+    return transaction.result;
+  }
+
   /** Resolve saved carousel slots to the nearest distinct positions in the live gallery. */
   resolveCarouselReplacementIndices(galleryLength, taskSourceIndices) {
     const length = Math.max(0, Math.floor(Number(galleryLength || 0)));

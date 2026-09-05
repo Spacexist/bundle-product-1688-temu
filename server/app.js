@@ -14,6 +14,7 @@ const collectionModule = require("./services/collection.service");
 const providerServiceModule = require("./services/provider.service");
 const workflowServiceModule = require("./workflow-service");
 const carouselRuntimeModule = require("./services/carousel-runtime.service");
+const multiFusionRuntimeModule = require("./services/multi-fusion-runtime.service");
 const directImageRuntimeModule = require("./services/direct-image-runtime.service");
 const bindingServiceModule = require("./binding-service");
 const productControllerModule = require("./controllers/product.controller");
@@ -93,6 +94,11 @@ function createApp() {
     images: images,
     providers: providers
   });
+  const multiFusion = new multiFusionRuntimeModule.MultiFusionRuntimeService({
+    cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
+    images: images,
+    providers: providers
+  });
   const directImages = new directImageRuntimeModule.DirectImageRuntimeService({
     cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory),
     providers: providers,
@@ -151,7 +157,7 @@ function createApp() {
   const configController = new configControllerModule.ConfigController();
   const currencyController = new currencyControllerModule.CurrencyController({ currency: currency });
   const providerController = new providerControllerModule.ProviderController({ providers: providers, carousel: carousel, directImages: directImages, skuBlendTasks: skuBlendTasks });
-  const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, directImages: directImages, products: products });
+  const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, multiFusion: multiFusion, directImages: directImages, products: products });
   const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics, clipWorker: clipWorker });
   const cloudAuthController = new cloudAuthControllerModule.CloudAuthController();
   const app = express();

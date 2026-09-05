@@ -42,6 +42,15 @@ function createProviderRouter(options) {
   router.post("/workflow/carousel/:taskId/generate", validationModule.validate(schemaModule.carouselGenerationSchema, "body"), workflow.generateCarouselTask.bind(workflow));
   router.post("/workflow/carousel/:taskId/apply", validationModule.validate(schemaModule.carouselApplySchema, "body"), workflow.applyCarouselTask.bind(workflow));
   router.delete("/workflow/carousel/:taskId", workflow.deleteCarouselTask.bind(workflow));
+  router.get("/workflow/multi-fusion", workflow.getMultiFusionTasks.bind(workflow));
+  router.post("/workflow/multi-fusion", validationModule.validate(schemaModule.multiFusionTaskSchema, "body"), workflow.startMultiFusionTask.bind(workflow));
+  router.post("/workflow/multi-fusion/manual", validationModule.validate(schemaModule.multiFusionManualPromptSchema, "body"), workflow.startManualMultiFusionTask.bind(workflow));
+  router.get("/workflow/multi-fusion/product/:temuMainId", workflow.getMultiFusionTask.bind(workflow));
+  router.patch("/workflow/multi-fusion/:taskId/pages/:pageIndex", validationModule.validate(schemaModule.carouselPageUpdateSchema, "body"), workflow.updateMultiFusionPage.bind(workflow));
+  router.post("/workflow/multi-fusion/:taskId/pages/:pageIndex/version", validationModule.validate(schemaModule.multiFusionVersionSelectSchema, "body"), workflow.selectMultiFusionPageVersion.bind(workflow));
+  router.post("/workflow/multi-fusion/:taskId/generate", validationModule.validate(schemaModule.multiFusionGenerationSchema, "body"), workflow.generateMultiFusionTask.bind(workflow));
+  router.post("/workflow/multi-fusion/:taskId/apply", validationModule.validate(schemaModule.multiFusionApplySchema, "body"), workflow.applyMultiFusionTask.bind(workflow));
+  router.delete("/workflow/multi-fusion/:taskId", workflow.deleteMultiFusionTask.bind(workflow));
   router.post("/workflow/generate", validationModule.validate(schemaModule.workflowGenerateSchema, "body"), workflow.generateImages.bind(workflow));
   router.post("/workflow/complete", validationModule.validate(schemaModule.workflowCompleteSchema, "body"), workflow.complete.bind(workflow));
 

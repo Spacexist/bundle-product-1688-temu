@@ -38,6 +38,7 @@
   "model": "gpt-image-2",
   "edit_prompt": "",
   "fusion_prompt": "",
+  "multi_fusion_prompt": "",
   "image_queue": {
     "concurrency": 4
   },

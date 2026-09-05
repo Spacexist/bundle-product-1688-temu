@@ -146,7 +146,7 @@ test("template UI exposes configuration separately from one-click generation", /
   assert.match(options.template, /@click="openDefaultPromptDialog">分镜模板<\/button>/);
   assert.match(options.template, /@click="generateDefaultPromptPages">\{\{ defaultPromptButtonLabel\(\) \}\}/);
   assert.match(options.template, /class="image-template-strip"/);
-  assert.match(options.template, /<nav v-if="canStartCarouselImagesDirect\(\)" class="image-template-strip"/);
+  assert.match(options.template, /<nav v-if="canUseDefaultPromptTemplatesDirect\(\)" class="image-template-strip"/);
   assert.doesNotMatch(options.template, /<nav v-if="isFusionPromptReviewSession\(\)" class="image-template-strip"/);
   assert.match(options.template, /@click="selectDefaultPromptGenerationTemplate\(template\.id\)"/);
   assert.doesNotMatch(options.template, /设为默认/);

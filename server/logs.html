@@ -187,7 +187,7 @@
       <p class="task-note">每行对应一次图片执行 / 一个上游 task_id。历史保留最近 3 天，最多 1000 条已结束记录；进行中的任务不清理。每秒读取本地状态，不增加上游查询。</p>
       <div class="task-tools">
         <input id="imageTaskSearch" type="search" placeholder="搜索本地 ID / task_id / 商品 ID" aria-label="搜索图片任务">
-        <select id="imageTaskSource" aria-label="图片任务来源"><option value="">全部来源</option><option value="text-to-image">文生图</option><option value="single-edit">单图编辑</option><option value="sku-fusion">SKU 溶图</option><option value="carousel">轮播图</option><option value="fusion">双图溶图</option></select>
+        <select id="imageTaskSource" aria-label="图片任务来源"><option value="">全部来源</option><option value="text-to-image">文生图</option><option value="single-edit">单图编辑</option><option value="sku-fusion">SKU 溶图</option><option value="carousel">轮播图</option><option value="multi-fusion">多图融合</option><option value="fusion">双图溶图</option></select>
         <select id="imageTaskPhase" aria-label="图片任务状态"><option value="">全部状态</option><option value="active">进行中</option><option value="finished">已结束</option><option value="queued">本地排队</option><option value="preparing">准备图片</option><option value="submitting">正在提交</option><option value="upstream_queued">上游排队</option><option value="upstream_running">上游生成</option><option value="downloading">下载中</option><option value="succeeded">本地成功</option><option value="failed">失败</option><option value="timeout">超时</option><option value="cancelled">本地取消</option><option value="interrupted">重启中断</option></select>
         <select id="imageTaskOrder" aria-label="任务显示顺序"><option value="active">进行中优先</option><option value="history">历史优先</option></select>
       </div>
@@ -202,7 +202,7 @@
       <p class="task-note">只保存最终失败和超时的图片任务。独立保留最近 3 天，最多 1000 个失败任务；任务最终成功后，中途错误不会保存在此处。取消和重启中断请看“图片任务”。</p>
       <div class="task-tools">
         <input id="imageFailureSearch" type="search" aria-label="搜索图片失败记录" placeholder="搜索本地 ID / task_id / 商品 / 最终错误码">
-        <select id="imageFailureSource" aria-label="失败任务来源"><option value="">全部来源</option><option value="text-to-image">文生图</option><option value="single-edit">单图编辑</option><option value="sku-fusion">SKU 溶图</option><option value="carousel">轮播图</option><option value="fusion">双图溶图</option></select>
+        <select id="imageFailureSource" aria-label="失败任务来源"><option value="">全部来源</option><option value="text-to-image">文生图</option><option value="single-edit">单图编辑</option><option value="sku-fusion">SKU 溶图</option><option value="carousel">轮播图</option><option value="multi-fusion">多图融合</option><option value="fusion">双图溶图</option></select>
         <select id="imageFailureStage" aria-label="最后失败阶段"><option value="">全部失败阶段</option><option value="preparing">本地准备</option><option value="reference_download">参考图读取</option><option value="provider_submit">提交上游</option><option value="provider_poll">查询上游</option><option value="provider_generation">上游生成</option><option value="result_validation">生成结果校验</option><option value="result_download">结果下载</option><option value="cache_write">缓存写入</option><option value="cache_validation">缓存校验</option><option value="state_persistence">状态保存</option></select>
       </div>
       <p id="imageFailureSummary" class="task-note"></p>
@@ -1147,7 +1147,7 @@
     var imageTaskPhase = document.getElementById("imageTaskPhase");
     var imageTaskOrder = document.getElementById("imageTaskOrder");
     var taskPhaseLabels = { queued: "本地排队", preparing: "准备图片", submitting: "正在提交", upstream_queued: "上游排队", upstream_running: "上游生成", downloading: "下载中", succeeded: "本地成功", failed: "失败", timeout: "超时", cancelled: "本地取消", interrupted: "重启中断" };
-    var taskSourceLabels = { "text-to-image": "文生图", "single-edit": "单图编辑", "sku-fusion": "SKU 溶图", carousel: "轮播图", fusion: "双图溶图" };
+    var taskSourceLabels = { "text-to-image": "文生图", "single-edit": "单图编辑", "sku-fusion": "SKU 溶图", carousel: "轮播图", "multi-fusion": "多图融合", fusion: "双图溶图" };
 
     /** Distinguish local terminal results from work still holding or waiting for a queue slot. */
     function isImageTaskFinished(task) {
@@ -1180,7 +1180,7 @@
         var finished = isImageTaskFinished(task);
         return (!source || task.source === source)
           && (!phase || (phase === "active" ? !finished : phase === "finished" ? finished : task.phase === phase))
-          && (!query || [task.execution_id, task.provider_task_id, task.temu_main_id, task.temu_platform_id, task.sku_id, task.carousel_task_id, task.request_id].join(" ").toLowerCase().indexOf(query) >= 0);
+          && (!query || [task.execution_id, task.provider_task_id, task.temu_main_id, task.temu_platform_id, task.sku_id, task.carousel_task_id, task.multi_fusion_task_id, task.request_id].join(" ").toLowerCase().indexOf(query) >= 0);
       });
       items.sort(/** Prioritize the selected group, then order by its most recent timestamp. */ function newest(a, b) {
         var aFinished = isImageTaskFinished(a);
@@ -1239,6 +1239,7 @@
         ["商品 / 平台", [task.temu_main_id, task.temu_platform_id].filter(Boolean).join(" / ") || "—"],
         ["SKU / 序号", (task.sku_id || "—") + (task.sku_index === undefined ? "" : " / 第 " + (task.sku_index + 1) + " 个")],
         ["轮播任务 / 页", (task.carousel_task_id || "—") + (task.carousel_page_index === undefined ? "" : " / 第 " + (task.carousel_page_index + 1) + " 页")],
+        ["多图任务 / 页", (task.multi_fusion_task_id || "—") + (task.multi_fusion_page_index === undefined ? "" : " / 第 " + (task.multi_fusion_page_index + 1) + " 页")],
         ["候选图", task.candidate_index === undefined ? "—" : "第 " + (task.candidate_index + 1) + " 张"],
         ["下载尝试", (task.download_attempt || 0) + " / 3"], ["请求 ID", task.request_id || "—"],
         ["创建 / 开始", imageTaskTime(task.created_at) + " / " + imageTaskTime(task.started_at)],

@@ -18,7 +18,8 @@ class CarouselRuntimeService {
   /** Store provider dependencies and recover interrupted task states. */
   constructor(options) {
     const settings = options || {};
-    this.runtimeDirectory = path.join(settings.cacheDirectory, "runtime", "carousel");
+    this.runtimeName = String(settings.runtimeName || "carousel");
+    this.runtimeDirectory = path.join(settings.cacheDirectory, "runtime", this.runtimeName);
     this.readConfig = settings.readConfig;
     this.readDefaultPromptConfig = settings.readDefaultPromptConfig;
     this.getKimiEndpoint = settings.getKimiEndpoint;

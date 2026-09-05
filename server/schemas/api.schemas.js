@@ -202,6 +202,31 @@ const carouselManualPromptSchema = carouselWorkflowPromptSchema.omit({
 
 const workflowPromptSchema = z.union([packingWorkflowPromptSchema, carouselWorkflowPromptSchema]);
 
+const multiFusionTaskBaseSchema = z.object({
+  client_task_id: z.string().regex(/^multi-fusion-[a-zA-Z0-9-]+$/).optional(),
+  temu_main_id: z.union([z.string(), z.number()]).transform(String),
+  temu_platform_id: z.union([z.string(), z.number()]).transform(String).optional(),
+  image_urls: z.array(z.string().min(1)).min(3),
+  source_indices: z.array(z.number().int().nonnegative()).min(3),
+  gallery_snapshot: z.array(z.string()).optional(),
+  count: z.number().int().min(1).max(10),
+  prompt: z.string().trim().min(1).max(10000),
+  size: z.string().optional()
+});
+
+const multiFusionTaskSchema = multiFusionTaskBaseSchema.refine(/** Keep source indices and URLs one-to-one for the multi-image editor. */ function hasMatchingSourceCount(value) {
+  return value.image_urls.length === value.source_indices.length;
+}, { message: "source_indices must match image_urls length", path: ["source_indices"] });
+
+const multiFusionManualPromptSchema = multiFusionTaskBaseSchema.omit({
+  count: true,
+  prompt: true
+}).extend({
+  pages: z.array(defaultPromptPageSchema).min(1).max(10)
+}).refine(/** Keep manual template source indices and URLs one-to-one too. */ function hasMatchingManualSourceCount(value) {
+  return value.image_urls.length === value.source_indices.length;
+}, { message: "source_indices must match image_urls length", path: ["source_indices"] });
+
 const carouselPlanUpdateSchema = z.object({
   pages: z.array(z.object({ purpose: z.string().max(500).optional(), prompt: z.string().min(1).max(10000) })).min(1).max(10)
 });
@@ -224,6 +249,12 @@ const carouselApplySchema = z.object({
   selected_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10),
   replace_all: z.boolean().optional()
 });
+
+const multiFusionGenerationSchema = carouselGenerationSchema;
+
+const multiFusionVersionSelectSchema = carouselVersionSelectSchema;
+
+const multiFusionApplySchema = carouselApplySchema.omit({ replace_all: true });
 
 const workflowGenerateSchema = z.object({
   temu_main_id: z.union([z.string(), z.number()]),
@@ -271,11 +302,16 @@ module.exports = {
   clipWorkflowTop10Schema: clipWorkflowTop10Schema,
   carouselWorkflowPromptSchema: carouselWorkflowPromptSchema,
   carouselManualPromptSchema: carouselManualPromptSchema,
+  multiFusionTaskSchema: multiFusionTaskSchema,
+  multiFusionManualPromptSchema: multiFusionManualPromptSchema,
   carouselPlanUpdateSchema: carouselPlanUpdateSchema,
   carouselPageUpdateSchema: carouselPageUpdateSchema,
   carouselGenerationSchema: carouselGenerationSchema,
   carouselVersionSelectSchema: carouselVersionSelectSchema,
   carouselApplySchema: carouselApplySchema,
+  multiFusionGenerationSchema: multiFusionGenerationSchema,
+  multiFusionVersionSelectSchema: multiFusionVersionSelectSchema,
+  multiFusionApplySchema: multiFusionApplySchema,
   workflowGenerateSchema: workflowGenerateSchema,
   workflowCompleteSchema: workflowCompleteSchema,
   detailImagesQuerySchema: detailImagesQuerySchema
