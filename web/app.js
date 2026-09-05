@@ -587,7 +587,7 @@ const app = createApp({
         </div>
         <div v-if="imageEditorOpen" class="image-editor-modal" @pointerdown.self="beginImageEditorBackdropPress" @pointerup="finishImageEditorBackdropPress" @pointercancel="cancelImageEditorBackdropPress">
           <section class="image-editor-dialog" role="dialog" aria-modal="true" aria-label="AI 图片编辑">
-            <header class="image-editor-header"><div><strong>{{ imageEditorTitle() }}</strong><span>{{ imageEditorSubtitle() }}</span></div><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button v-if="canStartCarouselImagesDirect()" class="image-editor-header-tool" type="button" :disabled="defaultPromptDialogBusy" @click="openDefaultPromptDialog">分镜模板</button><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
+            <header class="image-editor-header"><div><strong>{{ imageEditorTitle() }}</strong><span>{{ imageEditorSubtitle() }}</span></div><nav v-if="canStartCarouselImagesDirect()" class="image-template-strip" aria-label="选择分镜模板" @wheel="scrollDefaultPromptTemplates"><button v-for="template in defaultPromptTemplates" :key="template.id" type="button" :class="{ active: template.id === defaultPromptGenerationTemplateId }" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" :title="template.name" @click="selectDefaultPromptGenerationTemplate(template.id)">{{ template.name }}</button><span v-if="defaultPromptDialogLoading">模板读取中…</span><span v-else-if="!defaultPromptConfigLoaded">模板不可用</span></nav><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button v-if="canStartCarouselImagesDirect()" class="image-editor-header-tool" type="button" :disabled="defaultPromptDialogBusy" @click="openDefaultPromptDialog">分镜模板</button><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
             <div class="image-editor-stage" :class="{ 'has-two-sources': imageEditorState().sourceCount === 2, 'has-result': imageEditorState().hasResult }">
               <span v-if="shouldShowImageEditorStageLabel()" class="image-editor-stage-label">{{ imageEditorStageLabel() }}</span>
               <div v-if="shouldShowImageEditorLoading()" class="image-editor-loading"><span></span><strong>{{ imageEditorLoadingTitle() }}</strong><small>{{ imageEditorLoadingHint() }}</small></div>
@@ -648,14 +648,14 @@ const app = createApp({
         </div>
         <div v-if="defaultPromptDialogOpen" class="image-editor-modal" @pointerdown.self="beginDefaultPromptBackdropPress" @pointerup="finishDefaultPromptBackdropPress" @pointercancel="cancelDefaultPromptBackdropPress">
           <section class="image-editor-dialog default-prompt-dialog" role="dialog" aria-modal="true" aria-label="分镜模板配置">
-            <header class="image-editor-header"><div><strong>分镜模板</strong><span>配置保存在 server/default.prompt.json，默认模板可一键生图</span></div><button type="button" aria-label="关闭分镜模板" @click="closeDefaultPromptDialog">×</button></header>
+            <header class="image-editor-header"><div><strong>分镜模板</strong><span>配置保存在 D:\自动组货\default.prompt.json</span></div><button type="button" aria-label="关闭分镜模板" @click="closeDefaultPromptDialog">×</button></header>
             <div v-if="defaultPromptDialogLoading" class="image-editor-loading default-prompt-loading"><span></span><strong>正在读取分镜模板</strong><small>模板由所有浏览器共用。</small></div>
             <div v-else class="default-prompt-content">
               <div class="default-prompt-workspace">
               <aside class="default-template-sidebar">
                 <header><strong>模板</strong><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length >= 50" @click="addDefaultPromptTemplate">+ 新增</button></header>
-                <div class="default-template-list"><button v-for="template in defaultPromptTemplates" :key="template.id" type="button" :class="{ active: template.id === defaultPromptSelectedTemplateId }" :disabled="defaultPromptDialogBusy" @click="requestSelectDefaultPromptTemplate(template.id)"><span>{{ template.name }}</span><small>{{ template.pages.length }} 张 · {{ template.id === defaultPromptDefaultTemplateId ? '默认' : '普通' }}</small></button></div>
-                <div class="default-template-actions"><button type="button" :disabled="defaultPromptDialogBusy" @click="duplicateDefaultPromptTemplate">复制模板</button><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length <= 1" @click="deleteDefaultPromptTemplate">删除模板</button><button type="button" :disabled="defaultPromptDialogBusy || !currentDefaultPromptTemplate() || currentDefaultPromptTemplate().id === defaultPromptDefaultTemplateId" @click="setCurrentDefaultPromptTemplate">设为默认</button></div>
+                <div class="default-template-list"><button v-for="template in defaultPromptTemplates" :key="template.id" type="button" :class="{ active: template.id === defaultPromptSelectedTemplateId }" :disabled="defaultPromptDialogBusy" @click="requestSelectDefaultPromptTemplate(template.id)"><span>{{ template.name }}</span><small>{{ template.pages.length }} 张</small></button></div>
+                <div class="default-template-actions"><button type="button" :disabled="defaultPromptDialogBusy" @click="duplicateDefaultPromptTemplate">复制模板</button><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length <= 1" @click="deleteDefaultPromptTemplate">删除模板</button></div>
               </aside>
               <section v-if="currentDefaultPromptTemplate()" class="default-template-editor">
                 <label class="image-editor-prompt"><span>模板名称</span><input type="text" v-model="currentDefaultPromptTemplate().name" maxlength="100" autocomplete="off" :disabled="defaultPromptDialogBusy"></label>
@@ -817,6 +817,7 @@ const app = createApp({
       defaultPromptTemplates: [],
       defaultPromptDefaultTemplateId: "",
       defaultPromptSelectedTemplateId: "",
+      defaultPromptGenerationTemplateId: String(persistedViewState.defaultPromptGenerationTemplateId || ""),
       defaultPromptSavedConfig: "",
       defaultPromptPendingAction: null,
       defaultPromptConfigLoaded: false,
@@ -1182,7 +1183,8 @@ const app = createApp({
           workspaceMode: this.workspaceMode,
           selectedTemuMainId: this.selectedTemuMainId,
           selected1688MainId: this.selected1688MainId,
-          imageEditorMainId: this.imageEditorRestoreMainId
+          imageEditorMainId: this.imageEditorRestoreMainId,
+          defaultPromptGenerationTemplateId: this.defaultPromptGenerationTemplateId
         }));
       } catch (error) {
         return;
@@ -1397,8 +1399,12 @@ const app = createApp({
       const requestedSelectedId = String(preferredTemplateId || this.defaultPromptSelectedTemplateId || this.defaultPromptDefaultTemplateId);
       this.defaultPromptSelectedTemplateId = templates.some(/** Retain the visible template after save. */ function matchSelectedTemplate(item) { return item.id === requestedSelectedId; })
         ? requestedSelectedId : this.defaultPromptDefaultTemplateId;
+      const requestedGenerationId = String(this.defaultPromptGenerationTemplateId || "");
+      this.defaultPromptGenerationTemplateId = templates.some(/** Retain the browser's generation template when it still exists. */ function matchGenerationTemplate(item) { return item.id === requestedGenerationId; })
+        ? requestedGenerationId : requestedGenerationId && templates.length ? templates[0].id : this.defaultPromptDefaultTemplateId;
       this.defaultPromptConfigLoaded = templates.length > 0;
       this.defaultPromptSavedConfig = JSON.stringify(this.defaultPromptConfigSnapshot());
+      this.persistViewState();
     },
 
     /** Return the template currently visible in the configuration editor. */
@@ -1411,14 +1417,36 @@ const app = createApp({
       return null;
     },
 
-    /** Return the template used by the one-click generation action. */
+    /** Return the browser-selected template used by the direct generation action. */
     activeDefaultPromptTemplate: function activeDefaultPromptTemplate() {
       for (let index = 0; index < this.defaultPromptTemplates.length; index += 1) {
-        if (this.defaultPromptTemplates[index].id === this.defaultPromptDefaultTemplateId) {
+        if (this.defaultPromptTemplates[index].id === this.defaultPromptGenerationTemplateId) {
           return this.defaultPromptTemplates[index];
         }
       }
       return null;
+    },
+
+    /** Select and persist one generation template without changing the shared backend default. */
+    selectDefaultPromptGenerationTemplate: function selectDefaultPromptGenerationTemplate(templateId) {
+      const requestedId = String(templateId || "");
+      const exists = this.defaultPromptTemplates.some(/** Match one available generation template. */ function matchTemplate(item) { return item.id === requestedId; });
+      if (!exists || this.imageEditorBusy || this.imageCarouselTask || !this.defaultPromptConfigLoaded) {
+        return false;
+      }
+      this.defaultPromptGenerationTemplateId = requestedId;
+      this.persistViewState();
+      return true;
+    },
+
+    /** Translate vertical wheel input into horizontal movement for the template strip. */
+    scrollDefaultPromptTemplates: function scrollDefaultPromptTemplates(event) {
+      const target = event && event.currentTarget;
+      if (!target || target.scrollWidth <= target.clientWidth) {
+        return;
+      }
+      event.preventDefault();
+      target.scrollLeft += Number(event.deltaY || event.deltaX || 0);
     },
 
     /** Fetch the latest shared template configuration from the backend. */
@@ -1445,6 +1473,7 @@ const app = createApp({
         return true;
       } catch (error) {
         const message = error.message || "分镜模板读取失败。";
+        this.defaultPromptConfigLoaded = false;
         this.defaultPromptDialogError = message;
         if (!this.defaultPromptDialogOpen) {
           this.imageEditorError = "[DEFAULT_PROMPT_LOAD_FAILED] " + message;
@@ -1614,14 +1643,6 @@ const app = createApp({
       }
     },
 
-    /** Make the selected template the one-click generation default. */
-    setCurrentDefaultPromptTemplate: function setCurrentDefaultPromptTemplate() {
-      const current = this.currentDefaultPromptTemplate();
-      if (current) {
-        this.defaultPromptDefaultTemplateId = current.id;
-      }
-    },
-
     /** Add one empty storyboard row to the selected template. */
     addDefaultPromptPage: function addDefaultPromptPage() {
       const current = this.currentDefaultPromptTemplate();
@@ -1702,10 +1723,10 @@ const app = createApp({
     /** Return the current one-click template name and effective image count. */
     defaultPromptButtonLabel: function defaultPromptButtonLabel() {
       if (this.defaultPromptGenerationBusy) {
-        return "默认分镜提交中…";
+        return "模板提交中…";
       }
       const template = this.activeDefaultPromptTemplate();
-      return template ? "默认分镜生图 · " + template.name + "（" + template.pages.length + "张）" : "默认分镜生图";
+      return template ? "模板生图 · " + template.name + "（" + template.pages.length + "张）" : "模板生图";
     },
 
     /** Resolve market-language placeholders from the existing image-editor field. */
@@ -1716,7 +1737,7 @@ const app = createApp({
       });
     },
 
-    /** Read the saved default template, create a manual task, and start Fusion directly. */
+    /** Read the selected saved template, create a manual task, and start Fusion directly. */
     async generateDefaultPromptPages() {
       const record = this.selectedTemuRecord;
       const sources = this.galleryImageEditorSources(record);
@@ -1736,7 +1757,7 @@ const app = createApp({
         this.applyDefaultPromptConfig(data);
         const template = this.activeDefaultPromptTemplate();
         if (!template) {
-          throw new Error("没有可用的默认分镜模板。");
+          throw new Error("没有可用的分镜模板。");
         }
         const pages = this.resolveDefaultPromptGenerationPages(template);
         const response = await fetch(apiUrl("/workflow/carousel/manual"), {
@@ -1756,11 +1777,11 @@ const app = createApp({
         });
         const payload = await response.json();
         if (!response.ok || !payload || !payload.ok) {
-          throw new Error(getApiErrorMessage(payload, "默认分镜任务提交失败。"));
+          throw new Error(getApiErrorMessage(payload, "模板分镜任务提交失败。"));
         }
         const task = payload.data && payload.data.task ? payload.data.task : null;
         if (!task) {
-          throw new Error("后台没有返回默认分镜任务。");
+          throw new Error("后台没有返回模板分镜任务。");
         }
         if (!this.isImageEditorRequestCurrent(requestId)) {
           this.rememberCarouselTask(task);
@@ -1772,7 +1793,7 @@ const app = createApp({
         await this.generateCarouselPages();
       } catch (error) {
         if (this.isImageEditorRequestCurrent(requestId)) {
-          this.imageEditorError = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "默认分镜生图失败。");
+          this.imageEditorError = "[" + getWorkflowErrorCode(error) + "] " + (error.message || "模板分镜生图失败。");
         }
         if (this.isImageEditorRequestCurrent(requestId) && !this.imageCarouselTask) {
           this.imageEditorRestoreMainId = "";
@@ -7286,7 +7307,7 @@ const app = createApp({
     /** Return the primary busy label for the visible image editor. */
     imageEditorLoadingTitle: function imageEditorLoadingTitle() {
       if (this.defaultPromptGenerationBusy) {
-        return "默认分镜提交中…";
+        return "模板提交中…";
       }
       const state = this.imageEditorState();
       if (state.sourceCount === 2 || state.hasCarouselTask) {
@@ -7299,7 +7320,7 @@ const app = createApp({
     imageEditorLoadingHint: function imageEditorLoadingHint() {
       if (this.defaultPromptGenerationBusy) {
         const template = this.activeDefaultPromptTemplate();
-        return template ? "正在调用“" + template.name + "”的 " + template.pages.length + " 个分镜，不经过 Kimi。" : "正在读取默认模板，不经过 Kimi。";
+        return template ? "正在调用“" + template.name + "”的 " + template.pages.length + " 个分镜，不经过 Kimi。" : "正在读取模板，不经过 Kimi。";
       }
       const state = this.imageEditorState();
       if (state.sourceCount === 2 || state.hasCarouselTask) {
@@ -7532,6 +7553,26 @@ const app = createApp({
       return false;
     },
 
+    /** Preserve locally edited text on non-generating pages while polling replaces task state. */
+    preserveEditableCarouselText: function preserveEditableCarouselText(task) {
+      const incoming = task && typeof task === "object" ? task : null;
+      const current = this.imageCarouselTask && typeof this.imageCarouselTask === "object" ? this.imageCarouselTask : null;
+      if (!incoming || !current || String(incoming.id || "") !== String(current.id || "")
+        || !Array.isArray(incoming.pages) || !Array.isArray(current.pages)) {
+        return incoming;
+      }
+      for (let index = 0; index < incoming.pages.length; index += 1) {
+        const incomingPage = incoming.pages[index];
+        const currentPage = current.pages[index];
+        if (!incomingPage || !currentPage || currentPage.status === "generating") {
+          continue;
+        }
+        incomingPage.purpose = String(currentPage.purpose || "");
+        incomingPage.prompt = String(currentPage.prompt || "");
+      }
+      return incoming;
+    },
+
     /** Apply one carousel snapshot and derive the local busy flag from page state. */
     applyCarouselTaskSnapshot: function applyCarouselTaskSnapshot(task) {
       if (this.isIgnoredCarouselTask(task)) {
@@ -7541,8 +7582,9 @@ const app = createApp({
         this.imageCarouselPageIndex = 0;
         return;
       }
-      this.imageCarouselTask = task || null;
-      this.updateCarouselFeedback(task);
+      const nextTask = this.preserveEditableCarouselText(task);
+      this.imageCarouselTask = nextTask || null;
+      this.updateCarouselFeedback(nextTask);
       if (this.imageCarouselTask) {
         this.imageCarouselReviewOnly = String(this.imageCarouselTask.mode || "") === "advanced";
       }
@@ -7737,29 +7779,38 @@ const app = createApp({
       }
     },
 
-    /** Persist advanced-mode edits before concurrent page generation. */
-    async saveAdvancedCarouselPlan() {
+    /** Persist every locally edited carousel page and return the saved task snapshot. */
+    async persistCarouselPlanPages() {
       const task = this.imageCarouselTask;
       if (!task || !task.pages || !task.pages.length) {
-        return;
+        return null;
       }
+      const pages = [];
+      for (let index = 0; index < task.pages.length; index += 1) {
+        pages.push({ purpose: String(task.pages[index].purpose || ""), prompt: String(task.pages[index].prompt || "") });
+      }
+      const response = await fetch(apiUrl("/workflow/carousel/" + encodeURIComponent(task.id)), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pages: pages })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload || !payload.ok) {
+        throw new Error(getApiErrorMessage(payload, "分镜保存失败。"));
+      }
+      const savedTask = payload.data && payload.data.task ? payload.data.task : task;
+      if (this.imageCarouselTask && String(this.imageCarouselTask.id || "") === String(task.id || "")) {
+        this.applyCarouselTaskSnapshot(savedTask);
+      }
+      return savedTask;
+    },
+
+    /** Persist advanced-mode edits before concurrent page generation. */
+    async saveAdvancedCarouselPlan() {
       this.imageEditorBusy = true;
       this.imageEditorError = "";
       try {
-        const pages = [];
-        for (let index = 0; index < task.pages.length; index += 1) {
-          pages.push({ purpose: String(task.pages[index].purpose || ""), prompt: String(task.pages[index].prompt || "") });
-        }
-        const response = await fetch(apiUrl("/workflow/carousel/" + encodeURIComponent(task.id)), {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pages: pages })
-        });
-        const payload = await response.json();
-        if (!response.ok || !payload || !payload.ok) {
-          throw new Error(getApiErrorMessage(payload, "分镜保存失败。"));
-        }
-        this.applyCarouselTaskSnapshot(payload.data.task);
+        await this.persistCarouselPlanPages();
         this.imageEditorBusy = false;
         await this.generateCarouselPages();
       } catch (error) {
@@ -7794,7 +7845,7 @@ const app = createApp({
     },
 
     /** Submit every carousel page once and let the backend execute them concurrently. */
-    async generateCarouselPages() {
+    async generateCarouselPages(persistEdits) {
       const task = this.imageCarouselTask;
       if (!task || !Array.isArray(task.pages) || !task.pages.length || task.status === "generating" || this.hasCarouselSubmission(task)) {
         return;
@@ -7807,7 +7858,8 @@ const app = createApp({
       this.imageEditorError = "";
       this.beginCarouselFeedback(task, pageIndices);
       try {
-        await this.startCarouselGeneration(task, pageIndices);
+        const submissionTask = persistEdits ? await this.persistCarouselPlanPages() : task;
+        await this.startCarouselGeneration(submissionTask || task, pageIndices);
       } catch (error) {
         this.failCarouselFeedback(task, pageIndices, error);
         if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
@@ -7986,7 +8038,7 @@ const app = createApp({
 
     /** Regenerate every carousel page concurrently through the batch path. */
     async regenerateAllCarouselPages() {
-      await this.generateCarouselPages();
+      await this.generateCarouselPages(true);
     },
 
     /** Refresh the current runtime task from disk-backed server state. */

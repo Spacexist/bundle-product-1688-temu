@@ -6,6 +6,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { compile } = require("@vue/compiler-dom");
 const {
+  DEFAULT_PROMPT_PATH,
   DEFAULT_STORYBOARD_SYSTEM_PROMPT,
   normalizeDefaultPromptConfig,
   readDefaultPromptConfig,
@@ -54,6 +55,10 @@ test("legacy page-only file migrates in place without losing its prompt", /** Ve
   const persisted = JSON.parse(fs.readFileSync(file, "utf8"));
   assert.equal(persisted.pages, undefined);
   assert.equal(persisted.templates[0].pages[0].purpose, "旧分镜");
+});
+
+test("the shared template document lives under the external D drive data root", /** Keep templates outside replaceable application files. */ function () {
+  assert.equal(path.normalize(DEFAULT_PROMPT_PATH), path.normalize("D:/自动组货/default.prompt.json"));
 });
 
 test("multi-template config preserves order, default selection and page order", /** Exercise the atomic persistence boundary in an isolated directory. */ function (t) {
@@ -106,19 +111,23 @@ function templateEditorFixture(fetchImplementation) {
   const options = frontendOptions(fetchImplementation);
   const view = {
     defaultPromptTemplates: [], defaultPromptDefaultTemplateId: "", defaultPromptSelectedTemplateId: "",
+    defaultPromptGenerationTemplateId: "",
     defaultPromptSystemPrompt: "",
     defaultPromptSavedConfig: "", defaultPromptPendingAction: null, defaultPromptConfigLoaded: false,
     defaultPromptDialogBusy: false, defaultPromptDialogLoading: false, defaultPromptDialogOpen: true,
     defaultPromptDialogError: "", defaultPromptSavedText: "", defaultPromptBackdropPressed: false,
+    imageEditorBusy: false, imageCarouselTask: null,
     /** Ignore global toast rendering in this isolated editor fixture. */
-    setStatus() {}
+    setStatus() {},
+    /** Ignore browser persistence while retaining calls made by production methods. */
+    persistViewState() {}
   };
   const methodNames = [
     "createDefaultPromptPageDraft", "createDefaultPromptTemplateDraft", "defaultPromptConfigSnapshot",
     "hasDefaultPromptUnsavedChanges", "applyDefaultPromptConfig", "currentDefaultPromptTemplate",
     "activeDefaultPromptTemplate", "collectDefaultPromptConfig", "uniqueDefaultPromptTemplateName",
     "addDefaultPromptTemplate", "duplicateDefaultPromptTemplate", "deleteDefaultPromptTemplate",
-    "setCurrentDefaultPromptTemplate", "addDefaultPromptPage", "duplicateDefaultPromptPage",
+    "selectDefaultPromptGenerationTemplate", "scrollDefaultPromptTemplates", "addDefaultPromptPage", "duplicateDefaultPromptPage",
     "moveDefaultPromptPage", "removeDefaultPromptPage", "requestDefaultPromptAction",
     "requestSelectDefaultPromptTemplate", "performDefaultPromptAction", "resolveDefaultPromptPendingAction",
     "closeDefaultPromptDialog", "requestSaveDefaultPromptPages", "saveDefaultPromptPages",
@@ -136,6 +145,12 @@ test("template UI exposes configuration separately from one-click generation", /
   assert.doesNotThrow(/** Compile all Vue expressions without calling MCP or mounting a browser. */ function compileTemplate() { compile(options.template); });
   assert.match(options.template, /@click="openDefaultPromptDialog">分镜模板<\/button>/);
   assert.match(options.template, /@click="generateDefaultPromptPages">\{\{ defaultPromptButtonLabel\(\) \}\}/);
+  assert.match(options.template, /class="image-template-strip"/);
+  assert.match(options.template, /<nav v-if="canStartCarouselImagesDirect\(\)" class="image-template-strip"/);
+  assert.doesNotMatch(options.template, /<nav v-if="isFusionPromptReviewSession\(\)" class="image-template-strip"/);
+  assert.match(options.template, /@click="selectDefaultPromptGenerationTemplate\(template\.id\)"/);
+  assert.doesNotMatch(options.template, /设为默认/);
+  assert.doesNotMatch(options.template, /\? '默认' : '普通'/);
   assert.doesNotMatch(options.template, /v-model="defaultPromptSystemPrompt"/);
   assert.doesNotMatch(options.template, /全局系统提示词/);
   assert.doesNotMatch(options.template, /保存并生图/);
@@ -143,7 +158,7 @@ test("template UI exposes configuration separately from one-click generation", /
 
 test("editor adds, copies, orders and deletes templates and pages", /** Exercise the confirmed template-management controls. */ function () {
   const { view } = templateEditorFixture();
-  assert.equal(view.defaultPromptButtonLabel(), "默认分镜生图 · 产品卖点（2张）");
+  assert.equal(view.defaultPromptButtonLabel(), "模板生图 · 产品卖点（2张）");
   view.duplicateDefaultPromptPage(0);
   assert.deepEqual(Array.from(view.currentDefaultPromptTemplate().pages, /** Inspect copied page prompts. */ function selectPrompt(page) { return page.prompt; }), ["画面 A", "画面 A", "画面 B"]);
   view.moveDefaultPromptPage(2, -1);
@@ -151,11 +166,30 @@ test("editor adds, copies, orders and deletes templates and pages", /** Exercise
   view.duplicateDefaultPromptTemplate();
   assert.equal(view.defaultPromptTemplates.length, 3);
   assert.equal(view.currentDefaultPromptTemplate().name, "产品卖点 副本");
-  view.setCurrentDefaultPromptTemplate();
-  assert.equal(view.defaultPromptDefaultTemplateId, view.defaultPromptSelectedTemplateId);
   view.deleteDefaultPromptTemplate();
   assert.equal(view.defaultPromptTemplates.length, 2);
-  assert.equal(view.defaultPromptDefaultTemplateId, view.defaultPromptSelectedTemplateId);
+  assert.ok(view.defaultPromptTemplates.some(/** Ensure deletion retains the existing default template. */ function retainsDefault(item) { return item.id === view.defaultPromptDefaultTemplateId; }));
+});
+
+test("generation template selection persists without changing the shared default", /** Keep local generation choice separate from configuration editing. */ function () {
+  const { view } = templateEditorFixture();
+  let persisted = 0;
+  view.persistViewState = /** Count the local persistence boundary. */ function countPersistence() { persisted += 1; };
+  assert.equal(view.selectDefaultPromptGenerationTemplate("template-b"), true);
+  assert.equal(view.defaultPromptGenerationTemplateId, "template-b");
+  assert.equal(view.defaultPromptDefaultTemplateId, "template-a");
+  assert.equal(view.defaultPromptSelectedTemplateId, "template-a");
+  assert.equal(view.defaultPromptButtonLabel(), "模板生图 · 场景展示（1张）");
+  assert.equal(persisted, 1);
+});
+
+test("a removed browser selection falls back to the first available template", /** Avoid retaining a dangling paid-generation choice. */ function () {
+  const { view } = templateEditorFixture();
+  view.defaultPromptGenerationTemplateId = "removed-template";
+  const config = templateConfig();
+  config.default_template_id = "template-b";
+  view.applyDefaultPromptConfig(config);
+  assert.equal(view.defaultPromptGenerationTemplateId, "template-a");
 });
 
 test("switching a dirty template waits for save, discard or cancel", /** Verify no draft changes disappear during template switching. */ async function () {
@@ -211,7 +245,7 @@ test("market language comes only from the existing image window field", /** Repl
   assert.equal(Object.prototype.hasOwnProperty.call(view.currentDefaultPromptTemplate(), "market_language"), false);
 });
 
-test("one-click generation loads the default template and bypasses Kimi planning", /** Execute the actual frontend chain with an offline transport. */ async function () {
+test("one-click generation loads the browser-selected template and bypasses Kimi planning", /** Execute the actual frontend chain with an offline transport. */ async function () {
   const requests = [];
   const config = templateConfig();
   config.templates[0].pages[0].prompt = "面向 {market_language} 的主图";
@@ -231,6 +265,7 @@ test("one-click generation loads the default template and bypasses Kimi planning
     imageEditorBusy: false, imageCarouselTask: null, imageEditorRequestId: 9, imageEditorRestoreMainId: "",
     imageCarouselReviewOnly: true, imageCarouselEstimatedTokens: 0, imageEditorError: "", imageCarouselCount: 1,
     defaultPromptGenerationBusy: false, defaultPromptTemplates: [], defaultPromptDefaultTemplateId: "",
+    defaultPromptGenerationTemplateId: "template-b",
     defaultPromptSelectedTemplateId: "", defaultPromptSavedConfig: "", defaultPromptConfigLoaded: false,
     /** Return exactly the two already-selected source images. */
     galleryImageEditorSources() { return ["source-a", "source-b"]; },
@@ -257,7 +292,7 @@ test("one-click generation loads the default template and bypasses Kimi planning
   assert.match(requests[1].url, /\/workflow\/carousel\/manual$/);
   assert.equal(requests.some(/** Detect forbidden Kimi planning calls. */ function isPlanRequest(item) { return item.url.includes("/plan"); }), false);
   const body = JSON.parse(requests[1].settings.body);
-  assert.equal(body.pages[0].prompt, "面向 法国 / Français 的主图");
+  assert.equal(body.pages[0].prompt, "画面 C");
   assert.equal(body.market_language, "法国 / Français");
   assert.equal(view.fusionStarted, true);
 });

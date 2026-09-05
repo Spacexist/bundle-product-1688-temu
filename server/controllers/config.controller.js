@@ -2,7 +2,8 @@ const fs = require("fs");
 const path = require("path");
 const configModule = require("../config/config-loader");
 
-const DEFAULT_PROMPT_PATH = path.resolve(__dirname, "..", "default.prompt.json");
+const LEGACY_DEFAULT_PROMPT_PATH = path.resolve(__dirname, "..", "default.prompt.json");
+const DEFAULT_PROMPT_PATH = path.resolve("D:/自动组货/default.prompt.json");
 const DEFAULT_TEMPLATE_ID = "template-default";
 const DEFAULT_STORYBOARD_SYSTEM_PROMPT = "你是电商商品图合成助手。两张输入图是商品外观的唯一依据，必须保持商品的款式、结构、颜色、材质、比例和关键细节真实一致，不得增删、替换或错误融合部件。\n\n构图、背景、视角、场景、排版和文案以当前分镜要求为准，不必沿用原图背景。画面中凡需生成的文字，必须全部使用英文，不得出现中文或其他语言；未要求文字时，不添加文字、Logo 或水印。英文约束优先于分镜中的其他语言要求。\n\n确保两张图中的目标商品和必要配件完整、清晰、可识别，两件商品自然融入同一场景，保持各自结构独立，相对大小、摆放及接触关系合理，光线、透视、色温和阴影统一；避免生硬拼贴、明显接缝、抠图白边和不合理遮挡，不虚构商品功能。\n\n【负面提示词】禁止产品扭曲、拉伸变形、比例失真、透视错误、部件错位或缺失、多余部件、物体穿插或悬浮、模糊重影、锯齿破损边缘、乱码及非英文新增文案。";
 
@@ -92,6 +93,7 @@ function normalizeDefaultPromptConfig(payload) {
 
 /** Replace one JSON file through a same-directory temporary file. */
 function writeDefaultPromptFile(filePath, config) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const temporaryPath = filePath + ".tmp-" + process.pid + "-" + Date.now();
   try {
     fs.writeFileSync(temporaryPath, JSON.stringify(config, null, 2) + "\n", "utf8");
@@ -103,21 +105,24 @@ function writeDefaultPromptFile(filePath, config) {
   }
 }
 
-/** Read server/default.prompt.json, migrating its legacy page-only shape in place. */
+/** Read the external template JSON and migrate the former server-local file when needed. */
 function readDefaultPromptConfig(filePath, fallbackPages) {
   const targetPath = filePath || DEFAULT_PROMPT_PATH;
-  if (!fs.existsSync(targetPath)) {
+  const sourcePath = !filePath && !fs.existsSync(targetPath) && fs.existsSync(LEGACY_DEFAULT_PROMPT_PATH)
+    ? LEGACY_DEFAULT_PROMPT_PATH
+    : targetPath;
+  if (!fs.existsSync(sourcePath)) {
     const fallback = normalizeDefaultPromptConfig({ pages: fallbackPages || createFallbackDefaultPromptPages() });
     return Object.assign({ path: targetPath }, fallback);
   }
   let payload;
   try {
-    payload = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+    payload = JSON.parse(fs.readFileSync(sourcePath, "utf8"));
   } catch (error) {
-    throw createConfigError("server/default.prompt.json 不是有效 JSON。", 400, "DEFAULT_PROMPT_JSON_INVALID");
+    throw createConfigError("default.prompt.json 不是有效 JSON。", 400, "DEFAULT_PROMPT_JSON_INVALID");
   }
   const config = normalizeDefaultPromptConfig(payload);
-  if (Array.isArray(payload && payload.pages) || !String(payload && payload.system_prompt || "").trim()) {
+  if (sourcePath !== targetPath || Array.isArray(payload && payload.pages) || !String(payload && payload.system_prompt || "").trim()) {
     writeDefaultPromptFile(targetPath, config);
   }
   return Object.assign({ path: targetPath }, config);
@@ -189,6 +194,7 @@ class ConfigController {
 
 module.exports = {
   ConfigController: ConfigController,
+  DEFAULT_PROMPT_PATH: DEFAULT_PROMPT_PATH,
   DEFAULT_STORYBOARD_SYSTEM_PROMPT: DEFAULT_STORYBOARD_SYSTEM_PROMPT,
   normalizeDefaultPromptConfig: normalizeDefaultPromptConfig,
   readDefaultPromptConfig: readDefaultPromptConfig,

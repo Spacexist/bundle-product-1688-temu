@@ -360,6 +360,12 @@ button { cursor: pointer; }
 .image-editor-header .image-editor-header-tool { width: auto; min-width: 78px; margin-left: auto; padding: 0 12px; border: 1px solid rgba(91, 112, 161, .2); border-radius: 9px; background: rgba(239, 246, 255, .72); color: #466ba8; font-size: 12px; font-weight: 800; line-height: 28px; }
 .image-editor-header .image-editor-header-tool:hover:not(:disabled) { background: rgba(255, 255, 255, .9); }
 .image-editor-header .image-editor-header-tool:disabled { cursor: wait; opacity: .5; }
+.image-template-strip { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: 6px; overflow-x: auto; padding: 2px 1px 5px; scrollbar-color: rgba(91, 112, 161, .38) transparent; scrollbar-width: thin; }
+.image-editor-header .image-template-strip button { width: auto; max-width: 180px; height: 30px; flex: 0 0 auto; overflow: hidden; padding: 0 12px; border: 1px solid rgba(91, 112, 161, .18); border-radius: 9px; background: rgba(255, 255, 255, .5); color: #607089; font-size: 11px; font-weight: 800; line-height: 28px; text-overflow: ellipsis; white-space: nowrap; }
+.image-editor-header .image-template-strip button:hover:not(:disabled) { border-color: rgba(70, 107, 168, .38); background: rgba(255, 255, 255, .82); color: #34598f; }
+.image-editor-header .image-template-strip button.active { border-color: rgba(70, 107, 168, .48); background: rgba(225, 236, 255, .82); color: #34598f; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9); }
+.image-editor-header .image-template-strip button:disabled { cursor: not-allowed; opacity: .56; }
+.image-template-strip > span { flex: 0 0 auto; color: #7a8799; font-size: 11px; font-weight: 700; }
 .image-editor-stage { position: relative; display: grid; min-height: 360px; max-height: 52vh; place-items: center; overflow: hidden; border: 1px solid rgba(255, 255, 255, .78); border-radius: 14px; background: rgba(255, 255, 255, .34); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .75); }
 .image-editor-stage.has-result { height: min(520px, 56vh); max-height: none; }
 .image-editor-stage-label { position: absolute; top: 11px; left: 11px; z-index: 2; padding: 5px 8px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 999px; background: rgba(247, 249, 251, .7); box-shadow: 0 5px 14px rgba(54, 65, 83, .09); color: #64748b; font-size: 10px; font-weight: 700; backdrop-filter: blur(12px); }

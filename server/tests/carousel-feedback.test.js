@@ -97,14 +97,21 @@ test("single regenerate shows immediate submission, then queue/generation/downlo
 
 test("batch regeneration starts at zero and only counts fresh downloaded results", /** Old successful images and stale polling snapshots must never inflate this run. */ async function () {
   const original = taskFixture();
-  const { view, requests, timers } = frontendFixture(/** Accept every requested page as a fresh execution. */ async function transport(request) { return responseFixture(runningTask(original, request.body.page_indices)); });
+  const { view, requests, timers } = frontendFixture(/** Save current page text before accepting every requested page as a fresh execution. */ async function transport(request) {
+    return responseFixture(request.method === "PATCH" ? original : runningTask(original, request.body.page_indices));
+  });
+  view.imageCarouselTask.pages[1].prompt = "edited prompt without removed copy";
   const pending = view.regenerateAllCarouselPages();
   assert.match(view.carouselRunFeedbackText(), /完成 0\/3/);
   assert.equal(view.carouselPageFeedback().title, "正在提交…");
   await view.regenerateAllCarouselPages();
   assert.equal(requests.length, 1);
   await pending;
-  assert.equal(requests[0].body.reference_mode, "original");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].method, "PATCH");
+  assert.equal(requests[0].body.pages[1].prompt, "edited prompt without removed copy");
+  assert.equal(requests[1].body.reference_mode, "original");
+  assert.equal(view.imageCarouselTask.pages[1].prompt, "edited prompt without removed copy");
   view.updateCarouselFeedback(original);
   assert.match(view.carouselRunFeedbackText(), /完成 0\/3/);
   const snapshot = structuredClone(view.imageCarouselTask);
@@ -124,6 +131,23 @@ test("batch regeneration starts at zero and only counts fresh downloaded results
   assert.match(view.carouselPageFeedback().error, /DOWNLOAD_FAILED.*三次下载失败/);
   assert.equal(view.currentCarouselPage().image_url, "old-1");
   assert.equal(timers.size, 0);
+});
+
+test("polling preserves deleted prompt text on another editable page", /** Do not flash stale server text back while a sibling page is generating. */ function () {
+  const { view } = frontendFixture();
+  const running = runningTask(view.imageCarouselTask, [0]);
+  view.applyCarouselTaskSnapshot(running);
+  view.imageCarouselPageIndex = 1;
+  view.currentCarouselPage().purpose = "";
+  view.currentCarouselPage().prompt = "";
+  const polled = structuredClone(running);
+  polled.pages[0].provider_status = "running";
+  polled.pages[1].purpose = "stale purpose";
+  polled.pages[1].prompt = "stale prompt";
+  view.applyCarouselTaskSnapshot(polled);
+  assert.equal(view.imageCarouselTask.pages[0].provider_status, "running");
+  assert.equal(view.currentCarouselPage().purpose, "");
+  assert.equal(view.currentCarouselPage().prompt, "");
 });
 
 test("successful completion fades within two seconds and cannot clear a newer retry", /** Keep completion feedback scoped to the task/run that produced it. */ function () {
