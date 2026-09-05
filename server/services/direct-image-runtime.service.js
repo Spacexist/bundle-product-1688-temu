@@ -228,6 +228,7 @@ class DirectImageRuntimeService {
       sku_id: String(source.sku_id || ""),
       sku_index: Number(source.sku_index === undefined ? -1 : source.sku_index),
       prompt: String(source.prompt || ""),
+      mask_url: String(source.mask_url || ""),
       size: String(source.size || "1024x1024"),
       status: "queued",
       provider_status: "",
@@ -288,7 +289,8 @@ class DirectImageRuntimeService {
         image_urls: task.mode === "edit"
           ? [String(task.edit_image_url || task.source_image_urls[0] || "")]
           : task.source_image_urls,
-        prompt: task.reference_mode === "current" ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
+        prompt: task.reference_mode === "current" && !task.mask_url ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
+        mask_url: task.mask_url,
         size: task.size,
         cancel_signal: controller.signal,
         /** Persist exactly one upstream ID for this local execution, without resurrecting deleted work. */
@@ -343,6 +345,7 @@ class DirectImageRuntimeService {
         });
       }
       currentTask.status = "succeeded";
+      currentTask.mask_url = "";
       currentTask.image_url = nextImageUrl;
       currentTask.image_versions = nextVersions;
       currentTask.active_image_version = replacesExistingSlot ? requestedIndex : Math.max(0, nextVersions.indexOf(nextImageUrl));
@@ -364,6 +367,7 @@ class DirectImageRuntimeService {
         return null;
       }
       failedTask.status = "failed";
+      failedTask.mask_url = "";
       failedTask.image_ready = Boolean(failedTask.image_url);
       failedTask.error = String(error && error.message || "图片生成失败。");
       failedTask.error_code = String(error && error.code || "DIRECT_IMAGE_GENERATION_FAILED");

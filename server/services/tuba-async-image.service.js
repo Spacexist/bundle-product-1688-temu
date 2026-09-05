@@ -37,6 +37,19 @@ function taskPayload(payload) {
     && !source.status && !source.task_id && !source.id ? source.data : source;
 }
 
+/** Return safe multipart submit facts for diagnostics without retaining binary image bytes. */
+function summarizeImageSubmitBody(body) {
+  if (!(body instanceof FormData)) {
+    return { uploaded: 0, mask: false, mask_prompt: false };
+  }
+  const hasMask = Boolean(body.get("mask"));
+  return {
+    uploaded: body.getAll("image").length,
+    mask: hasMask,
+    mask_prompt: hasMask
+  };
+}
+
 /** Submit exactly once and poll one Tuba image task; queue ownership belongs to the caller. */
 class TubaAsyncImageService {
   /** Inject transport and time only for offline tests; production uses the fixed protocol limits. */
@@ -126,6 +139,7 @@ class TubaAsyncImageService {
       headers["Content-Type"] = "application/json";
       body = JSON.stringify(Object.assign({}, settings.body, { async: true, response_format: "url" }));
     }
+    const submitSummary = summarizeImageSubmitBody(body);
     await this.publish(settings, state);
     try {
       let submitted;
@@ -136,6 +150,17 @@ class TubaAsyncImageService {
           throw error;
         }
         throw Object.assign(imageError("Tuba 提交结果不确定，未自动重发；请核查上游记录后手动重试。", "PROVIDER_SUBMISSION_UNKNOWN"), { cause: error, http_status: error.http_status });
+      }
+      if (settings.writeLog) {
+        const submittedTask = taskPayload(submitted.payload);
+        settings.writeLog("UPSTREAM", "Tuba async image submit response", {
+          status: submitted.status,
+          response: true,
+          uploaded: submitSummary.uploaded,
+          mask: submitSummary.mask,
+          mask_prompt: submitSummary.mask_prompt,
+          provider_task_id: String(submittedTask.task_id || submittedTask.id || "")
+        }, settings.requestId);
       }
       failureContext.http_status = submitted.status;
       if (!submitted.ok) {

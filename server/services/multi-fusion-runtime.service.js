@@ -138,7 +138,7 @@ class MultiFusionRuntimeService extends carouselModule.CarouselRuntimeService {
   }
 
   /** Generate one multi-fusion result page from all selected source images. */
-  async generatePage(taskId, pageIndex, requestId, referenceMode) {
+  async generatePage(taskId, pageIndex, requestId, referenceMode, maskUrl) {
     const generationId = "multi-fusion-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     const initialTask = this.readTask(taskId);
     const initialPage = initialTask && initialTask.pages[Number(pageIndex)];
@@ -166,7 +166,8 @@ class MultiFusionRuntimeService extends carouselModule.CarouselRuntimeService {
         multi_fusion_page_index: Number(pageIndex),
         generation_id: generationId,
         image_urls: imageUrls,
-        prompt: useCurrentImage ? this.buildCurrentImageEditPrompt(task, page) : String(page.prompt || task.requirement || ""),
+        prompt: useCurrentImage ? this.buildCurrentImageEditPrompt(task, page, maskUrl) : String(page.prompt || task.requirement || ""),
+        mask_url: useCurrentImage ? String(maskUrl || "").trim() : "",
         size: normalizedSize,
         task_scope: "multi-fusion",
         cancel_signal: controller.signal,

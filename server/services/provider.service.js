@@ -453,6 +453,39 @@ class ProviderService {
     return config.image && typeof config.image === "object" ? config.image : config;
   }
 
+  /** Build the final provider prompt and enforce the configured mask guard for every masked edit. */
+  buildImageEditPrompt(config, source, requestMode, maskUrl) {
+    const imageConfig = config || {};
+    const defaultPrompt = requestMode === "edit" ? imageConfig.edit_prompt : imageConfig.fusion_prompt;
+    const rawPrompt = String(source && source.prompt || defaultPrompt || "").trim();
+    const maskPrompt = String(imageConfig.mask_prompt || "").trim();
+    if (!maskUrl) {
+      return { prompt: rawPrompt, mask_prompt: false };
+    }
+    if (!maskPrompt) {
+      throw createProviderError("server/config.json 缺少 mask_prompt，不能提交局部重绘。", 500, "IMAGE_MASK_PROMPT_MISSING");
+    }
+    const prompt = rawPrompt && rawPrompt.indexOf(maskPrompt) < 0
+      ? rawPrompt + "\n\n" + maskPrompt
+      : rawPrompt || maskPrompt;
+    return { prompt: prompt, mask_prompt: true };
+  }
+
+  /** Append the configured PNG mask to one provider edit form and return safe diagnostics. */
+  async appendImageMaskToForm(form, maskUrl, source, requestId) {
+    const value = String(maskUrl || "").trim();
+    if (!value) {
+      return null;
+    }
+    this.throwIfImageEditCancelled(source);
+    const mask = await this.readImageSource(value, requestId);
+    if (mask.mimeType !== "image/png") {
+      throw createProviderError("局部重绘遮罩必须是 PNG。", 400, "IMAGE_MASK_FORMAT_INVALID");
+    }
+    form.append("mask", new Blob([mask.buffer], { type: mask.mimeType }), "mask.png");
+    return { mime_type: mask.mimeType, bytes: mask.buffer.length };
+  }
+
   /** Return the fixed total Tuba polling deadline shared by every image call. */
   getImageTimeoutMs(config) {
     return PROVIDER_TIMEOUT_MS;
@@ -575,8 +608,9 @@ class ProviderService {
     if (!config.apikey || !endpoint) {
       throw createProviderError("server/config.json 未配置完整。", 500);
     }
-    const defaultPrompt = requestMode === "edit" ? config.edit_prompt : config.fusion_prompt;
-    const prompt = String(source.prompt || defaultPrompt || "").trim();
+    const maskUrl = String(source.mask_url || "").trim();
+    const promptPayload = this.buildImageEditPrompt(config, source, requestMode, maskUrl);
+    const prompt = promptPayload.prompt;
     if (!prompt) {
       throw createProviderError("图片编辑提示词不能为空。", 400);
     }
@@ -584,6 +618,9 @@ class ProviderService {
     const quality = this.normalizeImageQuality(config.quality);
     const form = new FormData();
     const preparedImages = [];
+    if (maskUrl && requestMode !== "edit") {
+      throw createProviderError("遮罩只支持单图编辑。", 400, "IMAGE_MASK_MODE_INVALID");
+    }
     form.append("model", String(config.model || "gpt-image-2"));
     form.append("prompt", prompt);
     form.append("size", size);
@@ -604,6 +641,7 @@ class ProviderService {
       form.append("image", blob, "blend-" + (index + 1) + "." + image.mimeType.split("/")[1]);
       preparedImages.push({ index: index + 1, mime_type: image.mimeType, bytes: image.buffer.length });
     }
+    const preparedMask = await this.appendImageMaskToForm(form, maskUrl, source, requestId);
     this.writeLog("OUTBOUND", "Tuba async " + requestMode + " POST " + endpoint, {
       carousel_task_id: String(source.carousel_task_id || ""),
       carousel_page_index: source.carousel_page_index === undefined ? "" : Number(source.carousel_page_index),
@@ -612,11 +650,13 @@ class ProviderService {
       generation_id: String(source.generation_id || ""),
       model: String(config.model || "gpt-image-2"),
       prompt: prompt,
+      mask_prompt: promptPayload.mask_prompt,
       size: size,
       quality: quality,
       async: true,
       response_format: "url",
       images: preparedImages,
+      mask: preparedMask,
       timeout_ms: this.getImageTimeoutMs(config)
     }, requestId);
     const service = this;

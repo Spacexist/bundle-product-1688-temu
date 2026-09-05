@@ -43,7 +43,7 @@ function fixture(t) {
 
 /** Supply non-secret configuration for a transport that cannot access the internet. */
 function config() {
-  return { baseurl: "https://tuba.invalid", endpoint: "/v1/images/edits", generation_endpoint: "/v1/images/generations", apikey: "fixture-key" };
+  return { baseurl: "https://tuba.invalid", endpoint: "/v1/images/edits", generation_endpoint: "/v1/images/generations", apikey: "fixture-key", mask_prompt: "只改遮罩透明区域" };
 }
 
 /** Stub only upstream transport while exercising real provider/queue observers. */
@@ -207,6 +207,58 @@ test("all edit entry points retain source associations and download progress", /
   assert.equal(tasks[2].execution_id, "page-execution");
   assert.equal(tasks[2].carousel_page_index, 0);
   assert.doesNotMatch(fs.readFileSync(history.file, "utf8"), /SECRET|secret|private.invalid/);
+});
+
+test("provider mask prompt helper centralizes every masked edit prompt", /** Lock the mask prompt policy to one provider-layer function. */ function () {
+  const provider = new ProviderService({ readConfig: config, images: {}, imageTaskQueue: {} });
+  const imageConfig = { edit_prompt: "default edit", fusion_prompt: "default fusion", mask_prompt: "只改遮罩透明区域" };
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑" }, "edit", ""), { prompt: "普通编辑", mask_prompt: false });
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑" }, "edit", "data:image/png;base64,YQ=="), { prompt: "普通编辑\n\n只改遮罩透明区域", mask_prompt: true });
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑\n\n只改遮罩透明区域" }, "edit", "data:image/png;base64,YQ=="), { prompt: "普通编辑\n\n只改遮罩透明区域", mask_prompt: true });
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "" }, "edit", "data:image/png;base64,YQ=="), { prompt: "default edit\n\n只改遮罩透明区域", mask_prompt: true });
+  assert.deepEqual(provider.buildImageEditPrompt({ mask_prompt: "只改遮罩透明区域" }, { prompt: "" }, "edit", "data:image/png;base64,YQ=="), { prompt: "只改遮罩透明区域", mask_prompt: true });
+  assert.throws(function missingMaskPrompt() {
+    provider.buildImageEditPrompt({ edit_prompt: "default edit" }, { prompt: "普通编辑" }, "edit", "data:image/png;base64,YQ==");
+  }, { code: "IMAGE_MASK_PROMPT_MISSING" });
+});
+
+test("provider forwards an optional PNG mask on edit requests", /** Verify mask transport without performing provider or download network calls. */ async function (t) {
+  const { queue } = fixture(t);
+  let submittedBody = null;
+  const upstream = {
+    /** Capture the multipart body and finish like the async protocol. */
+    generate: async function generate(settings) {
+      submittedBody = settings.body;
+      await settings.onState({ provider_task_id: "provider-mask", provider_status: "completed", provider_submitted_at: new Date().toISOString() });
+      return "https://private.invalid/result.png";
+    }
+  };
+  const images = {
+    /** Decode source and mask fixtures as PNG files. */
+    readDataUrl: function read() { return { buffer: Buffer.from("fixture"), mimeType: "image/png" }; },
+    /** Finish the local cache write without network. */
+    cacheGeneratedImage: async function cache() { return "/api/v1/cache/image/mask.png"; }
+  };
+  const provider = new ProviderService({ readConfig: config, images, imageTaskQueue: queue, asyncImages: upstream });
+  await provider.editImages({ direct_task_id: "masked", temu_main_id: "product-a", prompt: "mask", image_urls: ["data:image/png;base64,YQ=="], mask_url: "data:image/png;base64,Yg==" }, "edit", "request-mask");
+  assert.equal(submittedBody.getAll("image").length, 1);
+  assert.equal(submittedBody.getAll("mask").length, 1);
+  assert.equal(submittedBody.get("prompt"), "mask\n\n只改遮罩透明区域");
+});
+
+
+test("masked edit requires the server-configured mask prompt", /** Prevent any masked provider request from bypassing the guard prompt. */ async function (t) {
+  const { queue } = fixture(t);
+  const images = {
+    /** Decode the source and mask without touching the network. */
+    readDataUrl: function read() { return { buffer: Buffer.from("fixture"), mimeType: "image/png" }; }
+  };
+  const upstream = {
+    /** Fail the test if a masked request without mask_prompt reaches transport. */
+    generate: async function generate() { throw new Error("unexpected upstream submit"); }
+  };
+  const provider = new ProviderService({ readConfig: function readConfig() { return { baseurl: "https://tuba.invalid", endpoint: "/v1/images/edits", apikey: "fixture-key" }; }, images, imageTaskQueue: queue, asyncImages: upstream });
+  await assert.rejects(provider.editImages({ direct_task_id: "missing-mask-prompt", temu_main_id: "product-a", prompt: "mask", image_urls: ["data:image/png;base64,YQ=="], mask_url: "data:image/png;base64,Yg==" }, "edit", "request-mask-missing"), { code: "IMAGE_MASK_PROMPT_MISSING" });
 });
 
 test("business deletion and manual carousel regeneration never erase or rebind old history", /** Exercise real runtime metadata wiring with a fake upstream. */ async function (t) {
@@ -404,6 +456,31 @@ test("dashboard copies the exact ID and links logs by request without mutating t
   assert.equal(task.phase, "succeeded");
 });
 
+test("uploaded review diagnostics groups Bundle API logs and highlights bad or missing fields", /** Exercise the Uploaded / Review tab without calling the backend or browser. */ function () {
+  const { context: page, nodes, html } = pageFixture();
+  assert.ok(html.includes('id="uploadReviewPanel"'));
+  assert.ok(html.includes('id="uploadReviewTab"'));
+  page.logEntries = [
+    { request_id: "req-ok", time: "2026-09-05 12:00:00", direction: "OUTBOUND", label: "Bundle API POST /relay", payload: { target: "request relay", upload: { body_type: "json" } } },
+    { request_id: "req-ok", time: "2026-09-05 12:00:01", direction: "UPSTREAM", label: "Bundle API response 200", payload: { status: 200, duration_ms: 1200, data: { uploaded: true, review: true } } },
+    { request_id: "req-missing", time: "2026-09-05 12:01:00", direction: "UPSTREAM", label: "Bundle API response 200", payload: { status: 200, duration_ms: 300 } },
+    { request_id: "req-bad", time: "2026-09-05 12:02:00", direction: "UPSTREAM", label: "Bundle API response 200", payload: { status: 200, duration_ms: 400, uploaded: false, review: null } }
+  ];
+  page.renderUploadReview();
+  assert.match(nodes.get("uploadReviewRows").textContent, /req-ok/);
+  assert.match(nodes.get("uploadReviewRows").textContent, /true/);
+  assert.match(nodes.get("uploadReviewRows").textContent, /缺失/);
+  assert.match(nodes.get("uploadReviewRows").textContent, /false/);
+  assert.match(nodes.get("uploadReviewRows").textContent, /null/);
+  assert.match(nodes.get("uploadReviewSummary").textContent, /正常 1/);
+  assert.match(nodes.get("uploadReviewSummary").textContent, /缺字段 1/);
+  assert.match(nodes.get("uploadReviewSummary").textContent, /异常 1/);
+  page.selectDiagnosticsTab("upload-review");
+  assert.equal(nodes.get("uploadReviewPanel").hidden, false);
+  assert.equal(nodes.get("logsPanel").hidden, true);
+  assert.equal(nodes.get("uploadReviewTab").attributes["aria-selected"], "true");
+});
+
 test("failed-only page filters and paginates without requesting full URL details", /** Run the actual failure renderer offline on text-only DOM nodes. */ function () {
   const { context: page, nodes, html } = pageFixture();
   assert.ok(html.includes('id="imageFailuresPanel"'));
@@ -502,3 +579,4 @@ test("an HTTP 500 preserves previous task rows and exposes the failing status", 
   assert.match(nodes.get("imageTaskWarning").textContent, /HTTP 500/);
   assert.match(nodes.get("imageTasksStatus").textContent, /上次快照/);
 });
+

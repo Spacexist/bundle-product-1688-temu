@@ -215,8 +215,9 @@ test("button positions and labels stay stable from results to submission and run
   assert.match(options.template, /<span v-if="!carouselPageFeedback\(\)\.title \|\| carouselPageFeedback\(\)\.error">/);
   assert.doesNotMatch(options.template, /v-else class="carousel-result-placeholder"/);
   const footer = options.template.match(/<footer class="image-editor-actions" :class=[\s\S]*?<\/footer>/)[0];
-  assert.match(footer, /@click="regenerateAllCarouselPages">全部重生<\/button>/);
-  assert.match(footer, /@click="regenerateCurrentCarouselPage">基于当前图重生<\/button>/);
+  assert.doesNotMatch(footer, /@click="regenerateAllCarouselPages">全部重生<\/button>/);
+  assert.doesNotMatch(footer, /@click="closeGalleryImageEditor">关闭<\/button>/);
+  assert.match(footer, /@click="regenerateCurrentCarouselPage">\{\{ hasImageMaskStrokes\(\) \? '修改涂抹区域' : '基于当前图重生' \}\}<\/button>/);
   assert.match(footer, /!currentCarouselPage\(\)\.image_url/);
   assert.doesNotMatch(footer, /全部生成中|单张生成中/);
   assert.match(footer, /v-if="canRegenerateCarouselPages\(\) \|\| canApplyCarouselReplacement\(true\)"/);
@@ -229,13 +230,16 @@ test("button positions and labels stay stable from results to submission and run
   assert.equal(view.canShowImageEditorConfirm(), true);
   assert.equal(view.canRegenerateCarouselPages(), true);
   const css = fs.readFileSync(path.join(__dirname, "../../web/styles.css"), "utf8");
-  assert.match(css, /\.image-editor-actions\.is-carousel-results > button \{[^}]*width: 104px/);
+  assert.match(css, /\.image-editor-actions\.is-carousel-results > button \{[^}]*min-width: 104px/);
   assert.match(css, /\.carousel-feedback-leave-active \{ transition: opacity \.3s ease/);
   assert.match(options.template, /class="carousel-version-dots"/);
   assert.match(options.template, /@wheel="handleImageVersionWheel\(\$event, 'carousel'\)"/);
   assert.match(options.template, /@wheel="handleImageVersionWheel\(\$event, 'direct'\)"/);
   assert.match(css, /\.carousel-version-dots \{[^}]*top: 50%; left: -42px/);
   assert.match(css, /\.carousel-version-dots \{[^}]*flex-direction: column/);
+  assert.match(css, /\.image-mask-controls \{[^}]*right: -54px/);
+  assert.match(css, /\.image-mask-frame \{[^}]*display: inline-block/);
+  assert.match(css, /\.image-mask-frame \.image-mask-layer \{[^}]*position: absolute/);
 });
 
 test("version dots select a retained image without starting generation", /** Exercise the persisted version-selection endpoint only. */ async function () {
@@ -318,3 +322,7 @@ test("unmount cancels every completion timer", /** Prevent delayed state writes 
   options.beforeUnmount.call(view);
   assert.equal(timers.size, 0);
 });
+
+
+
+

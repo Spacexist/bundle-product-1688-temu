@@ -844,8 +844,8 @@ class ProductService {
     return transaction.result;
   }
 
-  /** Append selected multi-fusion outputs while preserving every original gallery image. */
-  async applyMultiFusionTask(task, selectedIndices, requestId) {
+  /** Append selected multi-fusion outputs, or replace the current gallery when requested. */
+  async applyMultiFusionTask(task, selectedIndices, requestId, replaceAll) {
     const service = this;
     const transaction = await this.repository.mutate(/** Save multi-fusion outputs and an undo snapshot in one product transaction. */ async function mutateMultiFusionImages(payload) {
       const found = task.temu_platform_id
@@ -878,7 +878,7 @@ class ProductService {
       }
       const currentGallery = Array.isArray(found.record.gallery_image_urls) ? found.record.gallery_image_urls : [];
       const undoToken = service.repository.createHistorySnapshot(found.record, "multi_fusion_images");
-      const gallery = currentGallery.concat(generatedUrls);
+      const gallery = replaceAll ? generatedUrls.slice() : currentGallery.concat(generatedUrls);
       found.record.gallery_image_urls = gallery;
       found.record.main_image_url = gallery[0] || "";
       await service.images.cacheEditableRecordImages(found.record);

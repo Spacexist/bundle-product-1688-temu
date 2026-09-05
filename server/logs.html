@@ -116,6 +116,11 @@
     .failure-attempt summary { cursor: pointer; color: var(--blue); overflow-wrap: anywhere; }
     .failure-url { display: block; padding: 10px; margin-top: 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
     .failure-reason { max-width: 400px; overflow-wrap: anywhere; }
+    .upload-review-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+    .upload-review-summary span { padding: 5px 9px; border: 1px solid rgba(148, 163, 184, .16); border-radius: 999px; background: rgba(15, 23, 42, .5); color: #cbd5e1; font: 11px Consolas, monospace; }
+    .upload-review-summary span[data-tone="ok"] { border-color: rgba(34, 197, 94, .22); color: #86efac; }
+    .upload-review-summary span[data-tone="warn"] { border-color: rgba(245, 158, 11, .24); color: #fbbf24; }
+    .upload-review-summary span[data-tone="bad"] { border-color: rgba(239, 68, 68, .24); color: #fca5a5; }
     .config-highlights { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
     .config-highlight { padding: 12px; border: 1px solid #26354e; border-radius: 10px; background: rgba(15, 23, 42, .72); }
     .config-highlight span { display: block; color: var(--muted); font-size: 11px; }
@@ -152,6 +157,7 @@
   <main>
     <nav class="page-tabs" role="tablist" aria-label="诊断视图">
       <button id="logsTab" type="button" role="tab" aria-selected="true" aria-controls="logsPanel">服务日志</button>
+      <button id="uploadReviewTab" type="button" role="tab" aria-selected="false" aria-controls="uploadReviewPanel">Uploaded / Review</button>
       <button id="imageTasksTab" type="button" role="tab" aria-selected="false" aria-controls="imageTasksPanel">图片任务</button>
       <button id="imageFailuresTab" type="button" role="tab" aria-selected="false" aria-controls="imageFailuresPanel">图片失败</button>
       <button id="serverConfigTab" type="button" role="tab" aria-selected="false" aria-controls="serverConfigPanel">服务配置</button>
@@ -181,6 +187,12 @@
           <div id="queuePendingList" class="queue-task-list"></div>
         </section>
       </div>
+    </section>
+    <section id="uploadReviewPanel" class="task-panel" role="tabpanel" aria-labelledby="uploadReviewTab" hidden>
+      <div class="queue-heading"><div><h2>Uploaded / Review</h2><p>只检测请求中转 / Bundle API 日志里的 uploaded 和 review 字段。</p></div><span id="uploadReviewStatus" class="status">实时读取</span></div>
+      <div id="uploadReviewSummary" class="upload-review-summary"></div>
+      <p class="task-note">每行对应一次 Bundle API 请求。字段缺失标黄，false/null 标红；点击“打开详情”可查看原始 Payload / Response。</p>
+      <div class="task-table-wrap"><table class="task-table"><thead><tr><th>时间 / request</th><th>接口</th><th>uploaded</th><th>review</th><th>耗时</th><th>操作</th></tr></thead><tbody id="uploadReviewRows"></tbody></table></div>
     </section>
     <section id="imageTasksPanel" class="task-panel" role="tabpanel" aria-labelledby="imageTasksTab" hidden>
       <div class="queue-heading"><h2>图片执行历史</h2><span id="imageTasksStatus" class="status">等待读取</span></div>
@@ -276,6 +288,9 @@
     var inspectorRequestTab = document.getElementById("inspectorRequestTab");
     var inspectorResponseTab = document.getElementById("inspectorResponseTab");
     var inspectorClose = document.getElementById("inspectorClose");
+    var uploadReviewRows = document.getElementById("uploadReviewRows");
+    var uploadReviewStatus = document.getElementById("uploadReviewStatus");
+    var uploadReviewSummary = document.getElementById("uploadReviewSummary");
     var pauseButton = document.getElementById("pauseButton");
     var clearButton = document.getElementById("clearButton");
     var connectionStatus = document.getElementById("connectionStatus");
@@ -336,6 +351,7 @@
         logRenderScheduled = false;
         if (!isPaused) {
           renderLogs();
+          if (!document.getElementById("uploadReviewPanel").hidden) { renderUploadReview(); }
         }
       }
       window.setTimeout(renderScheduledLogs, 80);
@@ -478,7 +494,7 @@
       if (label.indexOf("kimi") >= 0 || label.indexOf("moonshot") >= 0 || String(payload.model || "").toLowerCase().indexOf("kimi") >= 0) {
         return "llm_provider";
       }
-      if (label.indexOf("beeapi") >= 0 || label.indexOf("image provider") >= 0 || label.indexOf("provider source image") >= 0 || label.indexOf("detail image") >= 0 || label.indexOf("generation") >= 0 || label.indexOf("fusion") >= 0) {
+      if (label.indexOf("beeapi") >= 0 || label.indexOf("tuba async") >= 0 || label.indexOf("/v1/images") >= 0 || label.indexOf("image provider") >= 0 || label.indexOf("provider source image") >= 0 || label.indexOf("detail image") >= 0 || label.indexOf("generation") >= 0 || label.indexOf("fusion") >= 0) {
         return "image_provider";
       }
       return "system";
@@ -950,6 +966,214 @@
       logList.appendChild(fragment);
     }
 
+    /** Recursively find the first exact field name inside a bounded JSON-like payload. */
+    function findExactPayloadField(value, fieldName, path, depth) {
+      if (!value || typeof value !== "object" || depth > 6) {
+        return null;
+      }
+      if (Object.prototype.hasOwnProperty.call(value, fieldName)) {
+        return { found: true, value: value[fieldName], path: path ? path + "." + fieldName : fieldName };
+      }
+      if (Array.isArray(value)) {
+        for (var arrayIndex = 0; arrayIndex < value.length; arrayIndex += 1) {
+          var arrayResult = findExactPayloadField(value[arrayIndex], fieldName, path + "[" + arrayIndex + "]", depth + 1);
+          if (arrayResult) { return arrayResult; }
+        }
+        return null;
+      }
+      var keys = Object.keys(value);
+      for (var index = 0; index < keys.length; index += 1) {
+        var key = keys[index];
+        var result = findExactPayloadField(value[key], fieldName, path ? path + "." + key : key, depth + 1);
+        if (result) { return result; }
+      }
+      return null;
+    }
+
+    /** Read the newest uploaded/review value from one Bundle or image request group. */
+    function readUploadReviewField(call, fieldName) {
+      var events = call && Array.isArray(call.events) ? call.events : [];
+      for (var index = events.length - 1; index >= 0; index -= 1) {
+        var payload = events[index] && events[index].payload && typeof events[index].payload === "object" ? events[index].payload : {};
+        if (call && call.service_key === "image_provider") {
+          if (fieldName === "uploaded") {
+            var images = findExactPayloadField(payload, "images", "payload", 0);
+            if (images && Array.isArray(images.value)) {
+              return { found: true, value: images.value.length + " image", path: images.path };
+            }
+          }
+          if (fieldName === "review") {
+            var response = findExactPayloadField(payload, "response", "payload", 0);
+            if (response && response.found) {
+              var maskPrompt = findExactPayloadField(payload, "mask_prompt", "payload", 0);
+              return { found: true, value: maskPrompt && maskPrompt.value ? "response + mask_prompt" : "response", path: response.path };
+            }
+            var mask = findExactPayloadField(payload, "mask", "payload", 0);
+            if (mask && mask.found) {
+              return { found: true, value: mask.value ? "mask" : "no mask", path: mask.path };
+            }
+          }
+        }
+        var result = findExactPayloadField(payload, fieldName, "payload", 0);
+        if (result) { return result; }
+      }
+      return { found: false, value: undefined, path: "" };
+    }
+
+    /** Convert one uploaded/review value into the requested green/yellow/red status. */
+    function classifyUploadReviewValue(result) {
+      if (!result || !result.found) {
+        return { tone: "warn", label: "缺失", detail: "" };
+      }
+      var value = result.value;
+      var normalized = String(value).trim().toLowerCase();
+      var isBad = value === false || value === null || value === 0 || normalized === "false" || normalized === "null" || normalized === "0";
+      return {
+        tone: isBad ? "bad" : "ok",
+        label: value === null ? "null" : typeof value === "object" ? JSON.stringify(value).slice(0, 80) : String(value),
+        detail: result.path || ""
+      };
+    }
+
+    /** Return whether one call belongs in the uploaded/review diagnostics panel. */
+    function isUploadReviewService(serviceKey) {
+      return serviceKey === "bundle_api" || serviceKey === "image_provider";
+    }
+
+    /** Build every Bundle or Tuba image call used by the Uploaded / Review tab. */
+    function buildUploadReviewCalls() {
+      var buckets = { bundle_api: [], image_provider: [] };
+      var pendingCalls = {};
+      for (var entryIndex = 0; entryIndex < logEntries.length; entryIndex += 1) {
+        var entry = logEntries[entryIndex] || {};
+        var serviceKey = getEntryServiceKey(entry);
+        if (!isUploadReviewService(serviceKey)) {
+          continue;
+        }
+        var call = null;
+        if (isCallResponseEntry(entry)) {
+          call = findPendingCall(pendingCalls, entry);
+        }
+        if (!call) {
+          call = createLogCall(entry);
+          registerCall(buckets, pendingCalls, call);
+        }
+        addEntryToLogCall(call, entry);
+        if (isCallRequestEntry(entry) && !pendingCalls[getPendingCallKey(entry)]) {
+          registerCall(buckets, pendingCalls, call);
+        }
+      }
+      return (buckets.bundle_api || []).concat(buckets.image_provider || []);
+    }
+
+    /** Create one status pill for an Uploaded / Review field. */
+    function createUploadReviewStatus(status) {
+      var box = taskText("span", status.label || "—", "task-phase");
+      box.dataset.phase = status.tone === "bad" ? "failed" : status.tone === "warn" ? "interrupted" : "succeeded";
+      if (status.detail) {
+        box.title = status.detail;
+      }
+      return box;
+    }
+
+    /** Render one live row for the Uploaded / Review diagnostics tab. */
+    function createUploadReviewRow(item, index) {
+      var call = item.call;
+      var row = document.createElement("tr");
+      var timeCell = taskText("td", "");
+      var routeCell = taskText("td", "");
+      var uploadedCell = taskText("td", "");
+      var reviewCell = taskText("td", "");
+      var durationCell = taskText("td", "");
+      var actionCell = taskText("td", "");
+      var pair = getCallRoutePair(call);
+      var button = taskText("button", "打开详情");
+      timeCell.appendChild(taskText("time", String(call && call.last_time || "—")));
+      timeCell.appendChild(taskText("span", "request " + String(call && call.request_id || "—"), "task-id"));
+      routeCell.appendChild(taskText("div", getCallLabel(call)));
+      routeCell.appendChild(taskText("p", pair.from + " → " + pair.to, "task-note"));
+      uploadedCell.appendChild(createUploadReviewStatus(item.uploaded));
+      if (item.uploaded.detail) { uploadedCell.appendChild(taskText("p", item.uploaded.detail, "task-note")); }
+      reviewCell.appendChild(createUploadReviewStatus(item.review));
+      if (item.review.detail) { reviewCell.appendChild(taskText("p", item.review.detail, "task-note")); }
+      durationCell.textContent = item.duration_ms ? formatDurationSeconds(item.duration_ms) : "—";
+      button.type = "button";
+      button.dataset.uploadReviewAction = "inspect";
+      button.dataset.uploadReviewIndex = String(index);
+      actionCell.appendChild(button);
+      row.appendChild(timeCell);
+      row.appendChild(routeCell);
+      row.appendChild(uploadedCell);
+      row.appendChild(reviewCell);
+      row.appendChild(durationCell);
+      row.appendChild(actionCell);
+      return row;
+    }
+
+    var uploadReviewCalls = [];
+
+    /** Render the dedicated Uploaded / Review tab from the current in-memory Bundle API logs. */
+    function renderUploadReview() {
+      var calls = buildUploadReviewCalls();
+      var fragment = document.createDocumentFragment();
+      var ok = 0;
+      var warn = 0;
+      var bad = 0;
+      uploadReviewCalls = [];
+      for (var index = 0; index < calls.length; index += 1) {
+        var call = calls[index];
+        var item = {
+          call: call,
+          uploaded: classifyUploadReviewValue(readUploadReviewField(call, "uploaded")),
+          review: classifyUploadReviewValue(readUploadReviewField(call, "review")),
+          duration_ms: 0
+        };
+        var events = Array.isArray(call.events) ? call.events : [];
+        for (var eventIndex = events.length - 1; eventIndex >= 0; eventIndex -= 1) {
+          var payload = events[eventIndex] && events[eventIndex].payload && typeof events[eventIndex].payload === "object" ? events[eventIndex].payload : {};
+          if (payload.duration_ms) { item.duration_ms = Number(payload.duration_ms) || 0; break; }
+        }
+        if (item.uploaded.tone === "bad" || item.review.tone === "bad") { bad += 1; }
+        else if (item.uploaded.tone === "warn" || item.review.tone === "warn") { warn += 1; }
+        else { ok += 1; }
+        uploadReviewCalls.push(item);
+      }
+      for (var rowIndex = uploadReviewCalls.length - 1; rowIndex >= 0; rowIndex -= 1) {
+        fragment.appendChild(createUploadReviewRow(uploadReviewCalls[rowIndex], rowIndex));
+      }
+      if (!uploadReviewCalls.length) {
+        var emptyRow = document.createElement("tr");
+        var emptyCell = taskText("td", "暂无 Bundle API / Image Provider uploaded / review 记录。", "empty");
+        emptyCell.colSpan = 6;
+        emptyRow.appendChild(emptyCell);
+        fragment.appendChild(emptyRow);
+      }
+      uploadReviewStatus.textContent = "Bundle/Image " + uploadReviewCalls.length + " 条";
+      uploadReviewSummary.textContent = "";
+      uploadReviewSummary.appendChild(createUploadReviewSummaryPill("正常 " + ok, "ok"));
+      uploadReviewSummary.appendChild(createUploadReviewSummaryPill("缺字段 " + warn, "warn"));
+      uploadReviewSummary.appendChild(createUploadReviewSummaryPill("异常 " + bad, "bad"));
+      uploadReviewRows.textContent = "";
+      uploadReviewRows.appendChild(fragment);
+    }
+
+    /** Create one top summary pill for the Uploaded / Review diagnostics tab. */
+    function createUploadReviewSummaryPill(text, tone) {
+      var pill = taskText("span", text);
+      pill.dataset.tone = tone;
+      return pill;
+    }
+
+    /** Open the original Bundle API Payload / Response for one Uploaded / Review row. */
+    function handleUploadReviewAction(event) {
+      var button = event.target.closest("button[data-upload-review-action]");
+      if (!button) { return; }
+      var item = uploadReviewCalls[Number(button.dataset.uploadReviewIndex)];
+      if (item && item.call) {
+        openLogInspector(item.call);
+      }
+    }
+
     /** Add one live entry while retaining a bounded browser-side history. */
     function appendLogEntry(entry) {
       var eventId = Number(entry && entry.event_id);
@@ -985,6 +1209,7 @@
           }
         }
         renderLogs();
+        if (!document.getElementById("uploadReviewPanel").hidden) { renderUploadReview(); }
       } catch (error) {
         setConnectionStatus(false, "历史读取失败");
       }
@@ -1074,6 +1299,7 @@
       pauseButton.textContent = isPaused ? "继续滚动" : "暂停滚动";
       if (!isPaused) {
         renderLogs();
+        if (!document.getElementById("uploadReviewPanel").hidden) { renderUploadReview(); }
       }
     }
 
@@ -1083,6 +1309,7 @@
       formattedPayloadCache = {};
       closeLogInspector();
       renderLogs();
+      if (!document.getElementById("uploadReviewPanel").hidden) { renderUploadReview(); }
     }
 
     /** Close the Network-style inspector when Escape is pressed. */
@@ -1386,21 +1613,25 @@
       var showFailures = showTasks === "failures";
       var showImages = showTasks === true;
       var showConfig = showTasks === "config";
+      var showUploadReview = showTasks === "upload-review";
       document.getElementById("imageTasksPanel").hidden = !showImages;
       document.getElementById("imageFailuresPanel").hidden = !showFailures;
       document.getElementById("serverConfigPanel").hidden = !showConfig;
-      document.getElementById("logsPanel").hidden = showImages || showFailures || showConfig;
+      document.getElementById("uploadReviewPanel").hidden = !showUploadReview;
+      document.getElementById("logsPanel").hidden = showImages || showFailures || showConfig || showUploadReview;
       document.getElementById("imageTasksTab").setAttribute("aria-selected", String(showImages));
       document.getElementById("imageFailuresTab").setAttribute("aria-selected", String(showFailures));
       document.getElementById("serverConfigTab").setAttribute("aria-selected", String(showConfig));
-      document.getElementById("logsTab").setAttribute("aria-selected", String(!showImages && !showFailures && !showConfig));
-      serviceFilter.hidden = showImages || showFailures || showConfig;
-      pauseButton.hidden = showImages || showFailures || showConfig;
-      clearButton.hidden = showImages || showFailures || showConfig;
+      document.getElementById("uploadReviewTab").setAttribute("aria-selected", String(showUploadReview));
+      document.getElementById("logsTab").setAttribute("aria-selected", String(!showImages && !showFailures && !showConfig && !showUploadReview));
+      serviceFilter.hidden = showImages || showFailures || showConfig || showUploadReview;
+      pauseButton.hidden = showImages || showFailures || showConfig || showUploadReview;
+      clearButton.hidden = showImages || showFailures || showConfig || showUploadReview;
       closeLogInspector();
       if (showImages) { renderImageTasks(); loadImageTasks(); }
       if (showFailures) { renderImageFailures(); loadImageFailures(); }
       if (showConfig) { loadServerConfig(); }
+      if (showUploadReview) { renderUploadReview(); }
     }
 
     /** Apply filters immediately and reset pagination to the first result page. */
@@ -1638,6 +1869,7 @@
 
     document.getElementById("imageFailuresTab").addEventListener("click", /** Open the independent final-failure history. */ function showFailures() { selectDiagnosticsTab("failures"); });
     document.getElementById("serverConfigTab").addEventListener("click", /** Open the local redacted server configuration. */ function showConfig() { selectDiagnosticsTab("config"); });
+    document.getElementById("uploadReviewTab").addEventListener("click", /** Open the Bundle uploaded/review diagnostics. */ function showUploadReview() { selectDiagnosticsTab("upload-review"); });
     imageFailureSearch.addEventListener("input", handleImageFailureFilter);
     imageFailureSource.addEventListener("change", handleImageFailureFilter);
     imageFailureStage.addEventListener("change", handleImageFailureFilter);
@@ -1653,6 +1885,7 @@
     imageTaskPhase.addEventListener("change", handleImageTaskFilter);
     imageTaskOrder.addEventListener("change", handleImageTaskFilter);
     imageTaskRows.addEventListener("click", handleImageTaskAction);
+    uploadReviewRows.addEventListener("click", handleUploadReviewAction);
     document.getElementById("imageTaskPrev").addEventListener("click", /** Show the previous retained-history page. */ function previousPage() { imageTaskPage -= 1; renderImageTasks(); });
     document.getElementById("imageTaskNext").addEventListener("click", /** Show the next retained-history page. */ function nextPage() { imageTaskPage += 1; renderImageTasks(); });
 

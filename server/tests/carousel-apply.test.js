@@ -75,6 +75,20 @@ test("explicit replace-all still replaces the entire gallery", /** Preserve the 
   assert.equal(record.main_image_url, "generated-a");
 });
 
+test("multi-fusion apply can append or replace the current gallery", /** Keep the multi-image replacement button aligned with carousel semantics. */ async function () {
+  const appendFixture = productFixture();
+  appendFixture.task.type = "multi-fusion";
+  await appendFixture.service.applyMultiFusionTask(appendFixture.task, [0, 3], "request-1", false);
+  assert.deepEqual(appendFixture.record.gallery_image_urls, ["original-a", "original-b", "generated-a", "generated-c"]);
+  assert.equal(appendFixture.record.main_image_url, "original-a");
+
+  const replaceFixture = productFixture();
+  replaceFixture.task.type = "multi-fusion";
+  await replaceFixture.service.applyMultiFusionTask(replaceFixture.task, [0, 2, 3], "request-2", true);
+  assert.deepEqual(replaceFixture.record.gallery_image_urls, ["generated-a", "generated-b", "generated-c"]);
+  assert.equal(replaceFixture.record.main_image_url, "generated-a");
+});
+
 test("confirmation skips duplicate selections, failed pages and missing outputs", /** Keep existing successful-output validation in append mode. */ async function () {
   const { service, record, task } = productFixture();
   await service.applyCarouselTask(task, [0, 0, 1, 9, 3], "request-1", false);
@@ -184,6 +198,7 @@ test("carousel button says confirm while direct edit and replace-all labels stay
   assert.doesNotThrow(/** Check Vue template expressions without mounting UI. */ function compileTemplate() { compile(options.template); });
   assert.match(options.template, /@click="confirmGalleryImageEdit">\{\{ imageCarouselTask \? '确认' : '确认替换' \}\}/);
   assert.match(options.template, /@click="confirmCarouselReplacement\(true\)">替换所有主图/);
+  assert.match(options.template, /@click="confirmCarouselReplacement\(true\)">替换当前全部主图/);
   assert.match(options.template, /class="image-placement-notice" role="status" aria-live="polite"/);
   assert.match(options.template, /@click="revealConfirmedCarouselImage">查看图片/);
   assert.doesNotMatch(options.template, />知道了<\/button>/);

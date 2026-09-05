@@ -789,13 +789,14 @@ class CarouselRuntimeService {
     return systemPrompt ? "【全局商品约束】\n" + systemPrompt + "\n\n【当前分镜要求】\n" + pagePrompt : pagePrompt;
   }
 
-  /** Wrap one existing page prompt with current-image editing constraints without changing saved text. */
-  buildCurrentImageEditPrompt(task, page) {
-    return CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + this.buildCarouselPagePrompt(task, page);
+  /** Wrap current-image edits only when no transparent mask already constrains the edit area. */
+  buildCurrentImageEditPrompt(task, page, maskUrl) {
+    const pagePrompt = this.buildCarouselPagePrompt(task, page);
+    return String(maskUrl || "").trim() ? pagePrompt : CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + pagePrompt;
   }
 
   /** Generate one persisted carousel page independently from its initiating browser request. */
-  async generatePage(taskId, pageIndex, requestId, referenceMode) {
+  async generatePage(taskId, pageIndex, requestId, referenceMode, maskUrl) {
     const generationId = "carousel-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     const initialTask = this.readTask(taskId);
     const initialPage = initialTask && initialTask.pages[Number(pageIndex)];
@@ -823,7 +824,8 @@ class CarouselRuntimeService {
         carousel_page_index: Number(pageIndex),
         generation_id: generationId,
         image_urls: imageUrls,
-        prompt: useCurrentImage ? this.buildCurrentImageEditPrompt(task, page) : this.buildCarouselPagePrompt(task, page),
+        prompt: useCurrentImage ? this.buildCurrentImageEditPrompt(task, page, maskUrl) : this.buildCarouselPagePrompt(task, page),
+        mask_url: useCurrentImage ? String(maskUrl || "").trim() : "",
         size: normalizedSize,
         cancel_signal: controller.signal,
         /** Store the task ID against this page execution rather than its multi-page parent. */
@@ -853,7 +855,7 @@ class CarouselRuntimeService {
   }
 
   /** Start selected original-Fusion or current-image Edit pages and return immediately. */
-  startGeneration(taskId, pageIndices, requestId, referenceMode) {
+  startGeneration(taskId, pageIndices, requestId, referenceMode, maskUrl) {
     const task = this.readTask(taskId);
     if (!task || !this.providers) {
       throw createCarouselError("轮播任务不存在或图片服务未初始化。", 404, "CAROUSEL_TASK_NOT_FOUND");
@@ -886,7 +888,7 @@ class CarouselRuntimeService {
       function ignoreCarouselGenerationFailure() {
         return;
       }
-      this.generatePage(task.id, pageIndex, requestId, normalizedReferenceMode).catch(ignoreCarouselGenerationFailure);
+      this.generatePage(task.id, pageIndex, requestId, normalizedReferenceMode, maskUrl).catch(ignoreCarouselGenerationFailure);
     }
     return this.readTask(task.id) || task;
   }

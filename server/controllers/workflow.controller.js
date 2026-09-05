@@ -208,7 +208,7 @@ class WorkflowController {
   /** Start selected carousel pages in the background and return without waiting for Fusion completion. */
   generateCarouselTask(request, response, next) {
     try {
-      const task = this.carousel.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode);
+      const task = this.carousel.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode, request.validatedBody.mask_url);
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
@@ -306,14 +306,14 @@ class WorkflowController {
   /** Start selected multi-fusion result pages in the background and return immediately. */
   generateMultiFusionTask(request, response, next) {
     try {
-      const task = this.multiFusion.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode);
+      const task = this.multiFusion.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode, request.validatedBody.mask_url);
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
     }
   }
 
-  /** Append selected successful multi-fusion pages as one durable product image mutation. */
+  /** Append selected successful multi-fusion pages, or replace the current main gallery when requested. */
   async applyMultiFusionTask(request, response, next) {
     try {
       const task = this.multiFusion.readTask(request.params.taskId);
@@ -323,7 +323,7 @@ class WorkflowController {
         error.code = "MULTI_FUSION_TASK_NOT_FOUND";
         throw error;
       }
-      const result = await this.products.applyMultiFusionTask(task, request.validatedBody.selected_indices, request.requestId);
+      const result = await this.products.applyMultiFusionTask(task, request.validatedBody.selected_indices, request.requestId, Boolean(request.validatedBody.replace_all));
       const deletedTask = this.multiFusion.deleteTask(task.id, false);
       this.multiFusion.deleteRetainedAlternates(deletedTask);
       response.json({ ok: true, data: result, error: null, meta: { request_id: request.requestId } });

@@ -37,10 +37,12 @@
   "quality": "low",
   "model": "gpt-image-2",
   "edit_prompt": "",
+  "mask_prompt": "请只修改透明遮罩区域内的内容，遮罩外的人物、主体、背景、光影、构图、文字和清晰度必须保持不变。",
   "fusion_prompt": "",
   "multi_fusion_prompt": "",
   "image_queue": {
-    "concurrency": 4
+    "concurrency": 4,
+    "submit_interval_ms": 200
   },
   "exchange_rates": {
     "base_currency": "CNY",

@@ -112,6 +112,7 @@ function createPublicServerConfig(config) {
       model: image.model || "",
       price: image.price || {},
       edit_prompt: image.edit_prompt || "",
+      mask_prompt: image.mask_prompt || "",
       fusion_prompt: image.fusion_prompt || "",
       multi_fusion_prompt: image.multi_fusion_prompt || "",
       apikey_masked: maskSecret(image.apikey)

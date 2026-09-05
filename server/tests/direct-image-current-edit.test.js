@@ -92,6 +92,24 @@ test("direct Edits retains input and result as two selectable versions", /** Ver
   assert.equal(fixture.calls.length, 1);
 });
 
+test("masked current-image Edits keeps the prompt clean for provider mask prompts", /** Ensure mask edits do not receive the non-mask current-image prefix. */ async function (t) {
+  const fixture = createRuntime(t, [RESULT_ONE, RESULT_TWO]);
+  fixture.runtime.createTask(originalInput("direct-mask-parent"));
+  await fixture.runtime.startTask("direct-mask-parent", "request-1");
+
+  const child = fixture.runtime.createTask(Object.assign({}, originalInput("direct-mask-child"), {
+    reference_mode: "current",
+    parent_task_id: "direct-mask-parent",
+    mask_url: "data:image/png;base64,Yg==",
+    prompt: "只改涂抹区域"
+  })).task;
+  await fixture.runtime.startTask(child.id, "request-2");
+
+  assert.equal(fixture.calls.length, 2);
+  assert.equal(fixture.calls[1].input.prompt, "只改涂抹区域");
+  assert.equal(fixture.calls[1].input.mask_url, "data:image/png;base64,Yg==");
+});
+
 test("current-image Edits replaces the selected slot and creates a new provider execution", /** Verify current-image lineage, provider input and two-slot replacement. */ async function (t) {
   const fixture = createRuntime(t, [RESULT_ONE, RESULT_TWO]);
   fixture.runtime.createTask(originalInput("direct-parent"));

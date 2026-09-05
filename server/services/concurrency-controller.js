@@ -6,11 +6,16 @@ class ConcurrencyController {
     this.getConfiguredConcurrency = typeof settings.getConcurrency === "function"
       ? settings.getConcurrency
       : null;
+    this.getConfiguredStartIntervalMs = typeof settings.getStartIntervalMs === "function"
+      ? settings.getStartIntervalMs
+      : null;
     this.onChange = typeof settings.onChange === "function" ? settings.onChange : null;
     this.pendingTasks = [];
     this.activeTasks = [];
     this.activeCount = 0;
     this.taskSequence = 0;
+    this.nextStartAt = 0;
+    this.startDelayTimer = null;
   }
 
   /** Return a safe positive concurrency limit from the configured reader. */
@@ -20,6 +25,15 @@ class ConcurrencyController {
       return 3;
     }
     return Math.max(1, Math.min(32, Math.floor(configured)));
+  }
+
+  /** Return the configured delay between starting queued tasks. */
+  getStartIntervalMs() {
+    const configured = this.getConfiguredStartIntervalMs ? Number(this.getConfiguredStartIntervalMs()) : 0;
+    if (!Number.isFinite(configured) || configured <= 0) {
+      return 0;
+    }
+    return Math.max(0, Math.min(60000, Math.floor(configured)));
   }
 
   /** Enqueue one task and resolve it after its turn completes. */
@@ -72,15 +86,30 @@ class ConcurrencyController {
   /** Start queued tasks until the configured limit is reached. */
   pump() {
     const concurrency = this.getConcurrency();
-    while (this.activeCount < concurrency && this.pendingTasks.length) {
-      const task = this.pendingTasks.shift();
-      this.activeCount += 1;
-      task.state = "running";
-      task.started_at = new Date().toISOString();
-      this.activeTasks.push(task);
-      this.notifyChange("started", task);
-      this.startTask(task);
+    if (this.activeCount >= concurrency || !this.pendingTasks.length || this.startDelayTimer) {
+      return;
     }
+    const intervalMs = this.getStartIntervalMs();
+    const waitMs = intervalMs ? Math.max(0, this.nextStartAt - Date.now()) : 0;
+    if (waitMs > 0) {
+      const controller = this;
+      this.startDelayTimer = setTimeout(/** Resume queue draining after the configured start gap. */ function resumeDelayedStart() {
+        controller.startDelayTimer = null;
+        controller.pump();
+      }, waitMs);
+      return;
+    }
+    const task = this.pendingTasks.shift();
+    this.activeCount += 1;
+    task.state = "running";
+    task.started_at = new Date().toISOString();
+    this.activeTasks.push(task);
+    this.notifyChange("started", task);
+    if (intervalMs) {
+      this.nextStartAt = Date.now() + intervalMs;
+    }
+    this.startTask(task);
+    this.pump();
   }
 
   /** Run one queued task and release its slot on success or failure. */

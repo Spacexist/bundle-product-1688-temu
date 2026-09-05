@@ -108,8 +108,11 @@ const workbenchFocusSchema = z.object({
   mode: z.literal("realtime").optional()
 });
 
+const maskDataUrlSchema = z.string().max(15000000).optional();
+
 const imageEditSchema = z.object({
   image_urls: z.array(z.string().min(1)).min(1).max(2),
+  mask_url: maskDataUrlSchema,
   prompt: z.string().optional(),
   size: z.string().optional(),
   carousel_task_id: z.string().min(1).optional(),
@@ -127,6 +130,7 @@ const directImageTaskSchema = z.object({
   detail_index: z.number().int().min(-1).optional(),
   reference_mode: z.enum(["original", "current"]).optional(),
   parent_task_id: z.string().regex(/^direct-[a-zA-Z0-9-]+$/).optional(),
+  mask_url: maskDataUrlSchema,
   prompt: z.string().min(1),
   size: z.string().optional()
 });
@@ -238,7 +242,8 @@ const carouselPageUpdateSchema = z.object({
 
 const carouselGenerationSchema = z.object({
   page_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10),
-  reference_mode: z.enum(["original", "current"]).optional()
+  reference_mode: z.enum(["original", "current"]).optional(),
+  mask_url: maskDataUrlSchema
 });
 
 const carouselVersionSelectSchema = z.object({
@@ -254,7 +259,7 @@ const multiFusionGenerationSchema = carouselGenerationSchema;
 
 const multiFusionVersionSelectSchema = carouselVersionSelectSchema;
 
-const multiFusionApplySchema = carouselApplySchema.omit({ replace_all: true });
+const multiFusionApplySchema = carouselApplySchema;
 
 const workflowGenerateSchema = z.object({
   temu_main_id: z.union([z.string(), z.number()]),

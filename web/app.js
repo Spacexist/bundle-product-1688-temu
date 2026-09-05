@@ -596,7 +596,11 @@ const app = createApp({
                 <button class="carousel-slide-arrow previous" type="button" :disabled="imageCarouselPageIndex <= 0" aria-label="上一张轮播图" @click="changeCarouselPage(-1)">‹</button>
                 <article class="carousel-result-card" @wheel="handleImageVersionWheel($event, 'carousel')">
                   <div v-if="carouselPageVersions().length > 1" class="carousel-version-dots" role="tablist" aria-label="当前分镜图片版本"><button v-for="(versionUrl, versionIndex) in carouselPageVersions()" :key="versionUrl" type="button" role="tab" :class="{ active: activeCarouselPageVersionIndex() === versionIndex }" :aria-selected="activeCarouselPageVersionIndex() === versionIndex" :aria-label="'切换到图片版本 ' + (versionIndex + 1)" :disabled="imageVersionSelectionBusy || isCarouselPageBusy(imageCarouselPageIndex)" @click="selectCarouselPageVersion(versionIndex)"></button></div>
-                  <img v-if="currentCarouselPage().image_url" :src="imageSource(currentCarouselPage().image_url)" :alt="'轮播图 ' + (imageCarouselPageIndex + 1)">
+                  <div v-if="currentCarouselPage().image_url" class="image-mask-surface carousel-mask-surface">
+                    <img ref="imageMaskSourceImage" :src="imageSource(currentCarouselPage().image_url)" :alt="'轮播图 ' + (imageCarouselPageIndex + 1)" @load="renderImageMaskCanvas">
+                    <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
+                    <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
+                  </div>
                   <div v-if="carouselPageFeedback().title && (currentCarouselPage().image_url || !carouselPageFeedback().error)" class="carousel-page-feedback" :class="{ 'is-error': carouselPageFeedback().error }" role="status" aria-live="polite">
                     <i v-if="!carouselPageFeedback().error" class="carousel-feedback-spinner" aria-hidden="true"></i>
                     <strong>第 {{ imageCarouselPageIndex + 1 }} 张 · {{ carouselPageFeedback().title }}</strong>
@@ -615,10 +619,23 @@ const app = createApp({
               </div>
               <div v-else-if="shouldShowDirectGeneratedImage()" class="direct-image-result-viewer" @wheel="handleImageVersionWheel($event, 'direct')">
                 <div v-if="directImageVersions().length > 1" class="carousel-version-dots" role="tablist" aria-label="当前编辑图片版本"><button v-for="(versionUrl, versionIndex) in directImageVersions()" :key="versionUrl" type="button" role="tab" :class="{ active: activeDirectImageVersionIndex() === versionIndex }" :aria-selected="activeDirectImageVersionIndex() === versionIndex" :aria-label="'切换到图片版本 ' + (versionIndex + 1)" :disabled="imageVersionSelectionBusy || imageEditorBusy" @click="selectDirectImageVersion(versionIndex)"></button></div>
-                <img class="image-editor-generated-image" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果">
+                <div class="image-mask-surface direct-mask-surface">
+                  <img ref="imageMaskSourceImage" class="image-editor-generated-image" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果" @load="renderImageMaskCanvas">
+                  <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
+                  <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
+                </div>
                 <div v-if="imageEditorBusy" class="carousel-page-feedback" role="status" aria-live="polite"><i class="carousel-feedback-spinner" aria-hidden="true"></i><strong>正在基于当前图编辑…</strong><small>下方为上一次图片，完成后才会替换。</small></div>
               </div>
-              <div v-else class="image-editor-source-canvas"><img v-for="(image, sourceIndex) in galleryImageEditorSources(selectedTemuRecord)" :key="sourceIndex" :src="imageSource(image)" alt="待编辑图片"></div>
+              <div v-else class="image-editor-source-canvas">
+                <div v-if="galleryImageEditorSources(selectedTemuRecord).length === 1" class="image-mask-surface source-mask-surface">
+                  <div class="image-mask-frame">
+                    <img ref="imageMaskSourceImage" :src="imageSource(galleryImageEditorSources(selectedTemuRecord)[0])" alt="待编辑图片" @load="renderImageMaskCanvas">
+                    <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
+                    <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
+                  </div>
+                </div>
+                <img v-else v-for="(image, sourceIndex) in galleryImageEditorSources(selectedTemuRecord)" :key="sourceIndex" :src="imageSource(image)" alt="待编辑图片">
+              </div>
             </div>
             <div v-if="shouldShowFreshFusionControls()" class="carousel-controls">
               <label class="image-editor-prompt"><span>生成数量</span><input type="number" min="1" max="10" :value="imageCarouselCount" @input="handleCarouselCountInput($event)"></label>
@@ -631,7 +648,7 @@ const app = createApp({
               <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button class="image-editor-cancel" type="button" @click="closeGalleryImageEditor">关闭</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="imageCarouselGenerationBusy || hasCarouselSubmission(imageCarouselTask)" @click="regenerateAllCarouselPages">全部重生</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !currentCarouselPage().image_url || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片'" @click="regenerateCurrentCarouselPage">基于当前图重生</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '确认' : '确认替换' }}</button></footer>
+            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !currentCarouselPage().image_url || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片'" @click="regenerateCurrentCarouselPage">{{ hasImageMaskStrokes() ? '修改涂抹区域' : '基于当前图重生' }}</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="isMultiFusionImageTask() && (canRegenerateCarouselPages() || canApplyCarouselReplacement(true))" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败结果，使用全部成功图片替换当前商品主图" @click="confirmCarouselReplacement(true)">替换当前全部主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '确认' : '确认替换' }}</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -765,6 +782,12 @@ const app = createApp({
       imageEditorRestoreInFlight: false,
       imageEditorRequestId: 0,
       imageEditorBackdropPressed: false,
+      imageMaskDrawingEnabled: false,
+      imageMaskDrawing: false,
+      imageMaskStrokes: [],
+      imageMaskBrushSize: 42,
+      imageMaskSurfaceKey: "",
+      imageMaskRenderFrame: 0,
       imageEditorContextStack: [],
       imageDirectTask: null,
       imageDirectTasksByMainId: {},
@@ -909,6 +932,10 @@ const app = createApp({
     document.addEventListener("click", this.closeBulkActionsMenu);
     this.topbarLastScrollY = Math.max(0, Number(window.scrollY) || 0);
     this.initializeCloudAuth();
+  },
+  /** Keep the mask overlay aligned with the currently visible editor image. */
+  updated: function syncImageMaskAfterRender() {
+    this.syncImageMaskSurface();
   },
   /** Close the cache subscription before the Vue view is destroyed. */
   beforeUnmount: function cleanupRealtimeCache() {
@@ -7195,6 +7222,245 @@ const app = createApp({
       this.loadMultiFusionTaskForProduct(record, sources);
     },
 
+    /** Return the currently editable image URL for the mask overlay. */
+    currentImageMaskUrl: function currentImageMaskUrl() {
+      const state = this.imageEditorState();
+      if (state.hasCarouselTask && this.currentCarouselPage().image_url) {
+        return String(this.currentCarouselPage().image_url || "");
+      }
+      if (!state.hasCarouselTask && this.imageEditorGeneratedUrl) {
+        return String(this.imageEditorGeneratedUrl || "");
+      }
+      const sources = this.galleryImageEditorSources(this.selectedTemuRecord);
+      return sources.length === 1 ? String(sources[0] || "") : "";
+    },
+
+    /** Return a stable key so strokes never leak across images or pages. */
+    currentImageMaskSurfaceKey: function currentImageMaskSurfaceKey() {
+      const state = this.imageEditorState();
+      return [state.phase, this.imageCarouselPageIndex, this.currentImageMaskUrl()].join("|");
+    },
+
+    /** Return whether the current editor image can collect a local mask. */
+    shouldShowImageMaskControls: function shouldShowImageMaskControls() {
+      if (!this.imageEditorOpen) {
+        return false;
+      }
+      const state = this.imageEditorState();
+      if (state.hasCarouselTask) {
+        return Boolean(this.currentCarouselPage().image_url && !this.isCarouselPageBusy(this.imageCarouselPageIndex));
+      }
+      if (this.imageEditorBusy) {
+        return false;
+      }
+      return Boolean(this.currentImageMaskUrl());
+    },
+
+    /** Return whether the user has marked at least one editable stroke. */
+    hasImageMaskStrokes: function hasImageMaskStrokes() {
+      return Array.isArray(this.imageMaskStrokes) && this.imageMaskStrokes.length > 0;
+    },
+
+    /** Reset the local mask editor without changing the current source image. */
+    resetImageMaskEditor: function resetImageMaskEditor() {
+      this.imageMaskDrawingEnabled = false;
+      this.imageMaskDrawing = false;
+      this.imageMaskStrokes = [];
+      this.imageMaskSurfaceKey = this.currentImageMaskSurfaceKey();
+      this.renderImageMaskCanvas();
+    },
+
+    /** Toggle the brush while keeping existing strokes visible. */
+    toggleImageMaskTool: function toggleImageMaskTool() {
+      this.imageMaskDrawingEnabled = !this.imageMaskDrawingEnabled;
+      this.renderImageMaskCanvas();
+    },
+
+    /** Clear every painted area from the current image. */
+    clearImageMaskStrokes: function clearImageMaskStrokes() {
+      this.imageMaskDrawing = false;
+      this.imageMaskStrokes = [];
+      this.renderImageMaskCanvas();
+    },
+
+    /** Return a single Vue ref even when Vue stores it as an array. */
+    firstRef: function firstRef(value) {
+      return Array.isArray(value) ? value[0] : value;
+    },
+
+    /** Keep canvas pixels matched to the rendered image surface. */
+    syncImageMaskSurface: function syncImageMaskSurface() {
+      const key = this.currentImageMaskSurfaceKey();
+      if (key !== this.imageMaskSurfaceKey) {
+        this.imageMaskDrawingEnabled = false;
+        this.imageMaskDrawing = false;
+        this.imageMaskStrokes = [];
+        this.imageMaskSurfaceKey = key;
+      }
+      this.renderImageMaskCanvas();
+    },
+
+    /** Return the visible bitmap rectangle inside its displayed image element. */
+    imageMaskRenderedBox: function imageMaskRenderedBox(imageElement) {
+      const image = imageElement || this.firstRef(this.$refs.imageMaskSourceImage);
+      if (!image) {
+        return null;
+      }
+      const rect = image.getBoundingClientRect();
+      const naturalWidth = Math.max(1, Number(image.naturalWidth || rect.width || 1));
+      const naturalHeight = Math.max(1, Number(image.naturalHeight || rect.height || 1));
+      if (!rect.width || !rect.height) {
+        return null;
+      }
+      const fit = String(window.getComputedStyle ? window.getComputedStyle(image).objectFit || "fill" : "fill");
+      if (fit !== "contain" && fit !== "scale-down" && fit !== "cover") {
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height, naturalWidth: naturalWidth, naturalHeight: naturalHeight };
+      }
+      const scale = fit === "cover" ? Math.max(rect.width / naturalWidth, rect.height / naturalHeight) : Math.min(rect.width / naturalWidth, rect.height / naturalHeight);
+      const width = naturalWidth * scale;
+      const height = naturalHeight * scale;
+      return {
+        left: rect.left + (rect.width - width) / 2,
+        top: rect.top + (rect.height - height) / 2,
+        width: width,
+        height: height,
+        naturalWidth: naturalWidth,
+        naturalHeight: naturalHeight
+      };
+    },
+
+    /** Convert one pointer event into normalized mask coordinates on the real bitmap. */
+    imageMaskPointFromEvent: function imageMaskPointFromEvent(event) {
+      const image = this.firstRef(this.$refs.imageMaskSourceImage);
+      const box = this.imageMaskRenderedBox(image);
+      if (!box || !box.width || !box.height) {
+        return null;
+      }
+      const x = (event.clientX - box.left) / box.width;
+      const y = (event.clientY - box.top) / box.height;
+      if (x < 0 || x > 1 || y < 0 || y > 1) {
+        return null;
+      }
+      return {
+        x: Math.max(0, Math.min(1, x)),
+        y: Math.max(0, Math.min(1, y)),
+        sizeRatio: Number(this.imageMaskBrushSize || 42) / Math.max(box.width, box.height)
+      };
+    },
+
+    /** Start one shallow-green mask stroke on the visible image. */
+    beginImageMaskStroke: function beginImageMaskStroke(event) {
+      if (!this.imageMaskDrawingEnabled) {
+        return;
+      }
+      const point = this.imageMaskPointFromEvent(event);
+      if (!point) {
+        return;
+      }
+      if (event.currentTarget && event.pointerId !== undefined && event.currentTarget.setPointerCapture) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+      this.imageMaskDrawing = true;
+      this.imageMaskStrokes.push({ size: this.imageMaskBrushSize, sizeRatio: point.sizeRatio, points: [point] });
+      this.renderImageMaskCanvas();
+    },
+
+    /** Extend the active brush stroke while the pointer remains pressed. */
+    continueImageMaskStroke: function continueImageMaskStroke(event) {
+      if (!this.imageMaskDrawing || !this.imageMaskDrawingEnabled || !this.imageMaskStrokes.length) {
+        return;
+      }
+      const point = this.imageMaskPointFromEvent(event);
+      if (!point) {
+        return;
+      }
+      this.imageMaskStrokes[this.imageMaskStrokes.length - 1].points.push(point);
+      this.renderImageMaskCanvas();
+    },
+
+    /** Finish drawing without discarding the current mask. */
+    finishImageMaskStroke: function finishImageMaskStroke() {
+      this.imageMaskDrawing = false;
+    },
+
+    /** Paint the shallow-green overlay using the stored normalized strokes. */
+    renderImageMaskCanvas: function renderImageMaskCanvas() {
+      const view = this;
+      if (this.imageMaskRenderFrame) {
+        window.cancelAnimationFrame(this.imageMaskRenderFrame);
+      }
+      this.imageMaskRenderFrame = window.requestAnimationFrame(/** Render after Vue has settled the image dimensions. */ function renderMaskFrame() {
+        view.imageMaskRenderFrame = 0;
+        const canvas = view.firstRef(view.$refs.imageMaskCanvas);
+        const image = view.firstRef(view.$refs.imageMaskSourceImage);
+        if (!canvas || !image) {
+          return;
+        }
+        const rect = canvas.getBoundingClientRect();
+        const box = view.imageMaskRenderedBox(image);
+        const ratio = window.devicePixelRatio || 1;
+        canvas.width = Math.max(1, Math.round(rect.width * ratio));
+        canvas.height = Math.max(1, Math.round(rect.height * ratio));
+        const context = canvas.getContext("2d");
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.clearRect(0, 0, rect.width, rect.height);
+        if (!box) {
+          return;
+        }
+        context.strokeStyle = "rgba(134, 239, 172, .56)";
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        for (const stroke of view.imageMaskStrokes) {
+          view.drawImageMaskStroke(context, stroke, box.width, box.height, box.left - rect.left, box.top - rect.top);
+        }
+      });
+    },
+
+    /** Draw one stored stroke onto the supplied canvas context. */
+    drawImageMaskStroke: function drawImageMaskStroke(context, stroke, width, height, offsetX, offsetY) {
+      const points = stroke && Array.isArray(stroke.points) ? stroke.points : [];
+      const left = Number(offsetX || 0);
+      const top = Number(offsetY || 0);
+      if (!points.length) {
+        return;
+      }
+      context.lineWidth = stroke.sizeRatio ? Number(stroke.sizeRatio) * Math.max(width, height) : Number(stroke.size || this.imageMaskBrushSize);
+      context.beginPath();
+      context.moveTo(left + points[0].x * width, top + points[0].y * height);
+      if (points.length === 1) {
+        context.lineTo(left + points[0].x * width + 0.01, top + points[0].y * height);
+      }
+      for (let index = 1; index < points.length; index += 1) {
+        context.lineTo(left + points[index].x * width, top + points[index].y * height);
+      }
+      context.stroke();
+    },
+
+    /** Build a Tuba-compatible PNG mask where painted pixels become transparent. */
+    buildImageMaskDataUrl: function buildImageMaskDataUrl() {
+      if (!this.hasImageMaskStrokes()) {
+        return "";
+      }
+      const image = this.firstRef(this.$refs.imageMaskSourceImage);
+      const width = Math.max(1, Number(image && image.naturalWidth || 1024));
+      const height = Math.max(1, Number(image && image.naturalHeight || 1024));
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "rgba(255, 255, 255, 1)";
+      context.fillRect(0, 0, width, height);
+      context.globalCompositeOperation = "destination-out";
+      context.strokeStyle = "rgba(0, 0, 0, 1)";
+      context.lineCap = "round";
+      context.lineJoin = "round";
+      for (const stroke of this.imageMaskStrokes) {
+        this.drawImageMaskStroke(context, stroke, width, height);
+      }
+      context.globalCompositeOperation = "source-over";
+      return canvas.toDataURL("image/png");
+    },
+
     /** Resolve the visible image editor into one finite UI state. */
     imageEditorState: function imageEditorState() {
       const sources = this.galleryImageEditorSources(this.selectedTemuRecord);
@@ -7475,7 +7741,7 @@ const app = createApp({
       if (state.sourceCount >= 3) {
         return "开始多图融合";
       }
-      return this.imageEditorGeneratedUrl ? "基于当前图编辑" : "开始生成";
+      return this.hasImageMaskStrokes() ? "修改涂抹区域" : this.imageEditorGeneratedUrl ? "基于当前图编辑" : "开始生成";
     },
 
     /** Return whether the final replacement button should be shown. */
@@ -7552,6 +7818,7 @@ const app = createApp({
       const submission = this.directImageSubmissionSource(record);
       const sources = submission ? submission.sources : [];
       const prompt = String(this.imageEditorPrompt || "").trim();
+      const maskUrl = this.buildImageMaskDataUrl();
       if (!record || !prompt || !submission || sources.length !== 1 || this.imageEditorBusy) {
         if (record && prompt && !this.imageEditorBusy) {
           this.imageEditorError = "[DIRECT_IMAGE_SOURCE_MISSING] 当前单图来源丢失，请重新打开这张图再生成。";
@@ -7607,6 +7874,7 @@ const app = createApp({
           detail_index: directTask.detail_index,
           reference_mode: directTask.reference_mode,
           parent_task_id: directTask.parent_task_id || undefined,
+          mask_url: maskUrl || undefined,
           prompt: directTask.prompt,
           size: directTask.size
         })
@@ -7625,6 +7893,7 @@ const app = createApp({
           return;
         }
         view.storeDirectImageTask(task);
+        if (maskUrl) { view.clearImageMaskStrokes(); }
         if (!view.isVisibleDirectImageTask(taskId)) {
           return;
         }
@@ -8068,10 +8337,11 @@ const app = createApp({
       if (!task || !task.id || !Array.isArray(pageIndices) || !pageIndices.length) {
         return;
       }
+      const maskUrl = referenceMode === "current" ? this.buildImageMaskDataUrl() : "";
       const response = await fetch(apiUrl(this.pagedImageTaskBasePath(task) + "/" + encodeURIComponent(task.id) + "/generate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page_indices: pageIndices, reference_mode: referenceMode === "current" ? "current" : "original" })
+        body: JSON.stringify({ page_indices: pageIndices, reference_mode: referenceMode === "current" ? "current" : "original", mask_url: maskUrl || undefined })
       });
       const payload = await response.json();
       if (!response.ok || !payload || !payload.ok) {
@@ -8079,6 +8349,7 @@ const app = createApp({
       }
       const submittedTask = payload.data && payload.data.task ? payload.data.task : task;
       this.updateCarouselFeedback(submittedTask, pageIndices);
+      if (maskUrl) { this.clearImageMaskStrokes(); }
       if (this.imageCarouselTask && String(this.imageCarouselTask.id || "") === String(submittedTask.id || "")) {
         this.applyCarouselTaskSnapshot(submittedTask);
         this.scheduleCarouselTaskPoll();
@@ -8379,6 +8650,7 @@ const app = createApp({
     changeCarouselPage: function changeCarouselPage(offset) {
       this.imageCarouselPageIndex += Number(offset || 0);
       this.normalizeCarouselPageIndex();
+      this.resetImageMaskEditor();
     },
 
     /** Poll retained background work while its modal remains visible. */

@@ -70,10 +70,25 @@ function createApp() {
     }
     return Math.max(1, Math.min(32, Math.floor(configured)));
   }
+  /** Read the minimum gap between starting image provider submissions. */
+  function getImageTaskSubmitIntervalMs() {
+    const currentConfig = configModule.readServerConfig();
+    const queue = currentConfig.image_queue && typeof currentConfig.image_queue === "object"
+      ? currentConfig.image_queue
+      : {};
+    const configured = queue.submit_interval_ms !== undefined
+      ? Number(queue.submit_interval_ms)
+      : currentConfig.image_queue_submit_interval_ms !== undefined ? Number(currentConfig.image_queue_submit_interval_ms) : 200;
+    if (!Number.isFinite(configured) || configured < 0) {
+      return 200;
+    }
+    return Math.max(0, Math.min(60000, Math.floor(configured)));
+  }
   const imageTaskQueue = new imageQueueModule.ImageTaskQueue({
     history: new imageHistoryModule.ImageTaskHistoryService({ cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory) }),
     failures: new imageFailureModule.ImageFailureService({ cacheDirectory: path.resolve(__dirname, config.storage.cacheDirectory) }),
     getConcurrency: getImageTaskConcurrency,
+    getStartIntervalMs: getImageTaskSubmitIntervalMs,
     onChange: diagnostics.handleQueueChange.bind(diagnostics)
   });
   diagnostics.setImageTaskQueue(imageTaskQueue);
