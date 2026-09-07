@@ -217,7 +217,9 @@ test("button positions and labels stay stable from results to submission and run
   const footer = options.template.match(/<footer class="image-editor-actions" :class=[\s\S]*?<\/footer>/)[0];
   assert.doesNotMatch(footer, /@click="regenerateAllCarouselPages">全部重生<\/button>/);
   assert.doesNotMatch(footer, /@click="closeGalleryImageEditor">关闭<\/button>/);
-  assert.match(footer, /@click="regenerateCurrentCarouselPage">\{\{ hasImageMaskStrokes\(\) \? '修改涂抹区域' : '基于当前图重生' \}\}<\/button>/);
+  assert.match(footer, /retryCarouselPage\(imageCarouselPageIndex\) : regenerateCurrentCarouselPage\(\)/);
+  assert.match(footer, /基于当前图重生/);
+  assert.match(footer, /重试当前页/);
   assert.match(footer, /!currentCarouselPage\(\)\.image_url/);
   assert.doesNotMatch(footer, /全部生成中|单张生成中/);
   assert.match(footer, /v-if="canRegenerateCarouselPages\(\) \|\| canApplyCarouselReplacement\(true\)"/);

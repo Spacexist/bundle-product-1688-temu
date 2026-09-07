@@ -87,35 +87,18 @@ function runDpapi(mode, value) {
   return String(result.stdout || "").trim();
 }
 
-/** Replace one file atomically on Windows and fall back to rename when the target is new. */
+/** Replace one file atomically and fall back to copy/unlink when locks occur. */
 function replaceFileAtomic(temporaryPath, targetPath) {
-  if (!fs.existsSync(targetPath)) {
-    fs.renameSync(temporaryPath, targetPath);
-    return;
-  }
-  const backupPath = targetPath + "." + process.pid + "." + Date.now() + ".bak";
-  const script = "[IO.File]::Replace($env:BUNDLE_AUTH_SOURCE,$env:BUNDLE_AUTH_TARGET,$env:BUNDLE_AUTH_BACKUP,$true)";
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      BUNDLE_AUTH_SOURCE: temporaryPath,
-      BUNDLE_AUTH_TARGET: targetPath,
-      BUNDLE_AUTH_BACKUP: backupPath
-    },
-    windowsHide: true,
-    timeout: 15000
-  });
   try {
-    if (result.error) {
-      throw result.error;
-    }
-    if (result.status !== 0) {
-      throw new Error(String(result.stderr || "原子替换文件失败。").trim());
-    }
-  } finally {
-    if (fs.existsSync(backupPath)) {
-      fs.unlinkSync(backupPath);
+    fs.renameSync(temporaryPath, targetPath);
+  } catch (error) {
+    if (error && (error.code === "EPERM" || error.code === "EBUSY" || error.code === "EXDEV")) {
+      fs.copyFileSync(temporaryPath, targetPath);
+      try {
+        fs.unlinkSync(temporaryPath);
+      } catch (_) {}
+    } else {
+      throw error;
     }
   }
 }
@@ -568,7 +551,9 @@ async function syncSavedCredential() {
     throw error;
   }
   const result = await syncWithAccessHash(credential.workerUrl, accessHash);
-  saveCredential(credential.workerUrl, accessHash, result.accountName || credential.accountName);
+  if (result && result.accountName && result.accountName !== credential.accountName) {
+    saveCredential(credential.workerUrl, accessHash, result.accountName);
+  }
   return rememberRuntimeAuthorizedStatus(result, true);
 }
 

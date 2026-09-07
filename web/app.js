@@ -649,7 +649,7 @@ const app = createApp({
               <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button v-if="canShowAbandonDirectImageButton()" class="image-editor-cancel" type="button" @click="abandonDirectImageTask">放弃任务</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !currentCarouselPage().image_url || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片'" @click="regenerateCurrentCarouselPage">{{ hasImageMaskStrokes() ? '修改涂抹区域' : '基于当前图重生' }}</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="isMultiFusionImageTask() && (canRegenerateCarouselPages() || canApplyCarouselReplacement(true))" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败结果，使用全部成功图片替换当前商品主图" @click="confirmCarouselReplacement(true)">替换当前全部主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '添加到末尾' : '确认替换' }}</button></footer>
+            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button v-if="canShowAbandonDirectImageButton()" class="image-editor-cancel" type="button" @click="abandonDirectImageTask">放弃任务</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || (currentCarouselPage().status !== 'failed' && !currentCarouselPage().image_url) || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().status === 'failed' ? '重新生成失败分镜' : (currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片')" @click="currentCarouselPage().status === 'failed' ? retryCarouselPage(imageCarouselPageIndex) : regenerateCurrentCarouselPage()">{{ currentCarouselPage().status === 'failed' ? (isCarouselPageBusy(imageCarouselPageIndex) ? '重试中…' : '重试当前页') : (hasImageMaskStrokes() ? '修改涂抹区域' : '基于当前图重生') }}</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="isMultiFusionImageTask() && (canRegenerateCarouselPages() || canApplyCarouselReplacement(true))" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败结果，使用全部成功图片替换当前商品主图" @click="confirmCarouselReplacement(true)">替换当前全部主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '添加到末尾' : '确认替换' }}</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -701,13 +701,14 @@ const app = createApp({
   data: function createAppState() {
     const queryMode = new URLSearchParams(window.location.search).get("mode");
     const persistedViewState = readPersistedViewState();
+    const sessionAuthorized = window.sessionStorage ? window.sessionStorage.getItem("pod_cloud_authorized") === "true" : false;
     return {
       cloudAuth: {
-        authorized: false,
+        authorized: sessionAuthorized,
         checking: true,
         busy: false,
         error: false,
-        message: "正在校验云端授权。",
+        message: sessionAuthorized ? "" : "正在校验云端授权。",
         accountName: "",
         macBound: false,
         lastSyncAt: "",
@@ -1137,7 +1138,9 @@ const app = createApp({
     initializeCloudAuth: async function initializeCloudAuth() {
       this.cloudAuth.checking = true;
       this.cloudAuth.error = false;
-      this.cloudAuth.message = "正在校验云端授权。";
+      if (!this.cloudAuth.authorized) {
+        this.cloudAuth.message = "正在校验云端授权。";
+      }
       try {
         const response = await fetch(apiUrl("/cloud-auth/status"), { cache: "no-store" });
         /** Return null when the authorization status body is not valid JSON. */
@@ -1150,12 +1153,21 @@ const app = createApp({
         const data = readApiData(payload) || {};
         this.applyCloudAuthStatus(data);
         if (!data.authorized) {
+          if (window.sessionStorage) {
+            window.sessionStorage.removeItem("pod_cloud_authorized");
+          }
           this.cloudAuth.message = data.message || "请输入访问码完成授权。";
           return;
+        }
+        if (window.sessionStorage) {
+          window.sessionStorage.setItem("pod_cloud_authorized", "true");
         }
         this.cloudAuth.message = data.configUpdated ? "授权成功，云端配置已更新；下次启动完全生效。" : "授权成功，配置已是最新版本。";
         this.startAuthorizedWorkbench();
       } catch (error) {
+        if (window.sessionStorage) {
+          window.sessionStorage.removeItem("pod_cloud_authorized");
+        }
         this.cloudAuth.authorized = false;
         this.cloudAuth.error = true;
         this.cloudAuth.message = String(error && error.message || "云端授权失败，请输入访问码。");
@@ -1191,10 +1203,16 @@ const app = createApp({
         }
         const data = readApiData(payload) || {};
         this.applyCloudAuthStatus(data);
+        if (window.sessionStorage) {
+          window.sessionStorage.setItem("pod_cloud_authorized", "true");
+        }
         this.cloudAuthAccessCode = "";
         this.cloudAuth.message = data.configUpdated ? "登录成功，云端配置已更新；下次启动完全生效。" : "登录成功，配置已是最新版本。";
         this.startAuthorizedWorkbench();
       } catch (error) {
+        if (window.sessionStorage) {
+          window.sessionStorage.removeItem("pod_cloud_authorized");
+        }
         this.cloudAuth.authorized = false;
         this.cloudAuth.error = true;
         this.cloudAuth.message = String(error && error.message || "授权登录失败。");
@@ -8043,10 +8061,10 @@ const app = createApp({
         return "重试";
       }
       if (state.sourceCount === 2) {
-        return "仅生成提示词";
+        return Boolean(this.imageEditorError) ? "重试生成提示词" : "仅生成提示词";
       }
       if (state.sourceCount >= 3) {
-        return "开始多图融合";
+        return Boolean(this.imageEditorError) ? "重试多图融合" : "开始多图融合";
       }
       return this.imageEditorGeneratedUrl ? "基于当前图编辑" : "开始生成";
     },

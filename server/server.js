@@ -10,13 +10,16 @@ const HTTP_HEADERS_TIMEOUT_MS = 665000;
 
 /** Synchronize the authoritative cloud config before creating any config-dependent service. */
 async function synchronizeStartupConfig() {
-  const status = await cloudAuthModule.syncSavedCredential();
+  const status = await cloudAuthModule.syncSavedCredential().catch(function handleStartupSyncError(error) {
+    console.warn("[cloud-auth] 初始云端鉴权待客户端完成：" + String(error && error.message || error));
+    return { authorized: false, loginRequired: true, message: "请在工作台输入访问码完成授权。" };
+  });
   if (!status || !status.authorized) {
     if (status && status.loginRequired === true) {
       console.warn("[cloud-auth] " + String(status.message || "请在工作台重新登录。"));
       return status;
     }
-    throw new Error(status && status.message || "云端鉴权失败，后端未启动。");
+    return status;
   }
   return status;
 }
