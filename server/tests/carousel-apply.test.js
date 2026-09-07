@@ -196,7 +196,7 @@ function frontendFixture(settings = {}) {
 test("carousel button says confirm while direct edit and replace-all labels stay unchanged", /** Compile the real template offline and assert the scoped label. */ function () {
   const { options } = frontendFixture();
   assert.doesNotThrow(/** Check Vue template expressions without mounting UI. */ function compileTemplate() { compile(options.template); });
-  assert.match(options.template, /@click="confirmGalleryImageEdit">\{\{ imageCarouselTask \? '确认' : '确认替换' \}\}/);
+  assert.match(options.template, /@click="confirmGalleryImageEdit">\{\{ imageCarouselTask \? '添加到末尾' : '确认替换' \}\}/);
   assert.match(options.template, /@click="confirmCarouselReplacement\(true\)">替换所有主图/);
   assert.match(options.template, /@click="confirmCarouselReplacement\(true\)">替换当前全部主图/);
   assert.match(options.template, /class="image-placement-notice" role="status" aria-live="polite"/);
