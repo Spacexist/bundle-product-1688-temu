@@ -783,7 +783,7 @@ const app = createApp({
       imageEditorRestoreInFlight: false,
       imageEditorRequestId: 0,
       imageEditorBackdropPressed: false,
-      imageMaskDrawingEnabled: false,
+      imageMaskDrawingEnabled: true,
       imageMaskDrawing: false,
       imageMaskTool: "highlighter",
       imageMaskColor: "rgba(239, 68, 68, 0.55)",
@@ -5943,6 +5943,7 @@ const app = createApp({
         this.imageCarouselPollTimer = null;
       }
       this.imageEditorOpen = true;
+      this.imageMaskDrawingEnabled = true;
       this.loadDirectImageTaskForProduct(record, [source]);
     },
 
@@ -7230,6 +7231,7 @@ const app = createApp({
         this.imageCarouselPollTimer = null;
       }
       this.imageEditorOpen = true;
+      this.imageMaskDrawingEnabled = true;
       if (sources.length === 2) {
         this.pushImageEditorContext("fresh-fusion-source");
       }
@@ -7320,7 +7322,7 @@ const app = createApp({
 
     /** Reset the local mask editor without changing the current source image. */
     resetImageMaskEditor: function resetImageMaskEditor() {
-      this.imageMaskDrawingEnabled = false;
+      this.imageMaskDrawingEnabled = true;
       this.imageMaskDrawing = false;
       this.imageMaskStrokes = [];
       this.imageMaskSurfaceKey = this.currentImageMaskSurfaceKey();
@@ -7329,12 +7331,8 @@ const app = createApp({
 
     /** Toggle the brush while keeping existing strokes visible. */
     selectImageMaskTool: function selectImageMaskTool(tool) {
-      if (this.imageMaskTool === tool && this.imageMaskDrawingEnabled) {
-        this.imageMaskDrawingEnabled = false;
-      } else {
-        this.imageMaskTool = tool;
-        this.imageMaskDrawingEnabled = true;
-      }
+      this.imageMaskTool = tool;
+      this.imageMaskDrawingEnabled = true;
       this.renderImageMaskCanvas();
     },
 
@@ -7373,7 +7371,7 @@ const app = createApp({
     syncImageMaskSurface: function syncImageMaskSurface() {
       const key = this.currentImageMaskSurfaceKey();
       if (key !== this.imageMaskSurfaceKey) {
-        this.imageMaskDrawingEnabled = false;
+        this.imageMaskDrawingEnabled = true;
         this.imageMaskDrawing = false;
         this.imageMaskStrokes = [];
         this.imageMaskSurfaceKey = key;
