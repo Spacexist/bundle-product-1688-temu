@@ -274,6 +274,19 @@ class DirectImageRuntimeService {
     return value.indexOf("/api/v1/cache/image/") === 0;
   }
 
+  /** Return provider image inputs for normal, fusion, and brush-cutout edit tasks. */
+  buildProviderImageUrls(task) {
+    const item = task && typeof task === "object" ? task : {};
+    if (item.mode !== "edit") {
+      return Array.isArray(item.source_image_urls) ? item.source_image_urls : [];
+    }
+    const baseImageUrl = String(item.edit_image_url || item.source_image_urls && item.source_image_urls[0] || "");
+    if (item.mask_mode === "cutout" && item.mask_image_url) {
+      return [baseImageUrl, String(item.mask_image_url || "")];
+    }
+    return [baseImageUrl];
+  }
+
   /** Start one persisted direct-image task and retain its eventual provider result. */
   async startTask(taskId, requestId) {
     const task = this.readTask(taskId);
@@ -296,9 +309,7 @@ class DirectImageRuntimeService {
         temu_platform_id: task.temu_platform_id,
         sku_id: task.sku_id,
         sku_index: task.sku_index,
-        image_urls: task.mode === "edit"
-          ? [String(task.mask_mode === "cutout" && task.mask_image_url ? task.mask_image_url : task.edit_image_url || task.source_image_urls[0] || "")]
-          : task.source_image_urls,
+        image_urls: this.buildProviderImageUrls(task),
         prompt: task.reference_mode === "current" && !task.mask_url && task.mask_mode !== "cutout" ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
         mask_mode: task.mask_mode,
         mask_url: task.mask_mode === "cutout" ? "" : task.mask_url,

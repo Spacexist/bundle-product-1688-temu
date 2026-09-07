@@ -113,7 +113,7 @@ test("masked current-image Edits keeps the prompt clean for provider mask prompt
   assert.equal(fixture.calls[1].input.mask_url, "data:image/png;base64,Yg==");
 });
 
-test("cutout mask Edits saves and submits the brush cutout as the only image", /** Verify cutout mode cannot degrade into a prompt-only edit. */ async function (t) {
+test("cutout mask Edits submits the full image plus the brush cutout", /** Verify cutout mode keeps full-image context while avoiding prompt-only edits. */ async function (t) {
   const fixture = createRuntime(t, [RESULT_ONE]);
   fixture.runtime.createTask(Object.assign({}, originalInput("direct-cutout"), {
     mask_mode: "cutout",
@@ -123,7 +123,7 @@ test("cutout mask Edits saves and submits the brush cutout as the only image", /
 
   assert.equal(task.mask_mode, "cutout");
   assert.equal(task.mask_image_url, MASK_CUTOUT);
-  assert.deepEqual(fixture.calls[0].input.image_urls, [MASK_CUTOUT]);
+  assert.deepEqual(fixture.calls[0].input.image_urls, [ORIGINAL, MASK_CUTOUT]);
   assert.equal(fixture.calls[0].input.mask_url, "");
   assert.equal(fixture.calls[0].input.mask_mode, "cutout");
 });

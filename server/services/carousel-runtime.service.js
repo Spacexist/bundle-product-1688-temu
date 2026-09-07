@@ -815,8 +815,9 @@ class CarouselRuntimeService {
     if (scopedMaskMode && !maskImageUrl) {
       throw createCarouselError("局部抠图任务缺少已保存的 mask 图。", 400, "CAROUSEL_MASK_MISSING");
     }
+    const currentPageImageUrl = useCurrentImage ? this.assertCurrentPageImageAvailable(initialPage) : "";
     const imageUrls = useCurrentImage
-      ? [scopedMaskMode && maskImageUrl ? maskImageUrl : this.assertCurrentPageImageAvailable(initialPage)]
+      ? scopedMaskMode && maskImageUrl ? [currentPageImageUrl, maskImageUrl] : [currentPageImageUrl]
       : initialTask.source_image_urls.slice();
     const task = this.markPageGenerating(taskId, pageIndex, generationId);
     const page = task.pages[Number(pageIndex)];
