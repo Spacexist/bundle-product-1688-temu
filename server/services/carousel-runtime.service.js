@@ -792,7 +792,7 @@ class CarouselRuntimeService {
   /** Wrap current-image edits only when no scoped mask already constrains the edit area. */
   buildCurrentImageEditPrompt(task, page, maskUrl, maskMode) {
     const pagePrompt = this.buildCarouselPagePrompt(task, page);
-    return String(maskUrl || "").trim() || maskMode === "cutout" ? pagePrompt : CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + pagePrompt;
+    return String(maskUrl || "").trim() || maskMode === "cutout" || maskMode === "annotated" ? pagePrompt : CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + pagePrompt;
   }
 
   /** Generate one persisted carousel page independently from its initiating browser request. */

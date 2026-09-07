@@ -6341,6 +6341,7 @@ const app = createApp({
       this.imageDirectTask = task;
       const status = String(task.status || "");
       if (status === "succeeded") {
+        this.clearImageMaskStrokes();
         this.imageEditorBusy = false;
         this.imageEditorGeneratedUrl = task.image_ready !== false ? String(task.image_url || "") : "";
         this.imageEditorError = this.imageEditorGeneratedUrl
@@ -7942,6 +7943,9 @@ const app = createApp({
       if (state.phase === "carousel_review") {
         return "开始生成图片";
       }
+      if (this.hasImageMaskStrokes()) {
+        return "修改涂抹区域";
+      }
       if (state.sourceCount === 1 && this.isDirectImageTaskRetryable(this.imageDirectTask)) {
         return "重试";
       }
@@ -7951,7 +7955,7 @@ const app = createApp({
       if (state.sourceCount >= 3) {
         return "开始多图融合";
       }
-      return this.hasImageMaskStrokes() ? "修改涂抹区域" : this.imageEditorGeneratedUrl ? "基于当前图编辑" : "开始生成";
+      return this.imageEditorGeneratedUrl ? "基于当前图编辑" : "开始生成";
     },
 
     /** Return whether the final replacement button should be shown. */
@@ -8125,7 +8129,6 @@ const app = createApp({
           return;
         }
         view.storeDirectImageTask(task);
-        if (maskUrl) { view.clearImageMaskStrokes(); }
         if (!view.isVisibleDirectImageTask(taskId)) {
           return;
         }
@@ -8586,7 +8589,7 @@ const app = createApp({
       const response = await fetch(apiUrl(this.pagedImageTaskBasePath(task) + "/" + encodeURIComponent(task.id) + "/generate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page_indices: pageIndices, reference_mode: referenceMode === "current" ? "current" : "original", mask_mode: maskUrl ? "cutout" : undefined, mask_url: maskUrl || undefined })
+        body: JSON.stringify({ page_indices: pageIndices, reference_mode: referenceMode === "current" ? "current" : "original", mask_mode: maskUrl ? "annotated" : undefined, mask_url: maskUrl || undefined })
       });
       const payload = await response.json();
       if (!response.ok || !payload || !payload.ok) {
@@ -8594,7 +8597,6 @@ const app = createApp({
       }
       const submittedTask = payload.data && payload.data.task ? payload.data.task : task;
       this.updateCarouselFeedback(submittedTask, pageIndices);
-      if (maskUrl) { this.clearImageMaskStrokes(); }
       if (this.imageCarouselTask && String(this.imageCarouselTask.id || "") === String(submittedTask.id || "")) {
         this.applyCarouselTaskSnapshot(submittedTask);
         this.scheduleCarouselTaskPoll();
