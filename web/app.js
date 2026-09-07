@@ -7621,13 +7621,16 @@ const app = createApp({
       canvas.width = width;
       canvas.height = height;
       const context = canvas.getContext("2d");
-      // 1. Draw base original image (100% opaque, 100% full square bounds)
+      // 1. Fill solid white background so any transparent pixels (from previous cutout outputs or transparent PNGs) never become black in JPEG
+      context.fillStyle = "#ffffff";
+      context.fillRect(0, 0, width, height);
+      // 2. Draw base original image on top of solid background
       context.drawImage(image, 0, 0, width, height);
-      // 2. Draw user annotations directly on top
+      // 3. Draw user annotations directly on top
       for (const stroke of this.imageMaskStrokes) {
         this.drawImageMaskStroke(context, stroke, width, height, 0, 0);
       }
-      // 3. Export as JPEG (no alpha channel, guaranteed opaque solid square image)
+      // 4. Export as JPEG (no alpha channel, guaranteed opaque solid square image)
       return canvas.toDataURL("image/jpeg", 0.95);
     },
 
