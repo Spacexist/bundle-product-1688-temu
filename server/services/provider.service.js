@@ -27,6 +27,19 @@ function readProviderErrorCode(payload, fallback) {
   return String(providerError.code || source.code || providerError.type || fallback || "UPSTREAM_ERROR");
 }
 
+/** Return a diagnostic-safe image source URL without retaining base64 image bytes. */
+function summarizeImageSourceForLog(source) {
+  const value = String(source || "").trim();
+  if (!value) {
+    return "";
+  }
+  const dataUrlMatch = /^data:(image\/[a-z0-9.+-]+);base64,/i.exec(value);
+  if (dataUrlMatch) {
+    return "data-url:" + dataUrlMatch[1].toLowerCase();
+  }
+  return value.length > 1200 ? value.slice(0, 1200) + "...[truncated]" : value;
+}
+
 /** Build one configured Kimi chat-completions endpoint URL. */
 function getKimiEndpoint(config) {
   const kimi = config && config.kimi && typeof config.kimi === "object" ? config.kimi : {};
@@ -493,7 +506,7 @@ class ProviderService {
       throw createProviderError("局部重绘遮罩必须是 PNG。", 400, "IMAGE_MASK_FORMAT_INVALID");
     }
     form.append("mask", new Blob([mask.buffer], { type: mask.mimeType }), "mask.png");
-    return { mime_type: mask.mimeType, bytes: mask.buffer.length };
+    return { source_url: summarizeImageSourceForLog(value), mime_type: mask.mimeType, bytes: mask.buffer.length };
   }
 
   /** Return the fixed total Tuba polling deadline shared by every image call. */
@@ -650,7 +663,7 @@ class ProviderService {
       this.throwIfImageEditCancelled(source);
       const blob = new Blob([image.buffer], { type: image.mimeType });
       form.append("image", blob, "blend-" + (index + 1) + "." + image.mimeType.split("/")[1]);
-      preparedImages.push({ index: index + 1, mime_type: image.mimeType, bytes: image.buffer.length });
+      preparedImages.push({ index: index + 1, source_url: summarizeImageSourceForLog(imageUrls[index]), mime_type: image.mimeType, bytes: image.buffer.length });
     }
     const preparedMask = await this.appendImageMaskToForm(form, maskUrl, source, requestId);
     this.writeLog("OUTBOUND", "Tuba async " + requestMode + " POST " + endpoint, {

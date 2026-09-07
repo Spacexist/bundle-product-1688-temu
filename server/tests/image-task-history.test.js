@@ -262,6 +262,41 @@ test("masked edit requires the server-configured mask prompt", /** Prevent any m
   await assert.rejects(provider.editImages({ direct_task_id: "missing-mask-prompt", temu_main_id: "product-a", prompt: "mask", image_urls: ["data:image/png;base64,YQ=="], mask_url: "data:image/png;base64,Yg==" }, "edit", "request-mask-missing"), { code: "IMAGE_MASK_PROMPT_MISSING" });
 });
 
+test("provider diagnostics include local image URLs without retaining base64", /** Verify image submit logs expose testable local URLs only. */ async function () {
+  const events = [];
+  const originalUrl = "/api/v1/cache/image/products/source.jpg";
+  const cutoutUrl = "/api/v1/cache/image/transfer/masks/cutout.png";
+  const maskUrl = "/api/v1/cache/image/transfer/masks/legacy-mask.png";
+  const images = {
+    publicPrefix: "/api/v1/cache/image",
+    /** Decode data URLs in case a fixture accidentally submits browser bytes. */
+    readDataUrl: function readDataUrl(source) { return /^data:image\/png;base64,/i.test(String(source || "")) ? { buffer: Buffer.from("data"), mimeType: "image/png" } : null; },
+    /** Return deterministic bytes for any local cache image path. */
+    readLocalImage: function readLocalImage(pathname) {
+      return { buffer: Buffer.from("local-" + pathname), mimeType: pathname.indexOf(".jpg") >= 0 ? "image/jpeg" : "image/png" };
+    },
+    /** Finish generated image caching without touching disk. */
+    cacheGeneratedImage: async function cacheGeneratedImage() { return "/api/v1/cache/image/generated/result.png"; }
+  };
+  const provider = new ProviderService({
+    readConfig: function readConfig() { return Object.assign(config(), { mask_cutout_prompt: "第一张完整原图，第二张抠图区域" }); },
+    images: images,
+    asyncImages: { /** Capture provider submit metadata without performing HTTP. */ generate: async function generate() { return "https://provider.invalid/result.png"; } },
+    diagnostics: { /** Retain sanitized provider events for assertions. */ write: function write(direction, label, payload) { events.push({ direction, label, payload }); } }
+  });
+
+  await provider.editImages({ prompt: "cutout", image_urls: [originalUrl, cutoutUrl], mask_mode: "cutout" }, "edit", "request-cutout-log");
+  await provider.editImages({ prompt: "mask", image_urls: [originalUrl], mask_url: maskUrl }, "edit", "request-mask-log");
+  await provider.editImages({ prompt: "data", image_urls: ["data:image/png;base64,YQ=="] }, "edit", "request-data-log");
+
+  const outbound = events.filter(/** Keep only provider submit summaries. */ function isSubmitEvent(event) { return /Tuba async edit POST/.test(event.label); });
+  assert.equal(outbound[0].payload.images[0].source_url, originalUrl);
+  assert.equal(outbound[0].payload.images[1].source_url, cutoutUrl);
+  assert.equal(outbound[1].payload.mask.source_url, maskUrl);
+  assert.equal(outbound[2].payload.images[0].source_url, "data-url:image/png");
+  assert.doesNotMatch(JSON.stringify(outbound), /YQ==/);
+});
+
 test("business deletion and manual carousel regeneration never erase or rebind old history", /** Exercise real runtime metadata wiring with a fake upstream. */ async function (t) {
   const { history, queue, directory } = fixture(t);
   const images = {
