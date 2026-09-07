@@ -372,7 +372,8 @@ const TaskStatusIndicator = {
 
 const app = createApp({
   template: `
-    <div class="shell">
+    <div class="shell" :class="{ 'has-agent-panel': agentOpen }">
+      <agent-panel v-model="agentOpen"></agent-panel>
       <Transition name="image-placement">
       <aside v-if="imagePlacementNotice && cloudAuth.authorized && !imageEditorOpen" class="image-placement-notice" role="status" aria-live="polite">
         <strong>图片已保存</strong>
@@ -404,6 +405,7 @@ const app = createApp({
       </div>
       <header class="topbar" :class="{ 'is-collapsed': topbarCollapsed }">
         <div class="toolbar">
+          <button class="mode-button topbar-agent-trigger glass-action-button" :class="{ active: agentOpen }" type="button" title="设计 Agent (快捷键 C)" @click="agentOpen = !agentOpen"><span>🤖</span><span>Agent</span></button>
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'smart' }" type="button" @click="changeWorkspaceMode('smart')">组货模式</button>
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'realtime' }" type="button" @click="changeWorkspaceMode('realtime')">工作台</button>
           <button class="mode-button glass-action-button" type="button" :disabled="!temuRecords.length || miaoshouExportBusy" @click="openMiaoshouExportDialog">{{ miaoshouExportBusy ? '妙手处理中…' : '导出妙手 ZIP' }}</button>
@@ -703,6 +705,7 @@ const app = createApp({
     const persistedViewState = readPersistedViewState();
     const sessionAuthorized = window.sessionStorage ? window.sessionStorage.getItem("pod_cloud_authorized") === "true" : false;
     return {
+      agentOpen: false,
       cloudAuth: {
         authorized: sessionAuthorized,
         checking: true,
@@ -7861,12 +7864,16 @@ const app = createApp({
     /** Return whether the fresh two-image controls should be shown before task creation. */
     shouldShowFreshFusionControls: function shouldShowFreshFusionControls() {
       const state = this.imageEditorState();
-      return state.phase === "fusion_source" || state.phase === "fusion_planning" || state.phase === "multi_fusion_source" || state.phase === "multi_fusion_submitting";
+      return state.phase === "fusion_source" || state.phase === "fusion_planning";
     },
 
     /** Return whether the freeform prompt field belongs to the current state. */
     shouldShowDirectOrFreshFusionPrompt: function shouldShowDirectOrFreshFusionPrompt() {
-      return !this.imageEditorState().hasCarouselTask;
+      const state = this.imageEditorState();
+      if (state.sourceCount >= 3) {
+        return false;
+      }
+      return !state.hasCarouselTask;
     },
 
     /** Return whether a persisted carousel page can be edited in the current state. */
@@ -7895,6 +7902,9 @@ const app = createApp({
     /** Return whether the primary image generation button should be visible. */
     shouldShowPrimaryImageEditorGenerateButton: function shouldShowPrimaryImageEditorGenerateButton() {
       const state = this.imageEditorState();
+      if (state.sourceCount >= 3 && (state.phase === "multi_fusion_source" || state.phase === "multi_fusion_submitting")) {
+        return false;
+      }
       return !state.hasCarouselTask
         || state.phase === "carousel_review"
         || state.phase === "carousel_failed_empty";
@@ -10750,4 +10760,7 @@ const app = createApp({
 });
 
 app.component("task-status-indicator", TaskStatusIndicator);
+if (window.AgentPanelComponent) {
+  app.component("agent-panel", window.AgentPanelComponent);
+}
 app.mount("#app");

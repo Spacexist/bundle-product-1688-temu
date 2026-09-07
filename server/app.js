@@ -30,6 +30,9 @@ const providerControllerModule = require("./controllers/provider.controller");
 const workflowControllerModule = require("./controllers/workflow.controller");
 const diagnosticsControllerModule = require("./controllers/diagnostics.controller");
 const cloudAuthControllerModule = require("./controllers/cloud-auth.controller");
+const agentChatServiceModule = require("./services/agent-chat.service");
+const agentChatControllerModule = require("./controllers/agent-chat.controller");
+const agentChatRouteModule = require("./routes/agent-chat.routes");
 const routeModule = require("./routes/api.routes");
 const providerRouteModule = require("./routes/provider.routes");
 const requestContextModule = require("./middleware/request-context");
@@ -175,6 +178,12 @@ function createApp() {
   const workflowController = new workflowControllerModule.WorkflowController({ workflow: workflow, binding: binding, carousel: carousel, multiFusion: multiFusion, directImages: directImages, products: products });
   const diagnosticsController = new diagnosticsControllerModule.DiagnosticsController({ diagnostics: diagnostics, clipWorker: clipWorker });
   const cloudAuthController = new cloudAuthControllerModule.CloudAuthController();
+  const agentService = new agentChatServiceModule.AgentChatService({
+    readConfig: configModule.readServerConfig,
+    writeLog: diagnostics.write.bind(diagnostics),
+    storageDirectory: config.storage.cacheDirectory
+  });
+  const agentController = new agentChatControllerModule.AgentChatController({ agentService: agentService });
   const app = express();
   app.locals.diagnostics = diagnostics;
 
@@ -199,6 +208,8 @@ function createApp() {
   app.use(express.json({ limit: "80mb" }));
   app.use(requestContextModule.logParsedRequestBody);
   app.use("/api/v1/cache/image", express.static(images.imageDirectory, { immutable: true, maxAge: "365d" }));
+  const agentRouter = agentChatRouteModule.createAgentChatRouter({ agentController: agentController });
+  app.use("/api/v1", agentRouter);
   const providerRouter = providerRouteModule.createProviderRouter({
     providerController: providerController,
     workflowController: workflowController,
