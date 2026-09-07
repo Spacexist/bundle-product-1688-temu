@@ -673,7 +673,7 @@ const app = createApp({
               <aside class="default-template-sidebar">
                 <header><strong>模板</strong><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length >= 50" @click="addDefaultPromptTemplate">+ 新增</button></header>
                 <div class="default-template-list"><button v-for="template in defaultPromptTemplates" :key="template.id" type="button" :class="{ active: template.id === defaultPromptSelectedTemplateId }" :disabled="defaultPromptDialogBusy" @click="requestSelectDefaultPromptTemplate(template.id)"><span>{{ template.name }}</span><small>{{ template.pages.length }} 张</small></button></div>
-                <div class="default-template-actions"><button type="button" :disabled="defaultPromptDialogBusy" @click="duplicateDefaultPromptTemplate">复制模板</button><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length <= 1" @click="deleteDefaultPromptTemplate">删除模板</button></div>
+                <div class="default-template-actions"><button type="button" :disabled="defaultPromptDialogBusy" @click="duplicateDefaultPromptTemplate">复制模板</button><button type="button" :disabled="defaultPromptDialogBusy || defaultPromptTemplates.length <= 1" @click="deleteDefaultPromptTemplate">删除模板</button><button type="button" :disabled="defaultPromptDialogBusy || !defaultPromptTemplates.length" @click="exportDefaultPromptJson">导出 JSON</button><label class="default-template-import-button" :class="{ disabled: defaultPromptDialogBusy }">导入 JSON<input type="file" accept="application/json,.json" :disabled="defaultPromptDialogBusy" @change="importDefaultPromptJsonFile"></label></div>
               </aside>
               <section v-if="currentDefaultPromptTemplate()" class="default-template-editor">
                 <label class="image-editor-prompt"><span>模板名称</span><input type="text" v-model="currentDefaultPromptTemplate().name" maxlength="100" autocomplete="off" :disabled="defaultPromptDialogBusy"></label>
@@ -1756,6 +1756,96 @@ const app = createApp({
       } finally {
         this.defaultPromptDialogBusy = false;
       }
+    },
+
+    /** Export the current storyboard template configuration as a downloaded JSON file. */
+    exportDefaultPromptJson: function exportDefaultPromptJson() {
+      try {
+        const snapshot = this.defaultPromptConfigSnapshot();
+        const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "default.prompt.json";
+        link.click();
+        URL.revokeObjectURL(link.href);
+        this.defaultPromptSavedText = "分镜模板 JSON 已导出。";
+        this.setStatus("分镜模板 JSON 已导出。", "success");
+        return true;
+      } catch (error) {
+        this.defaultPromptDialogError = "分镜模板导出失败：" + (error && error.message || error);
+        return false;
+      }
+    },
+
+    /** Parse, validate and import a storyboard configuration JSON text. */
+    importDefaultPromptConfigData: function importDefaultPromptConfigData(parsed) {
+      if (!parsed || typeof parsed !== "object") {
+        throw new Error("JSON 内容必须是对象。");
+      }
+      let nextConfig = null;
+      if (Array.isArray(parsed.templates)) {
+        if (!parsed.templates.length) {
+          throw new Error("模板列表中至少需要 1 套模板。");
+        }
+        if (parsed.templates.length > 50) {
+          throw new Error("模板数量不能超过 50 套。");
+        }
+        nextConfig = {
+          system_prompt: typeof parsed.system_prompt === "string" ? parsed.system_prompt : (this.defaultPromptSystemPrompt || ""),
+          default_template_id: typeof parsed.default_template_id === "string" ? parsed.default_template_id : "",
+          templates: parsed.templates
+        };
+      } else if (Array.isArray(parsed.pages)) {
+        if (!parsed.pages.length || parsed.pages.length > 10) {
+          throw new Error("分镜数量必须为 1 到 10 个。");
+        }
+        const templateName = typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "导入模板";
+        nextConfig = {
+          system_prompt: typeof parsed.system_prompt === "string" ? parsed.system_prompt : (this.defaultPromptSystemPrompt || ""),
+          default_template_id: "template-imported",
+          templates: [{ id: "template-imported", name: templateName, pages: parsed.pages }]
+        };
+      } else {
+        throw new Error("导入的 JSON 必须包含 templates 数组或 pages 数组。");
+      }
+      this.applyDefaultPromptConfig(nextConfig);
+      this.collectDefaultPromptConfig();
+      this.defaultPromptSavedConfig = "";
+      this.defaultPromptDialogError = "";
+      this.defaultPromptSavedText = "已导入分镜模板，请核对后点击“保存全部模板”。";
+      this.setStatus("分镜模板已导入，请点击“保存全部模板”持久化到后端。", "success");
+      return true;
+    },
+
+    /** Handle local JSON file selection for storyboard templates import. */
+    importDefaultPromptJsonFile: function importDefaultPromptJsonFile(event) {
+      const target = event && event.target;
+      const file = target && target.files && target.files[0];
+      if (!file) {
+        return;
+      }
+      const view = this;
+      const reader = new FileReader();
+      reader.onload = function onFileLoaded(e) {
+        try {
+          const text = String(e.target && e.target.result || "");
+          const parsed = JSON.parse(text);
+          view.importDefaultPromptConfigData(parsed);
+        } catch (error) {
+          view.defaultPromptDialogError = "导入分镜模板失败：" + (error && error.message || error);
+        } finally {
+          if (target) {
+            target.value = "";
+          }
+        }
+      };
+      reader.onerror = function onFileError() {
+        view.defaultPromptDialogError = "读取本地 JSON 文件失败。";
+        if (target) {
+          target.value = "";
+        }
+      };
+      reader.readAsText(file, "utf-8");
     },
 
     /** Return the current one-click template name and effective image count. */

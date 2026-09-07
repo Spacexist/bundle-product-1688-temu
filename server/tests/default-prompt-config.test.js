@@ -131,7 +131,7 @@ function templateEditorFixture(fetchImplementation) {
     "moveDefaultPromptPage", "removeDefaultPromptPage", "requestDefaultPromptAction",
     "requestSelectDefaultPromptTemplate", "performDefaultPromptAction", "resolveDefaultPromptPendingAction",
     "closeDefaultPromptDialog", "requestSaveDefaultPromptPages", "saveDefaultPromptPages",
-    "defaultPromptButtonLabel", "resolveDefaultPromptGenerationPages"
+    "defaultPromptButtonLabel", "resolveDefaultPromptGenerationPages", "exportDefaultPromptJson", "importDefaultPromptConfigData"
   ];
   for (let index = 0; index < methodNames.length; index += 1) {
     view[methodNames[index]] = options.methods[methodNames[index]].bind(view);
@@ -341,4 +341,56 @@ test("non-manual carousel pages do not receive the dedicated prefix", /** Keep K
   });
   assert.equal(runtime.buildCarouselPagePrompt({ mode: "basic" }, { prompt: "自由分镜" }), "自由分镜");
   assert.equal(runtime.buildCarouselPagePrompt({ mode: "advanced" }, { prompt: "Kimi 分镜" }), "Kimi 分镜");
+});
+
+test("template UI exports snapshot and imports external json configuration", function () {
+  const { view } = templateEditorFixture();
+
+  // Test export snapshot
+  const snapshot = view.defaultPromptConfigSnapshot();
+  assert.equal(snapshot.templates.length, 2);
+  assert.equal(snapshot.templates[0].name, "产品卖点");
+  assert.equal(snapshot.templates[1].name, "场景展示");
+
+  // Test importing full multi-template JSON
+  const importedData = {
+    system_prompt: "自定义全局提示词",
+    default_template_id: "tmpl-imported-1",
+    templates: [
+      {
+        id: "tmpl-imported-1",
+        name: "导入模板一",
+        pages: [
+          { purpose: "导入分镜1", prompt: "导入提示词1" },
+          { purpose: "导入分镜2", prompt: "导入提示词2" }
+        ]
+      }
+    ]
+  };
+
+  assert.equal(view.importDefaultPromptConfigData(importedData), true);
+  assert.equal(view.defaultPromptTemplates.length, 1);
+  assert.equal(view.defaultPromptTemplates[0].name, "导入模板一");
+  assert.equal(view.defaultPromptTemplates[0].pages.length, 2);
+  assert.equal(view.defaultPromptTemplates[0].pages[0].purpose, "导入分镜1");
+  assert.equal(view.defaultPromptTemplates[0].pages[0].prompt, "导入提示词1");
+  assert.equal(view.defaultPromptSystemPrompt, "自定义全局提示词");
+
+  // Test importing single-template / legacy pages format
+  const legacyData = {
+    name: "单模板导入",
+    pages: [
+      { purpose: "单分镜", prompt: "单提示词" }
+    ]
+  };
+  assert.equal(view.importDefaultPromptConfigData(legacyData), true);
+  assert.equal(view.defaultPromptTemplates.length, 1);
+  assert.equal(view.defaultPromptTemplates[0].name, "单模板导入");
+  assert.equal(view.defaultPromptTemplates[0].pages.length, 1);
+
+  // Test invalid import payloads
+  assert.throws(() => view.importDefaultPromptConfigData(null), /JSON 内容必须是对象/);
+  assert.throws(() => view.importDefaultPromptConfigData({}), /必须包含 templates 数组或 pages 数组/);
+  assert.throws(() => view.importDefaultPromptConfigData({ templates: [] }), /至少需要 1 套模板/);
+  assert.throws(() => view.importDefaultPromptConfigData({ pages: [] }), /分镜数量必须为 1 到 10 个/);
 });

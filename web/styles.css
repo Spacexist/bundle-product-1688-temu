@@ -1058,6 +1058,10 @@ body::before {
 .default-template-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .default-template-list small { color: #8a96a8; font-size: 10px; font-weight: 650; }
 .default-template-actions { display: grid; gap: 6px; margin-top: auto; }
+.default-template-import-button { position: relative; display: flex; align-items: center; justify-content: center; padding: 7px 9px; border: 1px solid rgba(255, 255, 255, .76); border-radius: 8px; background: rgba(255, 255, 255, .44); color: #596476; font-size: 11px; font-weight: 800; cursor: pointer; }
+.default-template-import-button:hover:not(.disabled) { background: rgba(255, 255, 255, .78); color: #313846; }
+.default-template-import-button.disabled { cursor: not-allowed; opacity: .5; pointer-events: none; }
+.default-template-import-button input { display: none; }
 .default-template-editor { min-width: 0; min-height: 0; overflow: hidden; }
 .default-template-editor > .image-editor-prompt { margin: 0 4px 10px 0; }
 .default-template-editor > .image-editor-prompt input { width: 100%; box-sizing: border-box; padding: 8px 9px; border: 1px solid rgba(255, 255, 255, .68); border-radius: 8px; outline: none; background: rgba(255, 255, 255, .46); }
