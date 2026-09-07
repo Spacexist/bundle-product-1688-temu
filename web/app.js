@@ -6413,8 +6413,15 @@ const app = createApp({
           view.imageDirectPollTimer = window.setTimeout(retryDirectTaskPolling, 1000);
           return;
         }
+        const unreachableMessage = String(error && error.message || "单结果图片任务无法恢复。");
+        if (view.imageDirectTask) {
+          view.imageDirectTask.status = "failed";
+          view.imageDirectTask.error_code = "DIRECT_IMAGE_TASK_UNREACHABLE";
+          view.imageDirectTask.error = unreachableMessage;
+          view.applyDirectImageTask(view.imageDirectTask);
+        }
         view.imageEditorBusy = false;
-        view.imageEditorError = "[DIRECT_IMAGE_TASK_UNREACHABLE] " + String(error && error.message || "单结果图片任务无法恢复。");
+        view.imageEditorError = "[DIRECT_IMAGE_TASK_UNREACHABLE] " + unreachableMessage;
       });
     },
 
@@ -8133,23 +8140,25 @@ const app = createApp({
           return;
         }
         view.applyDirectImageTask(task);
-      }).catch(function keepPollingAfterDirectImageCreateFailure(error) {
-        if (!error || !error.receivedResponse || !view.isVisibleDirectImageTask(taskId)) {
+      }).catch(function handleDirectImageCreateFailure(error) {
+        if (!view.isVisibleDirectImageTask(taskId)) {
           return;
         }
         if (view.imageDirectPollTimer) {
           window.clearTimeout(view.imageDirectPollTimer);
           view.imageDirectPollTimer = null;
         }
+        const errorCode = String(error && error.code || (error && error.receivedResponse ? "DIRECT_IMAGE_TASK_CREATE_FAILED" : "NETWORK_ERROR"));
+        const errorMessage = String(error && error.message || (error && error.receivedResponse ? "单结果图片任务创建失败。" : "网络连接失败，请检查网络后重试。"));
         if (parentTask) {
           view.applyDirectImageTask(parentTask);
-          view.imageEditorError = "[" + String(error.code || "DIRECT_IMAGE_TASK_CREATE_FAILED") + "] " + String(error.message || "单结果图片任务创建失败。");
+          view.imageEditorError = "[" + errorCode + "] " + errorMessage;
           return;
         }
-        const failedTask = view.imageDirectTask;
+        const failedTask = view.imageDirectTask || directTask;
         failedTask.status = "failed";
-        failedTask.error = String(error.message || "单结果图片任务创建失败。");
-        failedTask.error_code = String(error.code || "DIRECT_IMAGE_TASK_CREATE_FAILED");
+        failedTask.error = errorMessage;
+        failedTask.error_code = errorCode;
         view.applyDirectImageTask(failedTask);
       });
       this.pollDirectImageTask(taskId);
@@ -8624,7 +8633,7 @@ const app = createApp({
       } catch (error) {
         this.failCarouselFeedback(task, pageIndices, error);
         if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
-          this.imageCarouselGenerationBusy = this.isCarouselTaskGenerating(this.imageCarouselTask);
+          this.imageCarouselGenerationBusy = false;
           this.imageEditorError = error.message || "轮播后台任务提交失败。";
         }
       }
