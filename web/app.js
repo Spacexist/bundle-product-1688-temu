@@ -6291,7 +6291,7 @@ const app = createApp({
     /** Return the saved brush cutout image URL for one retryable direct task. */
     directImageRetryMaskUrl: function directImageRetryMaskUrl(task) {
       const item = task && typeof task === "object" ? task : {};
-      if (item.mask_mode !== "cutout") {
+      if (item.mask_mode !== "cutout" && item.mask_mode !== "annotated") {
         return "";
       }
       return String(item.mask_image_url || item.mask_url || "").trim();
@@ -6491,7 +6491,7 @@ const app = createApp({
         if (!view.isVisibleDirectImageTask(safeTaskId)) {
           return;
         }
-        if (error && error.statusCode === 404) {
+        if (error && error.statusCode === 404 && misses <= 0) {
           view.clearMissingVisibleDirectImageTask(safeTaskId);
           return;
         }
@@ -6503,15 +6503,11 @@ const app = createApp({
           view.imageDirectPollTimer = window.setTimeout(retryDirectTaskPolling, 1000);
           return;
         }
-        const unreachableMessage = String(error && error.message || "单结果图片任务无法恢复。");
-        if (view.imageDirectTask) {
-          view.imageDirectTask.status = "failed";
-          view.imageDirectTask.error_code = "DIRECT_IMAGE_TASK_UNREACHABLE";
-          view.imageDirectTask.error = unreachableMessage;
-          view.applyDirectImageTask(view.imageDirectTask);
-        }
-        view.imageEditorBusy = false;
-        view.imageEditorError = "[DIRECT_IMAGE_TASK_UNREACHABLE] " + unreachableMessage;
+        // A transport failure does not establish a terminal provider result.
+        view.imageEditorError = "连接中断，正在恢复任务状态，请勿重复提交。";
+        view.imageDirectPollTimer = window.setTimeout(/** Resume discovery after reconnect. */ function resumeDirectTaskPolling() {
+          view.pollDirectImageTask(safeTaskId, 60);
+        }, 5000);
       });
     },
 
@@ -6773,7 +6769,7 @@ const app = createApp({
         this.imageDirectTasksByMainId = taskLookup;
         if (visibleTask && this.isVisibleDirectImageTask(visibleTaskId)) {
           this.applyDirectImageTask(visibleTask);
-        } else if (visibleTaskId) {
+        } else if (visibleTaskId && this.imageDirectTask && this.imageDirectTask.created_at) {
           this.clearMissingVisibleDirectImageTask(visibleTaskId);
         }
         if (hasActiveTask) {
@@ -8157,7 +8153,7 @@ const app = createApp({
       }
       if (submission.referenceMode !== "current" && this.directImageTaskMatches(this.imageDirectTask, record, sources)
         && this.isDirectImageTaskRetryable(this.imageDirectTask)) {
-        this.deleteDirectImageTask("all");
+        // The server replaces terminal tasks after accepting the new task.
         this.imageEditorGeneratedUrl = "";
         this.imageEditorError = "";
       }
@@ -8232,6 +8228,11 @@ const app = createApp({
         view.applyDirectImageTask(task);
       }).catch(function handleDirectImageCreateFailure(error) {
         if (!view.isVisibleDirectImageTask(taskId)) {
+          return;
+        }
+        if (!error || !error.receivedResponse) {
+          view.imageEditorError = "提交结果暂未确认，正在查询后台任务，请勿重复提交。";
+          view.pollDirectImageTask(taskId);
           return;
         }
         if (view.imageDirectPollTimer) {
@@ -8330,6 +8331,22 @@ const app = createApp({
 
     /** Apply one carousel snapshot and derive the local busy flag from page state. */
     applyCarouselTaskSnapshot: function applyCarouselTaskSnapshot(task) {
+      const retained = this.imageCarouselTask;
+      if (task && retained && task.id === retained.id) {
+        const incomingTime = Date.parse(task.updated_at || "");
+        const retainedTime = Date.parse(retained.updated_at || "");
+        if (incomingTime && retainedTime && incomingTime < retainedTime) { return; }
+        // A response from the same execution cannot undo its terminal result.
+        task = Object.assign({}, task, { pages: (task.pages || []).map(/** Keep completed executions monotonic. */ function retainTerminalPage(page, index) {
+          const previous = retained.pages && retained.pages[index];
+          return previous && previous.generation_id && previous.generation_id === page.generation_id
+            && (previous.status === "succeeded" || previous.status === "failed") && page.status === "generating"
+            ? previous : page;
+        }) });
+        if (task.status === "generating" && task.pages.length && task.pages.every(/** Derive completion after retaining terminal pages. */ function isTerminal(page) {
+          return page.status === "succeeded" || page.status === "failed";
+        })) { task.status = "generated"; }
+      }
       if (this.isIgnoredCarouselTask(task)) {
         this.imageCarouselTask = null;
         this.imageCarouselGenerationBusy = false;
@@ -8678,12 +8695,12 @@ const app = createApp({
           maskUrl = this.buildImageMaskDataUrl();
         } catch (error) {
           this.imageEditorError = "[CAROUSEL_MASK_BUILD_FAILED] " + String(error && error.message || "局部抠图生成失败，请重新打开图片后再试。");
-          return;
+          throw error;
         }
       }
       if (referenceMode === "current" && this.hasImageMaskStrokes() && !maskUrl) {
         this.imageEditorError = "[CAROUSEL_MASK_MISSING] 局部抠图未保存，请重新涂抹后再重试。";
-        return;
+        throw new Error(this.imageEditorError);
       }
       const response = await fetch(apiUrl(this.pagedImageTaskBasePath(task) + "/" + encodeURIComponent(task.id) + "/generate"), {
         method: "POST",
@@ -8722,6 +8739,7 @@ const app = createApp({
         await this.startCarouselGeneration(submissionTask || task, pageIndices);
       } catch (error) {
         this.failCarouselFeedback(task, pageIndices, error);
+        if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) { this.scheduleCarouselTaskPoll(); }
         if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
           this.imageCarouselGenerationBusy = false;
           this.imageEditorError = error.message || "轮播后台任务提交失败。";
@@ -8738,7 +8756,7 @@ const app = createApp({
         this.imageCarouselFeedback[task.id] = run;
       }
       for (const index of indices) {
-        run.pages[index] = { status: "submitting", generation_id: "", error: "" };
+        run.pages[index] = { status: "submitting", generation_id: "", previous_generation_id: String(task.pages[index] && task.pages[index].generation_id || ""), error: "" };
       }
     },
 
@@ -8746,8 +8764,9 @@ const app = createApp({
     failCarouselFeedback(task, indices, error) {
       const run = this.imageCarouselFeedback[task.id];
       if (!run) { return; }
+      run.errorMessage = error.message || "";
       for (const index of indices) {
-        run.pages[index] = { status: "failed", generation_id: "", error: "[" + getWorkflowErrorCode(error) + "] " + (error.message || "提交失败") };
+        run.pages[index] = Object.assign({}, run.pages[index], { status: "failed", error: "[" + getWorkflowErrorCode(error) + "] " + (error.message || "提交失败") });
       }
     },
 
@@ -8759,8 +8778,10 @@ const app = createApp({
         const entry = run.pages[key];
         const page = task.pages && task.pages[Number(key)];
         if (!page) { continue; }
-        if (acceptedIndices && acceptedIndices.indexOf(Number(key)) >= 0) {
+        if ((acceptedIndices && acceptedIndices.indexOf(Number(key)) >= 0)
+          || (!entry.generation_id && page.generation_id && String(page.generation_id) !== entry.previous_generation_id)) {
           entry.generation_id = String(page.generation_id || "");
+          if (run.errorMessage && this.imageEditorError === run.errorMessage) { this.imageEditorError = ""; }
         }
         if (!entry.generation_id || entry.generation_id !== String(page.generation_id || "")) { continue; }
         entry.status = String(page.status || "generating");
@@ -8870,6 +8891,7 @@ const app = createApp({
         await this.startCarouselGeneration(task, [Number(pageIndex)], referenceMode);
       } catch (error) {
         this.failCarouselFeedback(task, [Number(pageIndex)], error);
+        if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) { this.scheduleCarouselTaskPoll(); }
         if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
           this.imageEditorError = error.message || "轮播后台任务提交失败。";
         }

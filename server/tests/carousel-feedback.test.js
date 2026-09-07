@@ -326,3 +326,68 @@ test("unmount cancels every completion timer", /** Prevent delayed state writes 
 
 
 
+
+test("mask construction failure releases retry and replacement controls", /** Exercise failure before provider submission. */ async function () {
+  for (const throws of [true, false]) {
+    const {view} = frontendFixture();
+    view.imageCarouselTask.pages[0].status = "failed";
+    view.saveCarouselPage = /** Isolate successful prompt save. */ async function save() {};
+    view.hasImageMaskStrokes = /** Retain annotations for retry. */ function strokes() { return true; };
+    view.buildImageMaskDataUrl = /** Simulate missing or unreadable canvas. */ function mask() { if (throws) { throw new Error("canvas unavailable"); } return ""; };
+    await view.retryCarouselPage(0);
+    assert.equal(view.hasCarouselSubmission(view.imageCarouselTask, 0), false);
+    assert.equal(view.isCarouselPageBusy(0), false);
+    assert.equal(view.carouselPageFeedback().title, "提交失败");
+  }
+});
+
+test("lost retry response reconciles feedback with a new completed execution", /** Recover using later server state without a POST response. */ function () {
+  const {view} = frontendFixture();
+  const task = view.imageCarouselTask;
+  view.beginCarouselFeedback(task, [0]);
+  view.failCarouselFeedback(task, [0], new Error("response lost"));
+  view.imageEditorError = "response lost";
+  view.applyCarouselTaskSnapshot(structuredClone(task));
+  assert.equal(view.carouselPageFeedback().title, "提交失败");
+  const completed = runningTask(task, [0]);
+  completed.status = "generated";
+  completed.pages[0].status = "succeeded";
+  completed.pages[0].image_url = "new-image";
+  view.applyCarouselTaskSnapshot(completed);
+  assert.equal(view.carouselPageFeedback().title, "");
+  assert.equal(view.imageEditorError, "");
+  assert.match(view.carouselRunFeedbackText(), /成功 1/);
+});
+
+test("late running response cannot regress a completed execution", /** Reject stale snapshots while allowing a fresh retry. */ function () {
+  const {view} = frontendFixture();
+  const task = structuredClone(view.imageCarouselTask);
+  task.updated_at = "2026-09-07T10:00:02Z";
+  view.applyCarouselTaskSnapshot(task);
+  const late = structuredClone(task);
+  late.status = "generating";
+  late.pages[0].status = "generating";
+  view.applyCarouselTaskSnapshot(late);
+  assert.equal(view.imageCarouselTask.pages[0].status, "succeeded");
+  assert.equal(view.isCarouselTaskGenerating(view.imageCarouselTask), false);
+  late.updated_at = "2026-09-07T10:00:01Z";
+  late.pages[0].generation_id = "obsolete";
+  view.applyCarouselTaskSnapshot(late);
+  assert.equal(view.imageCarouselTask.pages[0].generation_id, task.pages[0].generation_id);
+  const retry = runningTask(task, [0]);
+  retry.updated_at = "2026-09-07T10:00:03Z";
+  view.applyCarouselTaskSnapshot(retry);
+  assert.equal(view.imageCarouselTask.pages[0].status, "generating");
+});
+
+test("exhausted direct transport retries keep the task active and schedule recovery", /** Network loss must not authorize another paid generation. */ async function () {
+  const {view, timers} = frontendFixture();
+  view.imageCarouselTask = null;
+  view.imageDirectTask = {id:"direct-offline", status:"generating"};
+  view.pollDirectImageTask("direct-offline", 0);
+  for (let index = 0; index < 15; index++) { await Promise.resolve(); }
+  assert.equal(view.imageDirectTask.status, "generating");
+  assert.equal(view.isDirectImageTaskRetryable(view.imageDirectTask), false);
+  assert.equal(timers.size > 0, true);
+});
+
