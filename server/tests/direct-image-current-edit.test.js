@@ -220,6 +220,9 @@ test("current direct-edit schemas and UI expose version selection without touchi
   assert.match(appSource, /shouldForceReset && this\.imageDirectTask/);
   assert.match(appSource, /imageDirectTaskCheckPending \|\| this\.activeDirectImageTaskForRecord/);
   assert.match(appSource, /\[DIRECT_IMAGE_TASK_ACTIVE\] 该商品已有单图编辑任务正在进行/);
+  assert.match(appSource, /clearMissingVisibleDirectImageTask/);
+  assert.match(appSource, /error && error\.statusCode === 404/);
+  assert.match(appSource, /\[DIRECT_IMAGE_TASK_MISSING\] 后台已没有这个单图编辑任务/);
   assert.match(appSource, /return "已有任务进行中"/);
   assert.doesNotMatch(appSource, /source_type: "sku"[^\n]+parent_task_id/);
 });

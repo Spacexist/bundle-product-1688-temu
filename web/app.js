@@ -6390,6 +6390,10 @@ const app = createApp({
         if (!view.isVisibleDirectImageTask(safeTaskId)) {
           return;
         }
+        if (error && error.statusCode === 404) {
+          view.clearMissingVisibleDirectImageTask(safeTaskId);
+          return;
+        }
         if (misses > 0) {
           /** Retry task discovery when the POST response or one local request was interrupted. */
           function retryDirectTaskPolling() {
@@ -6401,6 +6405,29 @@ const app = createApp({
         view.imageEditorBusy = false;
         view.imageEditorError = "[DIRECT_IMAGE_TASK_UNREACHABLE] " + String(error && error.message || "单结果图片任务无法恢复。");
       });
+    },
+
+    /** Clear the visible direct-image task when the backend no longer retains it. */
+    clearMissingVisibleDirectImageTask: function clearMissingVisibleDirectImageTask(taskId) {
+      const safeTaskId = String(taskId || "");
+      if (!this.isVisibleDirectImageTask(safeTaskId)) {
+        return false;
+      }
+      const mainId = String(this.imageDirectTask && this.imageDirectTask.temu_main_id || "");
+      if (this.imageDirectPollTimer) {
+        window.clearTimeout(this.imageDirectPollTimer);
+        this.imageDirectPollTimer = null;
+      }
+      this.imageDirectTask = null;
+      this.imageEditorBusy = false;
+      this.imageEditorGeneratedUrl = "";
+      this.imageDirectTaskCheckPending = false;
+      this.imageEditorError = "[DIRECT_IMAGE_TASK_MISSING] 后台已没有这个单图编辑任务，请重新提交。";
+      if (mainId) {
+        delete this.imageDirectTasksByMainId[mainId];
+      }
+      this.persistViewState();
+      return true;
     },
 
     /** Load the newest direct-image task when reopening the same source selection. */
@@ -6638,6 +6665,8 @@ const app = createApp({
         this.imageDirectTasksByMainId = taskLookup;
         if (visibleTask && this.isVisibleDirectImageTask(visibleTaskId)) {
           this.applyDirectImageTask(visibleTask);
+        } else if (visibleTaskId) {
+          this.clearMissingVisibleDirectImageTask(visibleTaskId);
         }
         if (hasActiveTask) {
           this.scheduleDirectImageIndicatorRefresh(1000);
