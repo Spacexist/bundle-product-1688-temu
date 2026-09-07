@@ -1,3 +1,4 @@
+const ANNOTATED_IMAGE_EDIT_PROMPT = "原图上的荧光/标注/框选区域为目标修改位置，请按照用户要求在此区域进行修改/添加，生成后去除所有标记线，保持整张海报四角方正实心，不要边缘羽化或切角。";
 const { createApp } = Vue;
 
 /** Resolve one versioned backend API path from public frontend configuration. */
@@ -599,7 +600,7 @@ const app = createApp({
                   <div v-if="currentCarouselPage().image_url" class="image-mask-surface carousel-mask-surface">
                     <img ref="imageMaskSourceImage" crossorigin="anonymous" :src="imageSource(currentCarouselPage().image_url)" :alt="'轮播图 ' + (imageCarouselPageIndex + 1)" @load="renderImageMaskCanvas">
                     <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
-                    <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
+                    <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'highlighter' }" type="button" title="荧光涂抹" aria-label="荧光涂抹" @click="selectImageMaskTool('highlighter')">🖍</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'brush' }" type="button" title="普通画笔" aria-label="普通画笔" @click="selectImageMaskTool('brush')">✏</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'rect' }" type="button" title="矩形框选" aria-label="矩形框选" @click="selectImageMaskTool('rect')">▭</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'circle' }" type="button" title="圆圈框选" aria-label="圆圈框选" @click="selectImageMaskTool('circle')">◯</button><div class="image-mask-tool-divider"></div><div class="image-mask-color-list"><button v-for="color in imageMaskColors" :key="color.value" type="button" class="image-mask-color-dot" :class="{ active: imageMaskColor === color.value }" :style="{ background: color.display }" :title="color.name" :aria-label="color.name" @click="setImageMaskColor(color.value)"></button></div><div class="image-mask-tool-divider"></div><button class="image-mask-tool" type="button" title="撤销上一步" aria-label="撤销上一步" :disabled="!imageMaskStrokes.length" @click="undoImageMaskStroke">↶</button><button class="image-mask-tool image-mask-clear" type="button" title="清空全部标注" aria-label="清空全部标注" :disabled="!imageMaskStrokes.length" @click="clearImageMaskStrokes">🗑</button></div>
                   </div>
                   <div v-if="carouselPageFeedback().title && (currentCarouselPage().image_url || !carouselPageFeedback().error)" class="carousel-page-feedback" :class="{ 'is-error': carouselPageFeedback().error }" role="status" aria-live="polite">
                     <i v-if="!carouselPageFeedback().error" class="carousel-feedback-spinner" aria-hidden="true"></i>
@@ -622,7 +623,7 @@ const app = createApp({
                 <div class="image-mask-surface direct-mask-surface">
                   <img ref="imageMaskSourceImage" class="image-editor-generated-image" crossorigin="anonymous" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果" @load="renderImageMaskCanvas">
                   <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
-                  <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
+                  <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'highlighter' }" type="button" title="荧光涂抹" aria-label="荧光涂抹" @click="selectImageMaskTool('highlighter')">🖍</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'brush' }" type="button" title="普通画笔" aria-label="普通画笔" @click="selectImageMaskTool('brush')">✏</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'rect' }" type="button" title="矩形框选" aria-label="矩形框选" @click="selectImageMaskTool('rect')">▭</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'circle' }" type="button" title="圆圈框选" aria-label="圆圈框选" @click="selectImageMaskTool('circle')">◯</button><div class="image-mask-tool-divider"></div><div class="image-mask-color-list"><button v-for="color in imageMaskColors" :key="color.value" type="button" class="image-mask-color-dot" :class="{ active: imageMaskColor === color.value }" :style="{ background: color.display }" :title="color.name" :aria-label="color.name" @click="setImageMaskColor(color.value)"></button></div><div class="image-mask-tool-divider"></div><button class="image-mask-tool" type="button" title="撤销上一步" aria-label="撤销上一步" :disabled="!imageMaskStrokes.length" @click="undoImageMaskStroke">↶</button><button class="image-mask-tool image-mask-clear" type="button" title="清空全部标注" aria-label="清空全部标注" :disabled="!imageMaskStrokes.length" @click="clearImageMaskStrokes">🗑</button></div>
                 </div>
                 <div v-if="imageEditorBusy" class="carousel-page-feedback" role="status" aria-live="polite"><i class="carousel-feedback-spinner" aria-hidden="true"></i><strong>{{ imageEditorInlineBusyTitle() }}</strong><small>{{ imageEditorInlineBusyHint() }}</small></div>
               </div>
@@ -631,7 +632,7 @@ const app = createApp({
                   <div class="image-mask-frame">
                     <img ref="imageMaskSourceImage" crossorigin="anonymous" :src="imageSource(galleryImageEditorSources(selectedTemuRecord)[0])" alt="待编辑图片" @load="renderImageMaskCanvas">
                     <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
-                    <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
+                    <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'highlighter' }" type="button" title="荧光涂抹" aria-label="荧光涂抹" @click="selectImageMaskTool('highlighter')">🖍</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'brush' }" type="button" title="普通画笔" aria-label="普通画笔" @click="selectImageMaskTool('brush')">✏</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'rect' }" type="button" title="矩形框选" aria-label="矩形框选" @click="selectImageMaskTool('rect')">▭</button><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled && imageMaskTool === 'circle' }" type="button" title="圆圈框选" aria-label="圆圈框选" @click="selectImageMaskTool('circle')">◯</button><div class="image-mask-tool-divider"></div><div class="image-mask-color-list"><button v-for="color in imageMaskColors" :key="color.value" type="button" class="image-mask-color-dot" :class="{ active: imageMaskColor === color.value }" :style="{ background: color.display }" :title="color.name" :aria-label="color.name" @click="setImageMaskColor(color.value)"></button></div><div class="image-mask-tool-divider"></div><button class="image-mask-tool" type="button" title="撤销上一步" aria-label="撤销上一步" :disabled="!imageMaskStrokes.length" @click="undoImageMaskStroke">↶</button><button class="image-mask-tool image-mask-clear" type="button" title="清空全部标注" aria-label="清空全部标注" :disabled="!imageMaskStrokes.length" @click="clearImageMaskStrokes">🗑</button></div>
                   </div>
                 </div>
                 <img v-else v-for="(image, sourceIndex) in galleryImageEditorSources(selectedTemuRecord)" :key="sourceIndex" :src="imageSource(image)" alt="待编辑图片">
@@ -784,8 +785,16 @@ const app = createApp({
       imageEditorBackdropPressed: false,
       imageMaskDrawingEnabled: false,
       imageMaskDrawing: false,
+      imageMaskTool: "highlighter",
+      imageMaskColor: "rgba(239, 68, 68, 0.55)",
+      imageMaskColors: [
+        { name: "荧光红", value: "rgba(239, 68, 68, 0.55)", solid: "#ef4444", display: "#ef4444" },
+        { name: "荧光绿", value: "rgba(34, 197, 94, 0.55)", solid: "#22c55e", display: "#22c55e" },
+        { name: "荧光黄", value: "rgba(234, 179, 8, 0.55)", solid: "#eab308", display: "#eab308" },
+        { name: "荧光蓝", value: "rgba(59, 130, 246, 0.55)", solid: "#3b82f6", display: "#3b82f6" }
+      ],
       imageMaskStrokes: [],
-      imageMaskBrushSize: 42,
+      imageMaskBrushSize: 32,
       imageMaskSurfaceKey: "",
       imageMaskRenderFrame: 0,
       imageEditorContextStack: [],
@@ -7319,6 +7328,30 @@ const app = createApp({
     },
 
     /** Toggle the brush while keeping existing strokes visible. */
+    selectImageMaskTool: function selectImageMaskTool(tool) {
+      if (this.imageMaskTool === tool && this.imageMaskDrawingEnabled) {
+        this.imageMaskDrawingEnabled = false;
+      } else {
+        this.imageMaskTool = tool;
+        this.imageMaskDrawingEnabled = true;
+      }
+      this.renderImageMaskCanvas();
+    },
+
+    /** Set the stroke annotation color. */
+    setImageMaskColor: function setImageMaskColor(colorValue) {
+      this.imageMaskColor = colorValue;
+      this.renderImageMaskCanvas();
+    },
+
+    /** Undo the last stroke or shape. */
+    undoImageMaskStroke: function undoImageMaskStroke() {
+      if (Array.isArray(this.imageMaskStrokes) && this.imageMaskStrokes.length) {
+        this.imageMaskStrokes.pop();
+        this.renderImageMaskCanvas();
+      }
+    },
+
     toggleImageMaskTool: function toggleImageMaskTool() {
       this.imageMaskDrawingEnabled = !this.imageMaskDrawingEnabled;
       this.renderImageMaskCanvas();
@@ -7409,11 +7442,24 @@ const app = createApp({
         event.currentTarget.setPointerCapture(event.pointerId);
       }
       this.imageMaskDrawing = true;
-      this.imageMaskStrokes.push({ size: this.imageMaskBrushSize, sizeRatio: point.sizeRatio, points: [point] });
+      const currentTool = this.imageMaskTool || "highlighter";
+      const currentColor = this.imageMaskColor || "rgba(239, 68, 68, 0.55)";
+      const colorDef = this.imageMaskColors && this.imageMaskColors.find(c => c.value === currentColor);
+      const solidColor = colorDef ? colorDef.solid : "#ef4444";
+
+      const newStroke = {
+        tool: currentTool,
+        color: currentColor,
+        solidColor: solidColor,
+        points: [point],
+        startPoint: point,
+        endPoint: point
+      };
+      this.imageMaskStrokes.push(newStroke);
       this.renderImageMaskCanvas();
     },
 
-    /** Extend the active brush stroke while the pointer remains pressed. */
+    /** Extend the active stroke or update shape boundary while dragging. */
     continueImageMaskStroke: function continueImageMaskStroke(event) {
       if (!this.imageMaskDrawing || !this.imageMaskDrawingEnabled || !this.imageMaskStrokes.length) {
         return;
@@ -7422,7 +7468,12 @@ const app = createApp({
       if (!point) {
         return;
       }
-      this.imageMaskStrokes[this.imageMaskStrokes.length - 1].points.push(point);
+      const stroke = this.imageMaskStrokes[this.imageMaskStrokes.length - 1];
+      if (stroke.tool === "brush" || stroke.tool === "highlighter") {
+        stroke.points.push(point);
+      } else {
+        stroke.endPoint = point;
+      }
       this.renderImageMaskCanvas();
     },
 
@@ -7466,22 +7517,84 @@ const app = createApp({
 
     /** Draw one stored stroke onto the supplied canvas context. */
     drawImageMaskStroke: function drawImageMaskStroke(context, stroke, width, height, offsetX, offsetY) {
-      const points = stroke && Array.isArray(stroke.points) ? stroke.points : [];
+      if (!stroke) return;
       const left = Number(offsetX || 0);
       const top = Number(offsetY || 0);
-      if (!points.length) {
-        return;
+      const tool = stroke.tool || "highlighter";
+      const dim = Math.max(width, height);
+
+      context.save();
+      if (tool === "highlighter") {
+        context.globalAlpha = 0.55;
+        context.strokeStyle = stroke.solidColor || stroke.color || "#ef4444";
+        context.fillStyle = stroke.solidColor || stroke.color || "#ef4444";
+        context.lineWidth = Math.max(8, Math.min(22, dim * 0.022));
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        const points = Array.isArray(stroke.points) ? stroke.points : [];
+        if (points.length) {
+          context.beginPath();
+          context.moveTo(left + points[0].x * width, top + points[0].y * height);
+          if (points.length === 1) {
+            context.lineTo(left + points[0].x * width + 0.01, top + points[0].y * height);
+          }
+          for (let index = 1; index < points.length; index += 1) {
+            context.lineTo(left + points[index].x * width, top + points[index].y * height);
+          }
+          context.stroke();
+        }
+      } else if (tool === "brush") {
+        context.globalAlpha = 1.0;
+        context.strokeStyle = stroke.solidColor || stroke.color || "#ef4444";
+        context.lineWidth = Math.max(2, Math.min(6, dim * 0.006));
+        context.lineCap = "round";
+        context.lineJoin = "round";
+        const points = Array.isArray(stroke.points) ? stroke.points : [];
+        if (points.length) {
+          context.beginPath();
+          context.moveTo(left + points[0].x * width, top + points[0].y * height);
+          if (points.length === 1) {
+            context.lineTo(left + points[0].x * width + 0.01, top + points[0].y * height);
+          }
+          for (let index = 1; index < points.length; index += 1) {
+            context.lineTo(left + points[index].x * width, top + points[index].y * height);
+          }
+          context.stroke();
+        }
+      } else if (tool === "rect") {
+        context.globalAlpha = 0.95;
+        context.strokeStyle = stroke.solidColor || stroke.color || "#ef4444";
+        context.lineWidth = Math.max(1.5, Math.min(4, dim * 0.0035));
+        context.lineCap = "square";
+        context.lineJoin = "miter";
+        const start = stroke.startPoint || (stroke.points && stroke.points[0]);
+        const end = stroke.endPoint || start;
+        if (start && end) {
+          const rx = left + Math.min(start.x, end.x) * width;
+          const ry = top + Math.min(start.y, end.y) * height;
+          const rw = Math.abs(end.x - start.x) * width;
+          const rh = Math.abs(end.y - start.y) * height;
+          context.strokeRect(rx, ry, rw, rh);
+        }
+      } else if (tool === "circle") {
+        context.globalAlpha = 0.95;
+        context.strokeStyle = stroke.solidColor || stroke.color || "#ef4444";
+        context.lineWidth = Math.max(1.5, Math.min(4, dim * 0.0035));
+        const start = stroke.startPoint || (stroke.points && stroke.points[0]);
+        const end = stroke.endPoint || start;
+        if (start && end) {
+          const cx = left + ((start.x + end.x) / 2) * width;
+          const cy = top + ((start.y + end.y) / 2) * height;
+          const radiusX = Math.abs(end.x - start.x) * width / 2;
+          const radiusY = Math.abs(end.y - start.y) * height / 2;
+          if (radiusX > 0 && radiusY > 0) {
+            context.beginPath();
+            context.ellipse(cx, cy, radiusX, radiusY, 0, 0, 2 * Math.PI);
+            context.stroke();
+          }
+        }
       }
-      context.lineWidth = stroke.sizeRatio ? Number(stroke.sizeRatio) * Math.max(width, height) : Number(stroke.size || this.imageMaskBrushSize);
-      context.beginPath();
-      context.moveTo(left + points[0].x * width, top + points[0].y * height);
-      if (points.length === 1) {
-        context.lineTo(left + points[0].x * width + 0.01, top + points[0].y * height);
-      }
-      for (let index = 1; index < points.length; index += 1) {
-        context.lineTo(left + points[index].x * width, top + points[index].y * height);
-      }
-      context.stroke();
+      context.restore();
     },
 
     /** Force one cutout canvas to use only transparent or opaque pixels. */
@@ -7494,38 +7607,36 @@ const app = createApp({
     },
 
     /** Build a brush cutout PNG by keeping painted source pixels and removing everything else. */
-    buildImageMaskCutoutDataUrl: function buildImageMaskCutoutDataUrl() {
+    buildAnnotatedImageDataUrl: function buildAnnotatedImageDataUrl() {
       if (!this.hasImageMaskStrokes()) {
         return "";
       }
       const image = this.firstRef(this.$refs.imageMaskSourceImage);
-      const width = Math.max(1, Number(image && image.naturalWidth || 1024));
-      const height = Math.max(1, Number(image && image.naturalHeight || 1024));
+      if (!image) {
+        return "";
+      }
+      const width = Math.max(1, Number(image.naturalWidth || 1024));
+      const height = Math.max(1, Number(image.naturalHeight || 1024));
       const canvas = document.createElement("canvas");
       canvas.width = width;
       canvas.height = height;
       const context = canvas.getContext("2d");
-      const maskCanvas = document.createElement("canvas");
-      maskCanvas.width = width;
-      maskCanvas.height = height;
-      const maskContext = maskCanvas.getContext("2d");
+      // 1. Draw base original image (100% opaque, 100% full square bounds)
       context.drawImage(image, 0, 0, width, height);
-      maskContext.strokeStyle = "rgba(0, 0, 0, 1)";
-      maskContext.lineCap = "round";
-      maskContext.lineJoin = "round";
+      // 2. Draw user annotations directly on top
       for (const stroke of this.imageMaskStrokes) {
-        this.drawImageMaskStroke(maskContext, stroke, width, height);
+        this.drawImageMaskStroke(context, stroke, width, height, 0, 0);
       }
-      context.globalCompositeOperation = "destination-in";
-      context.drawImage(maskCanvas, 0, 0);
-      context.globalCompositeOperation = "source-over";
-      this.binarizeImageMaskAlpha(context, width, height);
-      return canvas.toDataURL("image/png");
+      // 3. Export as JPEG (no alpha channel, guaranteed opaque solid square image)
+      return canvas.toDataURL("image/jpeg", 0.95);
     },
 
-    /** Build the persisted brush-cutout image used by masked Edits submissions. */
+    buildImageMaskCutoutDataUrl: function buildImageMaskCutoutDataUrl() {
+      return this.buildAnnotatedImageDataUrl();
+    },
+
     buildImageMaskDataUrl: function buildImageMaskDataUrl() {
-      return this.buildImageMaskCutoutDataUrl();
+      return this.buildAnnotatedImageDataUrl();
     },
 
     /** Resolve the visible image editor into one finite UI state. */
@@ -7915,19 +8026,25 @@ const app = createApp({
       }
       const submission = this.directImageSubmissionSource(record);
       const sources = submission ? submission.sources : [];
-      const prompt = String(this.imageEditorPrompt || "").trim();
-      const retryMaskUrl = this.directImageRetryMaskUrl(this.imageDirectTask);
+      let prompt = String(this.imageEditorPrompt || "").trim();
+      if (this.hasImageMaskStrokes() && prompt && prompt.indexOf("去除所有标记线") < 0) {
+        prompt = prompt + "\n\n" + ANNOTATED_IMAGE_EDIT_PROMPT;
+      }
+      const isRetry = this.isDirectImageTaskRetryable(this.imageDirectTask);
+      const retryMaskUrl = isRetry ? this.directImageRetryMaskUrl(this.imageDirectTask) : "";
       let maskUrl = retryMaskUrl;
+      let maskMode = retryMaskUrl ? (this.imageDirectTask.mask_mode || "annotated") : "";
       if (this.hasImageMaskStrokes()) {
         try {
           maskUrl = this.buildImageMaskDataUrl();
+          maskMode = "annotated";
         } catch (error) {
-          this.imageEditorError = "[DIRECT_IMAGE_MASK_BUILD_FAILED] " + String(error && error.message || "局部抠图生成失败，请重新打开图片后再试。");
+          this.imageEditorError = "[DIRECT_IMAGE_MASK_BUILD_FAILED] " + String(error && error.message || "标注合成失败，请重新打开图片后再试。");
           return;
         }
       }
-      if ((this.hasImageMaskStrokes() || this.imageDirectTask && this.imageDirectTask.mask_mode === "cutout") && !maskUrl) {
-        this.imageEditorError = "[DIRECT_IMAGE_MASK_MISSING] 局部抠图未保存，请重新涂抹后再重试。";
+      if (this.hasImageMaskStrokes() && !maskUrl) {
+        this.imageEditorError = "[DIRECT_IMAGE_MASK_MISSING] 标注图生成失败，请重新涂抹后再重试。";
         return;
       }
       if (!record || !prompt || !submission || sources.length !== 1 || this.imageEditorBusy) {
@@ -7957,7 +8074,7 @@ const app = createApp({
         detail_index: submission.detailIndex,
         reference_mode: submission.referenceMode,
         parent_task_id: submission.parentTaskId,
-        mask_mode: maskUrl ? "cutout" : "",
+        mask_mode: maskMode,
         mask_image_url: retryMaskUrl,
         prompt: prompt,
         size: this.imageEditSize,

@@ -2,7 +2,7 @@ const { TubaAsyncImageService, PROVIDER_TIMEOUT_MS } = require("./tuba-async-ima
 const crypto = require("crypto");
 const { reportImageFailure } = require("./image-failure.service");
 
-const DEFAULT_MASK_CUTOUT_PROMPT = "第一张输入图是完整原图，第二张输入图是用户画笔抠出的局部区域。请以完整原图作为上下文，只修改第二张图中非透明抠图对应的位置；透明区域不代表要补全，不要扩散到抠图外。保持边缘干净清晰，不要羽化。";
+const DEFAULT_MASK_CUTOUT_PROMPT = "原图上的荧光/标注/框选区域为目标修改位置，请按照用户要求在此区域进行修改/添加，生成后去除所有标记线，保持整张海报四角方正实心，不要边缘羽化或切角。";
 
 /** Create one provider error carrying its intended HTTP status code. */
 function createProviderError(message, statusCode, code) {
@@ -473,8 +473,8 @@ class ProviderService {
     const imageConfig = config || {};
     const defaultPrompt = requestMode === "edit" ? imageConfig.edit_prompt : imageConfig.fusion_prompt;
     const rawPrompt = String(source && source.prompt || defaultPrompt || "").trim();
-    if (source && source.mask_mode === "cutout") {
-      const cutoutPrompt = String(imageConfig.mask_cutout_prompt || DEFAULT_MASK_CUTOUT_PROMPT).trim();
+    if (source && (source.mask_mode === "cutout" || source.mask_mode === "annotated")) {
+      const cutoutPrompt = String(imageConfig.mask_annotated_prompt || imageConfig.mask_cutout_prompt || DEFAULT_MASK_CUTOUT_PROMPT).trim();
       return {
         prompt: rawPrompt && rawPrompt.indexOf(cutoutPrompt) < 0 ? rawPrompt + "\n\n" + cutoutPrompt : rawPrompt || cutoutPrompt,
         mask_prompt: false,
@@ -615,15 +615,14 @@ class ProviderService {
     const source = input && typeof input === "object" ? input : {};
     this.throwIfImageEditCancelled(source);
     const imageUrls = Array.isArray(source.image_urls) ? source.image_urls : [];
-    const isCutoutEdit = requestMode === "edit" && source.mask_mode === "cutout";
     const isMultiFusion = requestMode === "fusion"
       && (source.task_scope === "multi-fusion" || source.multi_fusion_task_id);
     const imageCountValid = requestMode === "edit"
-      ? isCutoutEdit ? imageUrls.length === 2 : imageUrls.length === 1
+      ? imageUrls.length === 1
       : isMultiFusion ? imageUrls.length >= 3 : imageUrls.length === 2;
     if (!imageCountValid) {
       const message = requestMode === "edit"
-        ? isCutoutEdit ? "局部抠图编辑必须提交完整原图和抠图。" : "单图编辑必须提交一张图片。"
+        ? "单图编辑必须提交一张图片。"
         : isMultiFusion ? "多图融合至少需要提交三张图片。" : "溶图必须提交两张图片。";
       throw createProviderError(message, 400);
     }

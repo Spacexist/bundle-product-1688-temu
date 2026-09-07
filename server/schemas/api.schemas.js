@@ -130,7 +130,7 @@ const directImageTaskSchema = z.object({
   detail_index: z.number().int().min(-1).optional(),
   reference_mode: z.enum(["original", "current"]).optional(),
   parent_task_id: z.string().regex(/^direct-[a-zA-Z0-9-]+$/).optional(),
-  mask_mode: z.enum(["cutout"]).optional(),
+  mask_mode: z.enum(["cutout", "annotated"]).optional(),
   mask_url: maskDataUrlSchema,
   prompt: z.string().min(1),
   size: z.string().optional()
@@ -244,7 +244,7 @@ const carouselPageUpdateSchema = z.object({
 const carouselGenerationSchema = z.object({
   page_indices: z.array(z.number().int().min(0).max(9)).min(1).max(10),
   reference_mode: z.enum(["original", "current"]).optional(),
-  mask_mode: z.enum(["cutout"]).optional(),
+  mask_mode: z.enum(["cutout", "annotated"]).optional(),
   mask_url: maskDataUrlSchema
 });
 

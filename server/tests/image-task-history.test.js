@@ -285,13 +285,12 @@ test("provider diagnostics include local image URLs without retaining base64", /
     diagnostics: { /** Retain sanitized provider events for assertions. */ write: function write(direction, label, payload) { events.push({ direction, label, payload }); } }
   });
 
-  await provider.editImages({ prompt: "cutout", image_urls: [originalUrl, cutoutUrl], mask_mode: "cutout" }, "edit", "request-cutout-log");
+  await provider.editImages({ prompt: "annotated", image_urls: [cutoutUrl], mask_mode: "annotated" }, "edit", "request-annotated-log");
   await provider.editImages({ prompt: "mask", image_urls: [originalUrl], mask_url: maskUrl }, "edit", "request-mask-log");
   await provider.editImages({ prompt: "data", image_urls: ["data:image/png;base64,YQ=="] }, "edit", "request-data-log");
 
   const outbound = events.filter(/** Keep only provider submit summaries. */ function isSubmitEvent(event) { return /Tuba async edit POST/.test(event.label); });
-  assert.equal(outbound[0].payload.images[0].source_url, originalUrl);
-  assert.equal(outbound[0].payload.images[1].source_url, cutoutUrl);
+  assert.equal(outbound[0].payload.images[0].source_url, cutoutUrl);
   assert.equal(outbound[1].payload.mask.source_url, maskUrl);
   assert.equal(outbound[2].payload.images[0].source_url, "data-url:image/png");
   assert.doesNotMatch(JSON.stringify(outbound), /YQ==/);
@@ -411,7 +410,7 @@ function pageFixture() {
       /** Group rendered rows in a fragment. */ createDocumentFragment: function fragment() { return new TestNode("fragment"); }
     },
     window: { /** Prevent page load from starting network timers. */ addEventListener: function listen() {} },
-    Date, AbortSignal,
+    Date, AbortSignal, URL,
     /** Any unexpected fetch is a failing test, never a real request. */ fetch: async function forbidden() { assert.fail("unexpected network access"); }
   });
   vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context, { filename: "logs.html" });

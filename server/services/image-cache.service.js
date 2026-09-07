@@ -317,13 +317,16 @@ class ImageCacheService {
       return String(source || "");
     }
     const image = this.readDataUrl(source);
-    if (!image || image.mimeType !== "image/png" || !image.buffer.length) {
-      throw imageError("局部抠图必须是有效 PNG。", "IMAGE_MASK_FORMAT_INVALID");
+    const isJpeg = image && (image.mimeType === "image/jpeg" || image.mimeType === "image/jpg");
+    const isPng = image && image.mimeType === "image/png";
+    if (!image || (!isPng && !isJpeg) || !image.buffer.length) {
+      throw imageError("标注图像必须是有效 PNG 或 JPEG。", "IMAGE_MASK_FORMAT_INVALID");
     }
+    const ext = isJpeg ? ".jpg" : ".png";
     const safeTaskId = this.safePathSegment(taskId, "mask");
     const hash = crypto.createHash("sha256").update(image.buffer).digest("hex");
     const relativeDirectory = path.join("transfer", "masks");
-    const fileName = safeTaskId + "-" + hash.slice(0, 20) + ".png";
+    const fileName = safeTaskId + "-" + hash.slice(0, 20) + ext;
     const filePath = path.join(this.imageDirectory, relativeDirectory, fileName);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     if (!fs.existsSync(filePath)) {

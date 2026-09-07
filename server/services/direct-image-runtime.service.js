@@ -192,13 +192,13 @@ class DirectImageRuntimeService {
       throw createDirectImageError("该商品已有单图编辑任务正在排队或生成，请等待完成后再提交。", 409, "DIRECT_IMAGE_TASK_ACTIVE");
     }
     const mode = source.mode === "edit" ? "edit" : "fusion";
-    const maskMode = source.mask_mode === "cutout" ? "cutout" : "";
+    const maskMode = (source.mask_mode === "cutout" || source.mask_mode === "annotated") ? source.mask_mode : "";
     const rawMaskUrl = String(source.mask_url || "");
-    const maskImageUrl = rawMaskUrl && maskMode === "cutout" && this.images && typeof this.images.cacheMaskImage === "function"
+    const maskImageUrl = rawMaskUrl && (maskMode === "cutout" || maskMode === "annotated") && this.images && typeof this.images.cacheMaskImage === "function"
       ? this.images.cacheMaskImage(rawMaskUrl, taskId)
       : rawMaskUrl;
-    if (maskMode === "cutout" && !maskImageUrl) {
-      throw createDirectImageError("局部抠图任务缺少已保存的 mask 图。", 400, "DIRECT_IMAGE_MASK_MISSING");
+    if ((maskMode === "cutout" || maskMode === "annotated") && !maskImageUrl) {
+      throw createDirectImageError("标注图任务缺少已保存的图像。", 400, "DIRECT_IMAGE_MASK_MISSING");
     }
     const useCurrentImage = this.taskScope !== "sku" && source.reference_mode === "current";
     const parentTask = useCurrentImage ? this.readTask(source.parent_task_id) : null;
@@ -237,8 +237,8 @@ class DirectImageRuntimeService {
       sku_index: Number(source.sku_index === undefined ? -1 : source.sku_index),
       prompt: String(source.prompt || ""),
       mask_mode: maskMode,
-      mask_url: maskMode === "cutout" ? "" : maskImageUrl,
-      mask_image_url: maskMode === "cutout" ? maskImageUrl : "",
+      mask_url: (maskMode === "cutout" || maskMode === "annotated") ? "" : maskImageUrl,
+      mask_image_url: (maskMode === "cutout" || maskMode === "annotated") ? maskImageUrl : "",
       size: String(source.size || "1024x1024"),
       status: "queued",
       provider_status: "",
@@ -280,10 +280,10 @@ class DirectImageRuntimeService {
     if (item.mode !== "edit") {
       return Array.isArray(item.source_image_urls) ? item.source_image_urls : [];
     }
-    const baseImageUrl = String(item.edit_image_url || item.source_image_urls && item.source_image_urls[0] || "");
-    if (item.mask_mode === "cutout" && item.mask_image_url) {
-      return [baseImageUrl, String(item.mask_image_url || "")];
+    if ((item.mask_mode === "cutout" || item.mask_mode === "annotated") && item.mask_image_url) {
+      return [String(item.mask_image_url || "")];
     }
+    const baseImageUrl = String(item.edit_image_url || item.source_image_urls && item.source_image_urls[0] || "");
     return [baseImageUrl];
   }
 
@@ -310,9 +310,9 @@ class DirectImageRuntimeService {
         sku_id: task.sku_id,
         sku_index: task.sku_index,
         image_urls: this.buildProviderImageUrls(task),
-        prompt: task.reference_mode === "current" && !task.mask_url && task.mask_mode !== "cutout" ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
+        prompt: task.reference_mode === "current" && !task.mask_url && task.mask_mode !== "cutout" && task.mask_mode !== "annotated" ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
         mask_mode: task.mask_mode,
-        mask_url: task.mask_mode === "cutout" ? "" : task.mask_url,
+        mask_url: (task.mask_mode === "cutout" || task.mask_mode === "annotated") ? "" : task.mask_url,
         mask_image_url: task.mask_image_url,
         size: task.size,
         cancel_signal: controller.signal,

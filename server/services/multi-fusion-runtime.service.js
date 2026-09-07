@@ -149,17 +149,17 @@ class MultiFusionRuntimeService extends carouselModule.CarouselRuntimeService {
     const retainedInputUrl = String(initialPage.image_url || "");
     const initialVersions = this.normalizePageImageVersions(initialPage);
     const replacementVersionIndex = useCurrentImage ? initialVersions.indexOf(retainedInputUrl) : -1;
-    const scopedMaskMode = useCurrentImage && maskMode === "cutout" ? "cutout" : "";
+    const scopedMaskMode = useCurrentImage && (maskMode === "cutout" || maskMode === "annotated") ? "annotated" : "";
     const scopedMaskUrl = useCurrentImage ? String(maskUrl || "").trim() : "";
     const maskImageUrl = scopedMaskMode && scopedMaskUrl && this.images && typeof this.images.cacheMaskImage === "function"
       ? this.images.cacheMaskImage(scopedMaskUrl, generationId)
       : scopedMaskUrl;
     if (scopedMaskMode && !maskImageUrl) {
-      throw createCarouselError("局部抠图任务缺少已保存的 mask 图。", 400, "MULTI_FUSION_MASK_MISSING");
+      throw createCarouselError("局部标注任务缺少已保存的标记图。", 400, "MULTI_FUSION_MASK_MISSING");
     }
     const currentPageImageUrl = useCurrentImage ? this.assertCurrentPageImageAvailable(initialPage) : "";
     const imageUrls = useCurrentImage
-      ? scopedMaskMode && maskImageUrl ? [currentPageImageUrl, maskImageUrl] : [currentPageImageUrl]
+      ? scopedMaskMode && maskImageUrl ? [maskImageUrl] : [currentPageImageUrl]
       : initialTask.source_image_urls.slice();
     const task = this.markPageGenerating(taskId, pageIndex, generationId);
     const page = task.pages[Number(pageIndex)];
