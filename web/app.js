@@ -404,8 +404,15 @@ const app = createApp({
         </section>
       </div>
       <header class="topbar" :class="{ 'is-collapsed': topbarCollapsed }">
+        <div class="topbar-left">
+          <button class="topbar-agent-trigger glass-action-button" :class="{ active: agentOpen }" type="button" title="设计 Agent (快捷键 C)" aria-label="设计 Agent (快捷键 C)" @click="agentOpen = !agentOpen">
+            <span class="agent-spark-icon">✦</span>
+            <span class="agent-trigger-text">设计 Agent</span>
+            <span class="agent-trigger-shortcut">C</span>
+            <span v-if="agentOpen" class="agent-active-dot"></span>
+          </button>
+        </div>
         <div class="toolbar">
-          <button class="mode-button topbar-agent-trigger glass-action-button" :class="{ active: agentOpen }" type="button" title="设计 Agent (快捷键 C)" @click="agentOpen = !agentOpen"><span>🤖</span><span>Agent</span></button>
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'smart' }" type="button" @click="changeWorkspaceMode('smart')">组货模式</button>
           <button class="mode-button glass-action-button" :class="{ active: workspaceMode === 'realtime' }" type="button" @click="changeWorkspaceMode('realtime')">工作台</button>
           <button class="mode-button glass-action-button" type="button" :disabled="!temuRecords.length || miaoshouExportBusy" @click="openMiaoshouExportDialog">{{ miaoshouExportBusy ? '妙手处理中…' : '导出妙手 ZIP' }}</button>
@@ -590,7 +597,7 @@ const app = createApp({
         </div>
         <div v-if="imageEditorOpen" class="image-editor-modal" @pointerdown.self="beginImageEditorBackdropPress" @pointerup="finishImageEditorBackdropPress" @pointercancel="cancelImageEditorBackdropPress">
           <section class="image-editor-dialog" role="dialog" aria-modal="true" aria-label="AI 图片编辑">
-            <header class="image-editor-header"><div><strong>{{ imageEditorTitle() }}</strong><span>{{ imageEditorSubtitle() }}</span></div><nav v-if="canUseDefaultPromptTemplatesDirect()" class="image-template-strip" aria-label="选择分镜模板" @wheel="scrollDefaultPromptTemplates"><button v-for="template in defaultPromptTemplates" :key="template.id" type="button" :class="{ active: template.id === defaultPromptGenerationTemplateId }" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" :title="template.name" @click="selectDefaultPromptGenerationTemplate(template.id)">{{ template.name }}</button><span v-if="defaultPromptDialogLoading">模板读取中…</span><span v-else-if="!defaultPromptConfigLoaded">模板不可用</span></nav><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-header-tool" type="button" :disabled="defaultPromptDialogBusy" @click="openDefaultPromptDialog">分镜模板</button><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
+            <header class="image-editor-header"><div><strong>{{ imageEditorTitle() }}</strong><span>{{ imageEditorSubtitle() }}</span></div><nav v-if="canUseDefaultPromptTemplatesDirect()" class="image-template-strip" aria-label="选择分镜模板" @wheel="scrollDefaultPromptTemplates"><button v-for="template in defaultPromptTemplates" :key="template.id" type="button" :class="{ active: template.id === defaultPromptGenerationTemplateId }" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" :title="template.name" @click="selectDefaultPromptGenerationTemplate(template.id)">{{ template.name }}</button><span v-if="defaultPromptDialogLoading">模板读取中…</span><span v-else-if="!defaultPromptConfigLoaded">模板不可用</span></nav><span v-if="imageCarouselSourceMismatch" class="image-editor-header-status">当前显示旧任务 · 所选图片已变化</span><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-header-tool" type="button" :disabled="defaultPromptDialogBusy" @click="openDefaultPromptDialog">分镜模板</button><button class="image-editor-header-tool agent-tool-button" :class="{ active: agentOpen }" type="button" title="调出设计 Agent (快捷键 C)" @click="agentOpen = !agentOpen">✦ Agent (C)</button><button type="button" aria-label="关闭 AI 图片编辑" @click="closeGalleryImageEditor">×</button></header>
             <div class="image-editor-stage" :class="{ 'has-two-sources': imageEditorState().sourceCount === 2, 'has-multi-sources': imageEditorState().sourceCount >= 3 && !imageEditorState().hasResult, 'has-result': imageEditorState().hasResult }">
               <span v-if="shouldShowImageEditorStageLabel()" class="image-editor-stage-label">{{ imageEditorStageLabel() }}</span>
               <div v-if="shouldShowImageEditorLoading()" class="image-editor-loading"><span></span><strong>{{ imageEditorLoadingTitle() }}</strong><small>{{ imageEditorLoadingHint() }}</small></div>
@@ -651,7 +658,7 @@ const app = createApp({
               <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button v-if="canShowAbandonDirectImageButton()" class="image-editor-cancel" type="button" @click="abandonDirectImageTask">放弃任务</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || (currentCarouselPage().status !== 'failed' && !currentCarouselPage().image_url) || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().status === 'failed' ? '重新生成失败分镜' : (currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片')" @click="currentCarouselPage().status === 'failed' ? retryCarouselPage(imageCarouselPageIndex) : regenerateCurrentCarouselPage()">{{ currentCarouselPage().status === 'failed' ? (isCarouselPageBusy(imageCarouselPageIndex) ? '重试中…' : '重试当前页') : (hasImageMaskStrokes() ? '修改涂抹区域' : '基于当前图重生') }}</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="isMultiFusionImageTask() && (canRegenerateCarouselPages() || canApplyCarouselReplacement(true))" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败结果，使用全部成功图片替换当前商品主图" @click="confirmCarouselReplacement(true)">替换当前全部主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '添加到末尾' : '确认替换' }}</button></footer>
+            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button v-if="canShowAbandonDirectImageButton()" class="image-editor-cancel" type="button" @click="abandonDirectImageTask">放弃任务</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-cancel" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" title="仅由 Kimi 生成分镜提示词供预审，不直接出图" @click="startCarouselPlan(true)">仅生成提示词</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" :class="canStartCarouselImagesDirect() ? 'image-editor-confirm' : 'image-editor-generate'" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || (currentCarouselPage().status !== 'failed' && !currentCarouselPage().image_url) || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().status === 'failed' ? '重新生成失败分镜' : (currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片')" @click="currentCarouselPage().status === 'failed' ? retryCarouselPage(imageCarouselPageIndex) : regenerateCurrentCarouselPage()">{{ currentCarouselPage().status === 'failed' ? (isCarouselPageBusy(imageCarouselPageIndex) ? '重试中…' : '重试当前页') : (hasImageMaskStrokes() ? '修改涂抹区域' : '基于当前图重生') }}</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="isMultiFusionImageTask() && (canRegenerateCarouselPages() || canApplyCarouselReplacement(true))" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败结果，使用全部成功图片替换当前商品主图" @click="confirmCarouselReplacement(true)">替换当前全部主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '添加到末尾' : '确认替换' }}</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -942,6 +949,7 @@ const app = createApp({
     window.addEventListener("drop", this.clearImageDragState);
     window.addEventListener("blur", this.clearImageDragState);
     window.addEventListener("scroll", this.handleWindowScroll, { passive: true });
+    window.addEventListener("keydown", this.handleGlobalAppKeyDown);
     document.addEventListener("click", this.closeBulkActionsMenu);
     this.topbarLastScrollY = Math.max(0, Number(window.scrollY) || 0);
     this.initializeCloudAuth();
@@ -968,6 +976,7 @@ const app = createApp({
     window.removeEventListener("drop", this.clearImageDragState);
     window.removeEventListener("blur", this.clearImageDragState);
     window.removeEventListener("scroll", this.handleWindowScroll);
+    window.removeEventListener("keydown", this.handleGlobalAppKeyDown);
     document.removeEventListener("click", this.closeBulkActionsMenu);
     if (this.workflowClipStatusTimer) {
       window.clearTimeout(this.workflowClipStatusTimer);
@@ -8040,7 +8049,7 @@ const app = createApp({
       return this.isDirectCutoutEditActive() ? "正在按涂抹抠图区域生成，完成后才会替换。" : "下方为上一次图片，完成后才会替换。";
     },
 
-    /** Return the submit button label for direct Edits or two-image prompt review. */
+    /** Return the submit button label for direct Edits or two-image generation modes. */
     imageEditorGenerateButtonLabel: function imageEditorGenerateButtonLabel() {
       const state = this.imageEditorState();
       if (state.sourceCount === 1 && this.imageDirectTaskCheckPending) {
@@ -8071,7 +8080,7 @@ const app = createApp({
         return "重试";
       }
       if (state.sourceCount === 2) {
-        return Boolean(this.imageEditorError) ? "重试生成提示词" : "仅生成提示词";
+        return Boolean(this.imageEditorError) ? "重试傻瓜生成" : "傻瓜生成模式";
       }
       if (state.sourceCount >= 3) {
         return Boolean(this.imageEditorError) ? "重试多图融合" : "开始多图融合";
@@ -8125,7 +8134,7 @@ const app = createApp({
           return;
         }
         if (state.phase === "carousel_failed_empty") {
-          this.restartCarouselPlan(true);
+          this.restartCarouselPlan(Boolean(this.imageCarouselReviewOnly));
           return;
         }
         if (state.phase === "carousel_results") {
@@ -8133,7 +8142,7 @@ const app = createApp({
           return;
         }
         if (state.phase === "fusion_source") {
-          this.startCarouselPlan(true);
+          this.startCarouselPlan(false);
         }
         return;
       }
@@ -9552,6 +9561,52 @@ const app = createApp({
       this.imageEditorTaskType = "";
     },
 
+    /** Handle global hotkeys such as Esc to close modal dialogs. */
+    handleGlobalAppKeyDown: function handleGlobalAppKeyDown(event) {
+      if (event.key === "Escape" || event.key === "Esc") {
+        if (this.imagePreviewUrl) {
+          event.preventDefault();
+          this.closeImagePreview();
+          return;
+        }
+        if (this.imageEditorOpen) {
+          event.preventDefault();
+          this.closeGalleryImageEditor();
+          return;
+        }
+        if (this.workflowPromptDialogOpen) {
+          event.preventDefault();
+          this.closeWorkflowPromptDialog();
+          return;
+        }
+        if (this.defaultPromptDialogOpen) {
+          event.preventDefault();
+          this.closeDefaultPromptDialog();
+          return;
+        }
+        if (this.apiSettingsOpen) {
+          event.preventDefault();
+          this.closeApiSettings();
+          return;
+        }
+        if (this.miaoshouExportDialogOpen) {
+          event.preventDefault();
+          this.closeMiaoshouExportDialog();
+          return;
+        }
+        if (this.skuImagePickerOpen) {
+          event.preventDefault();
+          this.closeSkuImagePicker();
+          return;
+        }
+        if (this.gallerySkuPickerOpen) {
+          event.preventDefault();
+          this.closeGallerySkuPicker();
+          return;
+        }
+      }
+    },
+
     /** Return the image currently shown for one platform render column. */
     currentImage: function currentImage(record, platform) {
       const images = this.galleryImages(record);
@@ -10763,4 +10818,5 @@ app.component("task-status-indicator", TaskStatusIndicator);
 if (window.AgentPanelComponent) {
   app.component("agent-panel", window.AgentPanelComponent);
 }
-app.mount("#app");
+window.__workbenchApp = app.mount("#app");
+

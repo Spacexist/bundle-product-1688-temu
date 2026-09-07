@@ -1,5 +1,64 @@
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
+
+/** Extract raw body text from a .docx binary buffer without external dependencies. */
+function extractDocxText(buffer) {
+  if (!Buffer.isBuffer(buffer)) {
+    return "";
+  }
+  let offset = 0;
+  while (offset < buffer.length - 4) {
+    if (buffer[offset] === 0x50 && buffer[offset + 1] === 0x4B && buffer[offset + 2] === 0x03 && buffer[offset + 3] === 0x04) {
+      const compression = buffer.readUInt16LE(offset + 8);
+      const compressedSize = buffer.readUInt32LE(offset + 18);
+      const filenameLength = buffer.readUInt16LE(offset + 26);
+      const extraLength = buffer.readUInt16LE(offset + 28);
+      const filename = buffer.toString("utf8", offset + 30, offset + 30 + filenameLength);
+      const dataOffset = offset + 30 + filenameLength + extraLength;
+      if (filename === "word/document.xml") {
+        try {
+          const compressedData = buffer.slice(dataOffset, dataOffset + compressedSize);
+          const xml = compression === 8 ? zlib.inflateRawSync(compressedData).toString("utf8") : compressedData.toString("utf8");
+          return xml
+            .replace(/<w:p[^>]*>/g, "\n")
+            .replace(/<w:tr[^>]*>/g, "\n")
+            .replace(/<w:tc[^>]*>/g, "\t")
+            .replace(/<[^>]+>/g, "")
+            .replace(/&lt;/g, "<")
+            .replace(/&gt;/g, ">")
+            .replace(/&amp;/g, "&")
+            .replace(/&quot;/g, "\"")
+            .replace(/&apos;/g, "'")
+            .replace(/\t+/g, " ")
+            .replace(/\n\s*\n/g, "\n")
+            .trim();
+        } catch (_) {
+          return "";
+        }
+      }
+      offset = dataOffset + compressedSize;
+    } else {
+      offset += 1;
+    }
+  }
+  return "";
+}
+
+/** Safely resolve one Kimi endpoint URL. */
+function resolveKimiEndpoint(baseUrl, endpointPath) {
+  const rawPath = String(endpointPath || "").trim();
+  if (/^https?:\/\//i.test(rawPath)) {
+    return rawPath;
+  }
+  const base = String(baseUrl || "https://api.moonshot.cn/v1").trim().replace(/\/+$/, "") + "/";
+  const pathPart = String(rawPath || "chat/completions").trim().replace(/^\/+/, "");
+  try {
+    return new URL(pathPart, base).toString();
+  } catch (_) {
+    return base + pathPart;
+  }
+}
 
 /** Return one filesystem-safe chat ID. */
 function sanitizeChatId(chatId) {
@@ -51,7 +110,16 @@ class AgentChatService {
     try {
       const raw = fs.readFileSync(indexPath, "utf8");
       const list = JSON.parse(raw);
-      return Array.isArray(list) ? list : [];
+      if (!Array.isArray(list)) return [];
+      const seen = new Set();
+      const deduped = [];
+      for (const item of list) {
+        if (item && item.id && !seen.has(item.id)) {
+          seen.add(item.id);
+          deduped.push(item);
+        }
+      }
+      return deduped;
     } catch (error) {
       return [];
     }
@@ -80,16 +148,6 @@ class AgentChatService {
       messages: []
     };
     this.saveChat(chat);
-
-    const indexList = this.listChats();
-    indexList.unshift({
-      id: chat.id,
-      title: chat.title,
-      created_at: chat.created_at,
-      updated_at: chat.updated_at,
-      message_count: 0
-    });
-    this.saveChatsIndex(indexList);
     return chat;
   }
 
@@ -110,16 +168,12 @@ class AgentChatService {
   /** Save one chat session to disk. */
   saveChat(chat) {
     if (!chat || !chat.id) {
-      return;
+      throw new Error("缺少有效的会话对象。");
     }
     this.ensureDirectories();
     chat.updated_at = new Date().toISOString();
     const filePath = this.getChatFilePath(chat.id);
-    try {
-      fs.writeFileSync(filePath, JSON.stringify(chat, null, 2), "utf8");
-    } catch (error) {
-      console.warn("[agent-chat] 保存会话失败：", error.message);
-    }
+    fs.writeFileSync(filePath, JSON.stringify(chat, null, 2), "utf8");
 
     const indexList = this.listChats();
     const target = indexList.find(function match(item) { return item.id === chat.id; });
@@ -127,19 +181,42 @@ class AgentChatService {
       target.title = chat.title;
       target.updated_at = chat.updated_at;
       target.message_count = Array.isArray(chat.messages) ? chat.messages.length : 0;
-      this.saveChatsIndex(indexList);
+    } else {
+      indexList.unshift({
+        id: chat.id,
+        title: chat.title,
+        created_at: chat.created_at || chat.updated_at,
+        updated_at: chat.updated_at,
+        message_count: Array.isArray(chat.messages) ? chat.messages.length : 0
+      });
     }
+    this.saveChatsIndex(indexList);
   }
 
-  /** Delete one chat session. */
+  /** Delete one chat session and clean up its stored attachments. */
   deleteChat(chatId) {
-    const filePath = this.getChatFilePath(chatId);
-    try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
+    const chat = this.getChat(chatId);
+    if (chat && Array.isArray(chat.messages)) {
+      for (const msg of chat.messages) {
+        if (Array.isArray(msg.attachments)) {
+          for (const att of msg.attachments) {
+            const fileName = att.stored_filename || (att.file_path ? path.basename(att.file_path) : "");
+            if (fileName) {
+              const fullPath = path.join(this.attachmentsDirectory, fileName);
+              if (fs.existsSync(fullPath)) {
+                try {
+                  fs.unlinkSync(fullPath);
+                } catch (_) {}
+              }
+            }
+          }
+        }
       }
-    } catch (error) {
-      console.warn("[agent-chat] 删除会话文件失败：", error.message);
+    }
+
+    const filePath = this.getChatFilePath(chatId);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
     }
     const indexList = this.listChats().filter(function keep(item) {
       return item.id !== chatId;
@@ -148,38 +225,71 @@ class AgentChatService {
     return true;
   }
 
-  /** Save an uploaded attachment to disk. */
-  saveAttachment(filename, buffer, mimeType) {
+  /** Save an uploaded attachment to disk, extracting document text when applicable. */
+  saveAttachment(chatId, filename, buffer, mimeType) {
+    const chat = this.getChat(chatId);
+    if (!chat) {
+      const error = new Error("会话不存在。");
+      error.statusCode = 404;
+      error.code = "CHAT_NOT_FOUND";
+      throw error;
+    }
     this.ensureDirectories();
-    const ext = path.extname(filename || "") || ".bin";
+    const ext = (path.extname(filename || "") || ".bin").toLowerCase();
     const attachmentId = "att_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
     const targetName = attachmentId + ext;
     const targetPath = path.join(this.attachmentsDirectory, targetName);
     fs.writeFileSync(targetPath, buffer);
+
+    let extractedText = "";
+    let isImage = false;
+
+    if (ext === ".docx") {
+      extractedText = extractDocxText(buffer);
+    } else if (ext === ".txt" || ext === ".md" || ext === ".json" || ext === ".csv") {
+      try {
+        extractedText = buffer.toString("utf8");
+      } catch (_) {
+        extractedText = "";
+      }
+    } else if (ext === ".png" || ext === ".jpg" || ext === ".jpeg" || ext === ".webp") {
+      isImage = true;
+    }
+
+    const maxTextLen = 8000;
+    const boundedText = extractedText.length > maxTextLen ? extractedText.slice(0, maxTextLen) : extractedText;
+
     return {
       id: attachmentId,
+      chat_id: chat.id,
       filename: filename || targetName,
+      stored_filename: targetName,
       file_path: targetPath,
       url: "/api/v1/agent/attachments/" + encodeURIComponent(targetName),
       mime_type: mimeType || "application/octet-stream",
       size: buffer.length,
+      is_image: isImage,
+      extracted_text: boundedText,
       created_at: new Date().toISOString()
     };
   }
 
   /** Stream response from Kimi 2.6 using SSE directly into HTTP response. */
   async streamKimiChat(chatId, userMessage, res, requestId) {
-    let chat = this.getChat(chatId);
+    const chat = this.getChat(chatId);
     if (!chat) {
-      chat = this.createChat("新对话");
+      const error = new Error("指定会话不存在 [404]");
+      error.statusCode = 404;
+      error.code = "CHAT_NOT_FOUND";
+      throw error;
     }
 
     const config = this.readConfig() || {};
     const kimi = config.kimi && typeof config.kimi === "object" ? config.kimi : {};
-    const baseUrl = String(kimi.baseurl || "https://api.moonshot.cn/v1").replace(/\/$/, "");
-    const endpoint = baseUrl + (kimi.endpoint || "/chat/completions");
+    const endpoint = resolveKimiEndpoint(kimi.baseurl, kimi.endpoint);
     const apiKey = String(kimi.apikey || "");
     const model = String(kimi.model || "kimi-k2.6");
+    const timeoutMs = Math.max(10000, Math.min(Number(kimi.timeout_ms || 60000), 180000));
 
     if (!apiKey) {
       throw new Error("server/config.json 未配置 Kimi API Key。");
@@ -199,19 +309,43 @@ class AgentChatService {
     }
     this.saveChat(chat);
 
-    const systemPrompt = "你是一个专业的跨境电商图片设计与分镜编排 Agent。你可以读取用户提供的文档、图片说明和当前对话历史，帮助用户分析商品卖点、提炼视觉概念、生成可落地的电商生图提示词。回答清晰、结构分明、专业可执行，默认使用中文。";
+    const systemPrompt = "你是一个专业的跨境电商图片设计与分镜编排 Agent。你可以读取用户提供的商品文档正文、参考图片和对话历史，帮助用户分析商品卖点、提炼视觉概念、生成可落地的电商生图提示词。回答清晰、结构分明、专业可执行，默认使用中文。";
     const messages = [{ role: "system", content: systemPrompt }];
 
-    for (const msg of chat.messages) {
+    const historyLimit = 20;
+    const historyMessages = (chat.messages || []).slice(-historyLimit);
+
+    for (const msg of historyMessages) {
       if (msg.role === "user") {
-        let textContent = msg.content || "";
+        const parts = [];
         if (Array.isArray(msg.attachments) && msg.attachments.length) {
-          const fileInfo = msg.attachments.map(function mapAtt(att) {
-            return "[附件：" + (att.filename || "文件") + "]";
-          }).join(" ");
-          textContent = (fileInfo + "\n" + textContent).trim();
+          for (const att of msg.attachments) {
+            if (att.extracted_text) {
+              parts.push({
+                type: "text",
+                text: "[参考文档：" + (att.filename || "文档") + "]\n" + att.extracted_text.slice(0, 8000) + "\n[文档结束]"
+              });
+            }
+            if (att.is_image && att.file_path && fs.existsSync(att.file_path)) {
+              try {
+                const imgBuf = fs.readFileSync(att.file_path);
+                const mime = att.mime_type || "image/jpeg";
+                parts.push({
+                  type: "image_url",
+                  image_url: { url: "data:" + mime + ";base64," + imgBuf.toString("base64") }
+                });
+              } catch (_) {}
+            }
+          }
         }
-        messages.push({ role: "user", content: textContent });
+        if (msg.content) {
+          parts.push({ type: "text", text: msg.content });
+        }
+        if (parts.length === 1 && parts[0].type === "text") {
+          messages.push({ role: "user", content: parts[0].text });
+        } else if (parts.length > 0) {
+          messages.push({ role: "user", content: parts });
+        }
       } else if (msg.role === "assistant") {
         messages.push({ role: "assistant", content: msg.content || "" });
       }
@@ -220,7 +354,7 @@ class AgentChatService {
     const requestPayload = {
       model: model,
       messages: messages,
-      temperature: 0.6,
+      temperature: typeof kimi.temperature === "number" ? kimi.temperature : 1,
       stream: true
     };
 
@@ -252,7 +386,14 @@ class AgentChatService {
     const abortController = new AbortController();
     this.activeStreams[chat.id] = abortController;
 
+    let timeoutFired = false;
+    const timeoutHandle = setTimeout(function handleKimiTimeout() {
+      timeoutFired = true;
+      abortController.abort();
+    }, timeoutMs);
+
     res.on("close", () => {
+      clearTimeout(timeoutHandle);
       abortController.abort();
       delete this.activeStreams[chat.id];
     });
@@ -308,21 +449,24 @@ class AgentChatService {
         }
       }
 
+      clearTimeout(timeoutHandle);
       assistantMsgObj.status = "completed";
       sendEvent("message_done", {
         content: assistantMsgObj.content,
         status: "completed"
       });
     } catch (error) {
+      clearTimeout(timeoutHandle);
       const isAborted = error.name === "AbortError" || abortController.signal.aborted;
-      assistantMsgObj.status = isAborted ? "aborted" : "failed";
-      assistantMsgObj.error = error.message;
+      assistantMsgObj.status = timeoutFired ? "timeout" : isAborted ? "aborted" : "failed";
+      assistantMsgObj.error = timeoutFired ? "Kimi 请求超时，请检查网络或重试。" : isAborted ? "流式已中断" : error.message;
 
       sendEvent("error", {
-        message: isAborted ? "流式已中断" : error.message,
+        message: assistantMsgObj.error,
         status: assistantMsgObj.status
       });
     } finally {
+      clearTimeout(timeoutHandle);
       delete this.activeStreams[chat.id];
       chat.messages.push(assistantMsgObj);
       this.saveChat(chat);
@@ -332,5 +476,6 @@ class AgentChatService {
 }
 
 module.exports = {
-  AgentChatService: AgentChatService
+  AgentChatService: AgentChatService,
+  resolveKimiEndpoint: resolveKimiEndpoint
 };

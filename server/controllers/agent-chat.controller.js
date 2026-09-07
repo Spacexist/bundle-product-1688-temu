@@ -64,7 +64,14 @@ class AgentChatController {
     try {
       const filename = req.headers["x-filename"] ? decodeURIComponent(req.headers["x-filename"]) : "upload.bin";
       const mimeType = req.headers["content-type"] || "application/octet-stream";
-      const buffer = req.body;
+      let buffer = req.body;
+      if (!Buffer.isBuffer(buffer)) {
+        if (typeof buffer === "object" && buffer !== null) {
+          buffer = Buffer.from(JSON.stringify(buffer));
+        } else if (typeof buffer === "string") {
+          buffer = Buffer.from(buffer, "utf8");
+        }
+      }
 
       if (!Buffer.isBuffer(buffer) || !buffer.length) {
         return res.status(400).json({
@@ -75,9 +82,18 @@ class AgentChatController {
         });
       }
 
-      const attachment = this.agentService.saveAttachment(filename, buffer, mimeType);
+      const chatId = req.params.chatId;
+      const attachment = this.agentService.saveAttachment(chatId, filename, buffer, mimeType);
       res.status(201).json({ ok: true, data: { attachment: attachment }, error: null, meta: { request_id: req.requestId } });
     } catch (error) {
+      if (error && error.statusCode === 404) {
+        return res.status(404).json({
+          ok: false,
+          data: null,
+          error: { code: "CHAT_NOT_FOUND", message: "会话不存在，无法上传附件。" },
+          meta: { request_id: req.requestId }
+        });
+      }
       next(error);
     }
   }
