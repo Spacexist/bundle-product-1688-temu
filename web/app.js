@@ -648,7 +648,7 @@ const app = createApp({
               <label class="image-editor-prompt"><span>提示词</span><textarea v-model="currentCarouselPage().prompt" :readonly="currentCarouselPage().status === 'generating' || isCarouselPageBusy(imageCarouselPageIndex)" rows="4" placeholder="完整生图提示词（中文）"></textarea></label>
             </div>
             <div v-if="imageEditorError" class="image-editor-error">{{ imageEditorError }}</div>
-            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !currentCarouselPage().image_url || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片'" @click="regenerateCurrentCarouselPage">{{ hasImageMaskStrokes() ? '修改涂抹区域' : '基于当前图重生' }}</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="isMultiFusionImageTask() && (canRegenerateCarouselPages() || canApplyCarouselReplacement(true))" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败结果，使用全部成功图片替换当前商品主图" @click="confirmCarouselReplacement(true)">替换当前全部主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '确认' : '确认替换' }}</button></footer>
+            <footer class="image-editor-actions" :class="{ 'is-carousel-results': canRegenerateCarouselPages() }"><div v-if="canEditCarouselPages()" class="carousel-page-actions"><button type="button" @click="removeCarouselPage(imageCarouselPageIndex)">删除当前分镜</button><button v-if="imageCarouselTask.pages.length < 10" type="button" @click="addCarouselPage">+ 添加分镜</button></div><button v-if="imageCarouselSourceMismatch" class="image-editor-cancel" type="button" @click="replaceExistingCarouselTask">放弃旧任务并使用当前图片</button><button v-else-if="shouldShowAbandonCarouselButton()" class="image-editor-cancel" type="button" @click="abandonCarouselTask">{{ pagedImageTaskLabel(imageCarouselTask) === '多图融合' ? '放弃多图任务' : '放弃轮播任务' }}</button><button v-if="canShowAbandonDirectImageButton()" class="image-editor-cancel" type="button" @click="abandonDirectImageTask">放弃任务</button><button v-if="shouldShowPrimaryImageEditorGenerateButton()" class="image-editor-generate" type="button" :disabled="isPrimaryImageEditorGenerateDisabled()" @click="submitGalleryImageEdit">{{ imageEditorGenerateButtonLabel() }}</button><button v-if="canUseDefaultPromptTemplatesDirect()" class="image-editor-main-apply" type="button" :disabled="imageEditorBusy || defaultPromptDialogLoading || defaultPromptDialogBusy || !defaultPromptConfigLoaded" @click="generateDefaultPromptPages">{{ defaultPromptButtonLabel() }}</button><button v-if="canStartCarouselImagesDirect()" class="image-editor-generate" type="button" :disabled="imageEditorBusy || !imageEditorPrompt.trim()" @click="startCarouselPlan(false)">开始生成图片</button><button v-if="canRegenerateCarouselPages()" class="image-editor-generate" type="button" :disabled="isCarouselPageBusy(imageCarouselPageIndex) || currentCarouselPage().status === 'generating' || !currentCarouselPage().image_url || !String(currentCarouselPage().prompt || '').trim()" :title="currentCarouselPage().image_url ? '使用当前展示图片进行单图编辑' : '当前分镜还没有成功图片'" @click="regenerateCurrentCarouselPage">{{ hasImageMaskStrokes() ? '修改涂抹区域' : '基于当前图重生' }}</button><button v-if="canRegenerateCarouselPages() || canApplyCarouselReplacement(true)" v-show="!isMultiFusionImageTask()" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败分镜，使用全部成功图片替换所有主图" @click="confirmCarouselReplacement(true)">替换所有主图</button><button v-if="isMultiFusionImageTask() && (canRegenerateCarouselPages() || canApplyCarouselReplacement(true))" class="image-editor-main-apply" type="button" :disabled="!canApplyCarouselReplacement(true)" title="跳过失败结果，使用全部成功图片替换当前商品主图" @click="confirmCarouselReplacement(true)">替换当前全部主图</button><button v-if="canShowImageEditorConfirm()" class="image-editor-confirm" type="button" :disabled="imageEditorBusy || (imageCarouselTask ? !canApplyCarouselReplacement(false) : !imageEditorGeneratedUrl)" :title="imageCarouselTask ? '保留原图，将选中的生成图追加到末尾' : '替换当前编辑的原图'" @click="confirmGalleryImageEdit">{{ imageCarouselTask ? '确认' : '确认替换' }}</button></footer>
           </section>
         </div>
         <div v-if="imagePreviewUrl" class="image-preview-modal" @click="closeImagePreview">
@@ -3195,10 +3195,6 @@ const app = createApp({
         return;
       }
       if (this.workflowBatchPromptPending) {
-        const total = this.temuRecords.length;
-        if (!window.confirm("确认使用当前提示词为左侧全部 " + total + " 个 Temu 商品重新执行 CLIP 组货？")) {
-          return;
-        }
         this.workflowPromptDialogOpen = false;
         this.workflowPromptDialogError = "";
         this.workflowBatchPromptPending = false;
@@ -6501,6 +6497,20 @@ const app = createApp({
       });
     },
 
+    /** Explicitly abandon the visible direct Edits task and restore the editable source state. */
+    abandonDirectImageTask: function abandonDirectImageTask() {
+      if (!this.canShowAbandonDirectImageButton()) {
+        return;
+      }
+      const cleanupMode = this.isDirectImageTaskRunning(this.imageDirectTask) ? "none" : "all";
+      this.deleteDirectImageTask(cleanupMode);
+      this.imageEditorBusy = false;
+      this.imageEditorGeneratedUrl = "";
+      this.imageEditorError = "";
+      this.imageDirectTaskCheckPending = false;
+      this.setStatus("已放弃当前单图编辑任务。", "normal");
+    },
+
     /** Return at most two distinct versions retained by the visible direct-image task. */
     directImageVersions: function directImageVersions() {
       const task = this.imageDirectTask && !this.imageCarouselTask ? this.imageDirectTask : null;
@@ -7595,6 +7605,12 @@ const app = createApp({
       return this.imageEditorState().hasCarouselTask;
     },
 
+    /** Return whether the direct Edits task can be explicitly abandoned. */
+    canShowAbandonDirectImageButton: function canShowAbandonDirectImageButton() {
+      return Boolean(!this.imageEditorState().hasCarouselTask
+        && this.imageDirectTask);
+    },
+
     /** Return whether the primary image generation button should be visible. */
     shouldShowPrimaryImageEditorGenerateButton: function shouldShowPrimaryImageEditorGenerateButton() {
       const state = this.imageEditorState();
@@ -7918,6 +7934,7 @@ const app = createApp({
         view.applyDirectImageTask(failedTask);
       });
       this.pollDirectImageTask(taskId);
+      this.imageEditorError = "";
     },
 
     /** Return whether two source arrays identify the same unordered image set. */
