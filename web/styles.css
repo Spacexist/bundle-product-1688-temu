@@ -431,8 +431,8 @@ button { cursor: pointer; }
 .image-mask-clear { font-size: 14px; }
 @keyframes image-editor-spin { to { transform: rotate(360deg); } }
 .image-editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 12px; }
-.image-editor-actions > .image-editor-cancel { margin-right: auto; }
-.image-editor-actions.is-carousel-results > .image-editor-generate { margin-right: auto; }
+.image-editor-actions > .image-editor-generate:not(.image-editor-actions > .image-editor-generate:last-child) { margin-right: auto; }
+.image-editor-actions:not(:has(.image-editor-generate)) > .image-editor-cancel { margin-right: auto; }
 .image-editor-actions button { min-height: 32px; padding: 6px 11px; border-radius: 9px; box-shadow: 0 5px 14px rgba(64, 74, 92, .08), inset 0 1px 0 rgba(255, 255, 255, .88); backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%); cursor: pointer; font-size: 12px; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease, transform .16s ease; }
 .image-editor-actions button:hover:not(:disabled) { box-shadow: 0 7px 17px rgba(64, 74, 92, .12), inset 0 1px 0 #fff; transform: translateY(-1px); }
 .image-editor-actions button:disabled { cursor: wait; opacity: .55; }
