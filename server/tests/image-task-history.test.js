@@ -211,12 +211,13 @@ test("all edit entry points retain source associations and download progress", /
 
 test("provider mask prompt helper centralizes every masked edit prompt", /** Lock the mask prompt policy to one provider-layer function. */ function () {
   const provider = new ProviderService({ readConfig: config, images: {}, imageTaskQueue: {} });
-  const imageConfig = { edit_prompt: "default edit", fusion_prompt: "default fusion", mask_prompt: "只改遮罩透明区域" };
-  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑" }, "edit", ""), { prompt: "普通编辑", mask_prompt: false });
-  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑" }, "edit", "data:image/png;base64,YQ=="), { prompt: "普通编辑\n\n只改遮罩透明区域", mask_prompt: true });
-  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑\n\n只改遮罩透明区域" }, "edit", "data:image/png;base64,YQ=="), { prompt: "普通编辑\n\n只改遮罩透明区域", mask_prompt: true });
-  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "" }, "edit", "data:image/png;base64,YQ=="), { prompt: "default edit\n\n只改遮罩透明区域", mask_prompt: true });
-  assert.deepEqual(provider.buildImageEditPrompt({ mask_prompt: "只改遮罩透明区域" }, { prompt: "" }, "edit", "data:image/png;base64,YQ=="), { prompt: "只改遮罩透明区域", mask_prompt: true });
+  const imageConfig = { edit_prompt: "default edit", fusion_prompt: "default fusion", mask_prompt: "只改遮罩透明区域", mask_cutout_prompt: "只围绕非透明抠图区域修改" };
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑" }, "edit", ""), { prompt: "普通编辑", mask_prompt: false, mask_cutout_prompt: false });
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑" }, "edit", "data:image/png;base64,YQ=="), { prompt: "普通编辑\n\n只改遮罩透明区域", mask_prompt: true, mask_cutout_prompt: false });
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑\n\n只改遮罩透明区域" }, "edit", "data:image/png;base64,YQ=="), { prompt: "普通编辑\n\n只改遮罩透明区域", mask_prompt: true, mask_cutout_prompt: false });
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "" }, "edit", "data:image/png;base64,YQ=="), { prompt: "default edit\n\n只改遮罩透明区域", mask_prompt: true, mask_cutout_prompt: false });
+  assert.deepEqual(provider.buildImageEditPrompt({ mask_prompt: "只改遮罩透明区域" }, { prompt: "" }, "edit", "data:image/png;base64,YQ=="), { prompt: "只改遮罩透明区域", mask_prompt: true, mask_cutout_prompt: false });
+  assert.deepEqual(provider.buildImageEditPrompt(imageConfig, { prompt: "普通编辑", mask_mode: "cutout" }, "edit", ""), { prompt: "普通编辑\n\n只围绕非透明抠图区域修改", mask_prompt: false, mask_cutout_prompt: true });
   assert.throws(function missingMaskPrompt() {
     provider.buildImageEditPrompt({ edit_prompt: "default edit" }, { prompt: "普通编辑" }, "edit", "data:image/png;base64,YQ==");
   }, { code: "IMAGE_MASK_PROMPT_MISSING" });

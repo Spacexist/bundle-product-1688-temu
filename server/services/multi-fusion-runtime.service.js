@@ -138,7 +138,7 @@ class MultiFusionRuntimeService extends carouselModule.CarouselRuntimeService {
   }
 
   /** Generate one multi-fusion result page from all selected source images. */
-  async generatePage(taskId, pageIndex, requestId, referenceMode, maskUrl) {
+  async generatePage(taskId, pageIndex, requestId, referenceMode, maskUrl, maskMode) {
     const generationId = "multi-fusion-page-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
     const initialTask = this.readTask(taskId);
     const initialPage = initialTask && initialTask.pages[Number(pageIndex)];
@@ -149,9 +149,22 @@ class MultiFusionRuntimeService extends carouselModule.CarouselRuntimeService {
     const retainedInputUrl = String(initialPage.image_url || "");
     const initialVersions = this.normalizePageImageVersions(initialPage);
     const replacementVersionIndex = useCurrentImage ? initialVersions.indexOf(retainedInputUrl) : -1;
-    const imageUrls = useCurrentImage ? [this.assertCurrentPageImageAvailable(initialPage)] : initialTask.source_image_urls.slice();
+    const scopedMaskMode = useCurrentImage && maskMode === "cutout" ? "cutout" : "";
+    const scopedMaskUrl = useCurrentImage ? String(maskUrl || "").trim() : "";
+    const maskImageUrl = scopedMaskMode && scopedMaskUrl && this.images && typeof this.images.cacheMaskImage === "function"
+      ? this.images.cacheMaskImage(scopedMaskUrl, generationId)
+      : scopedMaskUrl;
+    if (scopedMaskMode && !maskImageUrl) {
+      throw createCarouselError("局部抠图任务缺少已保存的 mask 图。", 400, "MULTI_FUSION_MASK_MISSING");
+    }
+    const imageUrls = useCurrentImage
+      ? [scopedMaskMode && maskImageUrl ? maskImageUrl : this.assertCurrentPageImageAvailable(initialPage)]
+      : initialTask.source_image_urls.slice();
     const task = this.markPageGenerating(taskId, pageIndex, generationId);
     const page = task.pages[Number(pageIndex)];
+    page.mask_mode = scopedMaskMode;
+    page.mask_image_url = scopedMaskMode ? maskImageUrl : "";
+    this.writeTask(task);
     const pageRequestId = String(requestId || task.id) + "-p" + Number(pageIndex) + "-" + generationId;
     const controller = new AbortController();
     const controllerKey = this.getGenerationControllerKey(task.id, pageIndex, generationId);
@@ -166,8 +179,10 @@ class MultiFusionRuntimeService extends carouselModule.CarouselRuntimeService {
         multi_fusion_page_index: Number(pageIndex),
         generation_id: generationId,
         image_urls: imageUrls,
-        prompt: useCurrentImage ? this.buildCurrentImageEditPrompt(task, page, maskUrl) : String(page.prompt || task.requirement || ""),
-        mask_url: useCurrentImage ? String(maskUrl || "").trim() : "",
+        prompt: useCurrentImage ? this.buildCurrentImageEditPrompt(task, page, scopedMaskUrl, scopedMaskMode) : String(page.prompt || task.requirement || ""),
+        mask_mode: scopedMaskMode,
+        mask_url: scopedMaskMode ? "" : scopedMaskUrl,
+        mask_image_url: scopedMaskMode ? maskImageUrl : "",
         size: normalizedSize,
         task_scope: "multi-fusion",
         cancel_signal: controller.signal,

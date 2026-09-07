@@ -208,7 +208,7 @@ class WorkflowController {
   /** Start selected carousel pages in the background and return without waiting for Fusion completion. */
   generateCarouselTask(request, response, next) {
     try {
-      const task = this.carousel.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode, request.validatedBody.mask_url);
+      const task = this.carousel.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode, request.validatedBody.mask_url, request.validatedBody.mask_mode);
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);
@@ -306,7 +306,7 @@ class WorkflowController {
   /** Start selected multi-fusion result pages in the background and return immediately. */
   generateMultiFusionTask(request, response, next) {
     try {
-      const task = this.multiFusion.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode, request.validatedBody.mask_url);
+      const task = this.multiFusion.startGeneration(request.params.taskId, request.validatedBody.page_indices, request.requestId, request.validatedBody.reference_mode, request.validatedBody.mask_url, request.validatedBody.mask_mode);
       response.status(202).json({ ok: true, data: { task: task }, error: null, meta: { request_id: request.requestId } });
     } catch (error) {
       next(error);

@@ -9,6 +9,7 @@ const schemaModule = require("../schemas/api.schemas");
 const ORIGINAL = "/api/v1/cache/image/product/original.png";
 const RESULT_ONE = "/api/v1/cache/image/transfer/generated/result-one.png";
 const RESULT_TWO = "/api/v1/cache/image/transfer/generated/result-two.png";
+const MASK_CUTOUT = "/api/v1/cache/image/transfer/masks/direct-mask.png";
 
 /** Create and safely remove one isolated runtime directory. */
 function tempDirectory(t) {
@@ -33,6 +34,8 @@ function createRuntime(t, results) {
       isLocalImageUrl: function isLocalImageUrl(url) { return String(url || "").startsWith("/api/v1/cache/image/"); },
       /** Report every fixture image as fully written. */
       localUrlExists: function localUrlExists(url) { return Boolean(url); },
+      /** Persist brush cutouts as local reusable mask images. */
+      cacheMaskImage: function cacheMaskImage() { return MASK_CUTOUT; },
       /** Record generated-image cleanup without touching disk. */
       deleteUnreferencedGeneratedImage: function deleteImage(url) { deleted.push(url); return true; }
     },
@@ -108,6 +111,21 @@ test("masked current-image Edits keeps the prompt clean for provider mask prompt
   assert.equal(fixture.calls.length, 2);
   assert.equal(fixture.calls[1].input.prompt, "只改涂抹区域");
   assert.equal(fixture.calls[1].input.mask_url, "data:image/png;base64,Yg==");
+});
+
+test("cutout mask Edits saves and submits the brush cutout as the only image", /** Verify cutout mode cannot degrade into a prompt-only edit. */ async function (t) {
+  const fixture = createRuntime(t, [RESULT_ONE]);
+  fixture.runtime.createTask(Object.assign({}, originalInput("direct-cutout"), {
+    mask_mode: "cutout",
+    mask_url: "data:image/png;base64,YQ=="
+  }));
+  const task = await fixture.runtime.startTask("direct-cutout", "request-cutout");
+
+  assert.equal(task.mask_mode, "cutout");
+  assert.equal(task.mask_image_url, MASK_CUTOUT);
+  assert.deepEqual(fixture.calls[0].input.image_urls, [MASK_CUTOUT]);
+  assert.equal(fixture.calls[0].input.mask_url, "");
+  assert.equal(fixture.calls[0].input.mask_mode, "cutout");
 });
 
 test("current-image Edits replaces the selected slot and creates a new provider execution", /** Verify current-image lineage, provider input and two-slot replacement. */ async function (t) {

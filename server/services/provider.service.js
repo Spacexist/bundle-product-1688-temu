@@ -2,6 +2,8 @@ const { TubaAsyncImageService, PROVIDER_TIMEOUT_MS } = require("./tuba-async-ima
 const crypto = require("crypto");
 const { reportImageFailure } = require("./image-failure.service");
 
+const DEFAULT_MASK_CUTOUT_PROMPT = "输入图片是用户画笔抠出的局部商品区域，透明区域已经被去掉。请只围绕非透明抠图区域执行用户要求，保持边缘干净清晰，不要羽化、扩散或改动抠图外内容。";
+
 /** Create one provider error carrying its intended HTTP status code. */
 function createProviderError(message, statusCode, code) {
   const error = new Error(String(message || "上游服务请求失败。"));
@@ -453,14 +455,22 @@ class ProviderService {
     return config.image && typeof config.image === "object" ? config.image : config;
   }
 
-  /** Build the final provider prompt and enforce the configured mask guard for every masked edit. */
+  /** Build the final provider prompt and enforce the configured guard for every local edit scope. */
   buildImageEditPrompt(config, source, requestMode, maskUrl) {
     const imageConfig = config || {};
     const defaultPrompt = requestMode === "edit" ? imageConfig.edit_prompt : imageConfig.fusion_prompt;
     const rawPrompt = String(source && source.prompt || defaultPrompt || "").trim();
+    if (source && source.mask_mode === "cutout") {
+      const cutoutPrompt = String(imageConfig.mask_cutout_prompt || DEFAULT_MASK_CUTOUT_PROMPT).trim();
+      return {
+        prompt: rawPrompt && rawPrompt.indexOf(cutoutPrompt) < 0 ? rawPrompt + "\n\n" + cutoutPrompt : rawPrompt || cutoutPrompt,
+        mask_prompt: false,
+        mask_cutout_prompt: true
+      };
+    }
     const maskPrompt = String(imageConfig.mask_prompt || "").trim();
     if (!maskUrl) {
-      return { prompt: rawPrompt, mask_prompt: false };
+      return { prompt: rawPrompt, mask_prompt: false, mask_cutout_prompt: false };
     }
     if (!maskPrompt) {
       throw createProviderError("server/config.json 缺少 mask_prompt，不能提交局部重绘。", 500, "IMAGE_MASK_PROMPT_MISSING");
@@ -468,7 +478,7 @@ class ProviderService {
     const prompt = rawPrompt && rawPrompt.indexOf(maskPrompt) < 0
       ? rawPrompt + "\n\n" + maskPrompt
       : rawPrompt || maskPrompt;
-    return { prompt: prompt, mask_prompt: true };
+    return { prompt: prompt, mask_prompt: true, mask_cutout_prompt: false };
   }
 
   /** Append the configured PNG mask to one provider edit form and return safe diagnostics. */
@@ -651,6 +661,7 @@ class ProviderService {
       model: String(config.model || "gpt-image-2"),
       prompt: prompt,
       mask_prompt: promptPayload.mask_prompt,
+      mask_cutout_prompt: promptPayload.mask_cutout_prompt,
       size: size,
       quality: quality,
       async: true,

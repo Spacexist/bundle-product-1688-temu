@@ -192,6 +192,14 @@ class DirectImageRuntimeService {
       throw createDirectImageError("该商品已有单图编辑任务正在排队或生成，请等待完成后再提交。", 409, "DIRECT_IMAGE_TASK_ACTIVE");
     }
     const mode = source.mode === "edit" ? "edit" : "fusion";
+    const maskMode = source.mask_mode === "cutout" ? "cutout" : "";
+    const rawMaskUrl = String(source.mask_url || "");
+    const maskImageUrl = rawMaskUrl && maskMode === "cutout" && this.images && typeof this.images.cacheMaskImage === "function"
+      ? this.images.cacheMaskImage(rawMaskUrl, taskId)
+      : rawMaskUrl;
+    if (maskMode === "cutout" && !maskImageUrl) {
+      throw createDirectImageError("局部抠图任务缺少已保存的 mask 图。", 400, "DIRECT_IMAGE_MASK_MISSING");
+    }
     const useCurrentImage = this.taskScope !== "sku" && source.reference_mode === "current";
     const parentTask = useCurrentImage ? this.readTask(source.parent_task_id) : null;
     if (useCurrentImage && !parentTask) {
@@ -228,7 +236,9 @@ class DirectImageRuntimeService {
       sku_id: String(source.sku_id || ""),
       sku_index: Number(source.sku_index === undefined ? -1 : source.sku_index),
       prompt: String(source.prompt || ""),
-      mask_url: String(source.mask_url || ""),
+      mask_mode: maskMode,
+      mask_url: maskMode === "cutout" ? "" : maskImageUrl,
+      mask_image_url: maskMode === "cutout" ? maskImageUrl : "",
       size: String(source.size || "1024x1024"),
       status: "queued",
       provider_status: "",
@@ -287,10 +297,12 @@ class DirectImageRuntimeService {
         sku_id: task.sku_id,
         sku_index: task.sku_index,
         image_urls: task.mode === "edit"
-          ? [String(task.edit_image_url || task.source_image_urls[0] || "")]
+          ? [String(task.mask_mode === "cutout" && task.mask_image_url ? task.mask_image_url : task.edit_image_url || task.source_image_urls[0] || "")]
           : task.source_image_urls,
-        prompt: task.reference_mode === "current" && !task.mask_url ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
-        mask_url: task.mask_url,
+        prompt: task.reference_mode === "current" && !task.mask_url && task.mask_mode !== "cutout" ? CURRENT_IMAGE_EDIT_PREFIX + "\n\n" + task.prompt : task.prompt,
+        mask_mode: task.mask_mode,
+        mask_url: task.mask_mode === "cutout" ? "" : task.mask_url,
+        mask_image_url: task.mask_image_url,
         size: task.size,
         cancel_signal: controller.signal,
         /** Persist exactly one upstream ID for this local execution, without resurrecting deleted work. */

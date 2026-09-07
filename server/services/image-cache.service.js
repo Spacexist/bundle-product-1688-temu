@@ -98,6 +98,7 @@ class ImageCacheService {
       }
     }
     fs.mkdirSync(path.join(this.imageDirectory, "transfer", "generated"), { recursive: true });
+    fs.mkdirSync(path.join(this.imageDirectory, "transfer", "masks"), { recursive: true });
     fs.mkdirSync(path.join(this.imageDirectory, "transfer", "temp"), { recursive: true });
     fs.mkdirSync(this.productRootDirectory, { recursive: true });
   }
@@ -308,6 +309,27 @@ class ImageCacheService {
       return null;
     }
     return { mimeType: match[1].toLowerCase(), buffer: Buffer.from(match[2], "base64") };
+  }
+
+  /** Persist one brush-cutout PNG mask and return its reusable local URL. */
+  cacheMaskImage(source, taskId) {
+    if (this.isLocalImageUrl(source) && this.localUrlExists(source)) {
+      return String(source || "");
+    }
+    const image = this.readDataUrl(source);
+    if (!image || image.mimeType !== "image/png" || !image.buffer.length) {
+      throw imageError("局部抠图必须是有效 PNG。", "IMAGE_MASK_FORMAT_INVALID");
+    }
+    const safeTaskId = this.safePathSegment(taskId, "mask");
+    const hash = crypto.createHash("sha256").update(image.buffer).digest("hex");
+    const relativeDirectory = path.join("transfer", "masks");
+    const fileName = safeTaskId + "-" + hash.slice(0, 20) + ".png";
+    const filePath = path.join(this.imageDirectory, relativeDirectory, fileName);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, image.buffer);
+    }
+    return this.toLocalUrl(path.join(relativeDirectory, fileName));
   }
 
   /** Download one remote image through the backend to avoid browser CDN restrictions. */

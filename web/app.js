@@ -597,7 +597,7 @@ const app = createApp({
                 <article class="carousel-result-card" @wheel="handleImageVersionWheel($event, 'carousel')">
                   <div v-if="carouselPageVersions().length > 1" class="carousel-version-dots" role="tablist" aria-label="当前分镜图片版本"><button v-for="(versionUrl, versionIndex) in carouselPageVersions()" :key="versionUrl" type="button" role="tab" :class="{ active: activeCarouselPageVersionIndex() === versionIndex }" :aria-selected="activeCarouselPageVersionIndex() === versionIndex" :aria-label="'切换到图片版本 ' + (versionIndex + 1)" :disabled="imageVersionSelectionBusy || isCarouselPageBusy(imageCarouselPageIndex)" @click="selectCarouselPageVersion(versionIndex)"></button></div>
                   <div v-if="currentCarouselPage().image_url" class="image-mask-surface carousel-mask-surface">
-                    <img ref="imageMaskSourceImage" :src="imageSource(currentCarouselPage().image_url)" :alt="'轮播图 ' + (imageCarouselPageIndex + 1)" @load="renderImageMaskCanvas">
+                    <img ref="imageMaskSourceImage" crossorigin="anonymous" :src="imageSource(currentCarouselPage().image_url)" :alt="'轮播图 ' + (imageCarouselPageIndex + 1)" @load="renderImageMaskCanvas">
                     <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
                     <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
                   </div>
@@ -620,16 +620,16 @@ const app = createApp({
               <div v-else-if="shouldShowDirectGeneratedImage()" class="direct-image-result-viewer" @wheel="handleImageVersionWheel($event, 'direct')">
                 <div v-if="directImageVersions().length > 1" class="carousel-version-dots" role="tablist" aria-label="当前编辑图片版本"><button v-for="(versionUrl, versionIndex) in directImageVersions()" :key="versionUrl" type="button" role="tab" :class="{ active: activeDirectImageVersionIndex() === versionIndex }" :aria-selected="activeDirectImageVersionIndex() === versionIndex" :aria-label="'切换到图片版本 ' + (versionIndex + 1)" :disabled="imageVersionSelectionBusy || imageEditorBusy" @click="selectDirectImageVersion(versionIndex)"></button></div>
                 <div class="image-mask-surface direct-mask-surface">
-                  <img ref="imageMaskSourceImage" class="image-editor-generated-image" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果" @load="renderImageMaskCanvas">
+                  <img ref="imageMaskSourceImage" class="image-editor-generated-image" crossorigin="anonymous" :src="imageSource(imageEditorGeneratedUrl)" alt="AI 生成结果" @load="renderImageMaskCanvas">
                   <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
                   <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
                 </div>
-                <div v-if="imageEditorBusy" class="carousel-page-feedback" role="status" aria-live="polite"><i class="carousel-feedback-spinner" aria-hidden="true"></i><strong>正在基于当前图编辑…</strong><small>下方为上一次图片，完成后才会替换。</small></div>
+                <div v-if="imageEditorBusy" class="carousel-page-feedback" role="status" aria-live="polite"><i class="carousel-feedback-spinner" aria-hidden="true"></i><strong>{{ imageEditorInlineBusyTitle() }}</strong><small>{{ imageEditorInlineBusyHint() }}</small></div>
               </div>
               <div v-else class="image-editor-source-canvas">
                 <div v-if="galleryImageEditorSources(selectedTemuRecord).length === 1" class="image-mask-surface source-mask-surface">
                   <div class="image-mask-frame">
-                    <img ref="imageMaskSourceImage" :src="imageSource(galleryImageEditorSources(selectedTemuRecord)[0])" alt="待编辑图片" @load="renderImageMaskCanvas">
+                    <img ref="imageMaskSourceImage" crossorigin="anonymous" :src="imageSource(galleryImageEditorSources(selectedTemuRecord)[0])" alt="待编辑图片" @load="renderImageMaskCanvas">
                     <canvas v-if="shouldShowImageMaskControls()" ref="imageMaskCanvas" class="image-mask-layer" :class="{ 'is-active': imageMaskDrawingEnabled }" @pointerdown.prevent="beginImageMaskStroke" @pointermove.prevent="continueImageMaskStroke" @pointerup.prevent="finishImageMaskStroke" @pointercancel.prevent="finishImageMaskStroke"></canvas>
                     <div v-if="shouldShowImageMaskControls()" class="image-mask-controls"><button class="image-mask-tool" :class="{ active: imageMaskDrawingEnabled }" type="button" title="涂抹要修改的区域" aria-label="涂抹要修改的区域" @click="toggleImageMaskTool">✎</button><button class="image-mask-tool image-mask-clear" type="button" title="清空涂抹区域" aria-label="清空涂抹区域" @click="clearImageMaskStrokes">⌫</button></div>
                   </div>
@@ -6188,6 +6188,15 @@ const app = createApp({
       return status === "failed" || status === "interrupted" || Boolean(task && task.error_code);
     },
 
+    /** Return the saved brush cutout image URL for one retryable direct task. */
+    directImageRetryMaskUrl: function directImageRetryMaskUrl(task) {
+      const item = task && typeof task === "object" ? task : {};
+      if (item.mask_mode !== "cutout") {
+        return "";
+      }
+      return String(item.mask_image_url || item.mask_url || "").trim();
+    },
+
     /** Return a monotonic rank for direct-image task lifecycle snapshots. */
     directImageTaskStatusRank: function directImageTaskStatusRank(task) {
       const status = String(task && task.status || "");
@@ -7446,8 +7455,17 @@ const app = createApp({
       context.stroke();
     },
 
-    /** Build a Tuba-compatible PNG mask where painted pixels become transparent. */
-    buildImageMaskDataUrl: function buildImageMaskDataUrl() {
+    /** Force one cutout canvas to use only transparent or opaque pixels. */
+    binarizeImageMaskAlpha: function binarizeImageMaskAlpha(context, width, height) {
+      const data = context.getImageData(0, 0, width, height);
+      for (let index = 3; index < data.data.length; index += 4) {
+        data.data[index] = data.data[index] > 8 ? 255 : 0;
+      }
+      context.putImageData(data, 0, 0);
+    },
+
+    /** Build a brush cutout PNG by keeping painted source pixels and removing everything else. */
+    buildImageMaskCutoutDataUrl: function buildImageMaskCutoutDataUrl() {
       if (!this.hasImageMaskStrokes()) {
         return "";
       }
@@ -7458,17 +7476,27 @@ const app = createApp({
       canvas.width = width;
       canvas.height = height;
       const context = canvas.getContext("2d");
-      context.fillStyle = "rgba(255, 255, 255, 1)";
-      context.fillRect(0, 0, width, height);
-      context.globalCompositeOperation = "destination-out";
-      context.strokeStyle = "rgba(0, 0, 0, 1)";
-      context.lineCap = "round";
-      context.lineJoin = "round";
+      const maskCanvas = document.createElement("canvas");
+      maskCanvas.width = width;
+      maskCanvas.height = height;
+      const maskContext = maskCanvas.getContext("2d");
+      context.drawImage(image, 0, 0, width, height);
+      maskContext.strokeStyle = "rgba(0, 0, 0, 1)";
+      maskContext.lineCap = "round";
+      maskContext.lineJoin = "round";
       for (const stroke of this.imageMaskStrokes) {
-        this.drawImageMaskStroke(context, stroke, width, height);
+        this.drawImageMaskStroke(maskContext, stroke, width, height);
       }
+      context.globalCompositeOperation = "destination-in";
+      context.drawImage(maskCanvas, 0, 0);
       context.globalCompositeOperation = "source-over";
+      this.binarizeImageMaskAlpha(context, width, height);
       return canvas.toDataURL("image/png");
+    },
+
+    /** Build the persisted brush-cutout image used by masked Edits submissions. */
+    buildImageMaskDataUrl: function buildImageMaskDataUrl() {
+      return this.buildImageMaskCutoutDataUrl();
     },
 
     /** Resolve the visible image editor into one finite UI state. */
@@ -7693,6 +7721,12 @@ const app = createApp({
         || phase === "carousel_planning";
     },
 
+    /** Return whether the visible direct editor is submitting a brush cutout. */
+    isDirectCutoutEditActive: function isDirectCutoutEditActive() {
+      return Boolean(this.hasImageMaskStrokes()
+        || this.imageDirectTask && this.imageDirectTask.mask_mode === "cutout");
+    },
+
     /** Return the primary busy label for the visible image editor. */
     imageEditorLoadingTitle: function imageEditorLoadingTitle() {
       if (this.defaultPromptGenerationBusy) {
@@ -7704,6 +7738,9 @@ const app = createApp({
       }
       if (state.sourceCount === 2 || state.hasCarouselTask) {
         return this.imageCarouselReasoningEnabled ? "Kimi 推理生成提示词…" : "Kimi 快速生成提示词…";
+      }
+      if (this.isDirectCutoutEditActive()) {
+        return "局部抠图编辑中…";
       }
       return "图片生成中…";
     },
@@ -7724,7 +7761,20 @@ const app = createApp({
           : this.imageCarouselReviewOnly;
         return "已输出约 " + Number(this.imageCarouselEstimatedTokens || 0) + " tokens，" + (reviewOnly ? "先审核提示词，不会自动提交 Fusion。" : "规划完成后会自动开始生成图片。");
       }
+      if (this.isDirectCutoutEditActive()) {
+        return "正在按涂抹抠图区域生成，完成后可确认替换。";
+      }
       return "完成后可确认替换当前图片。";
+    },
+
+    /** Return the inline busy title shown over a retained direct result. */
+    imageEditorInlineBusyTitle: function imageEditorInlineBusyTitle() {
+      return this.isDirectCutoutEditActive() ? "局部抠图编辑中…" : "正在基于当前图编辑…";
+    },
+
+    /** Return the inline busy hint shown over a retained direct result. */
+    imageEditorInlineBusyHint: function imageEditorInlineBusyHint() {
+      return this.isDirectCutoutEditActive() ? "正在按涂抹抠图区域生成，完成后才会替换。" : "下方为上一次图片，完成后才会替换。";
     },
 
     /** Return the submit button label for direct Edits or two-image prompt review. */
@@ -7750,6 +7800,9 @@ const app = createApp({
       }
       if (state.phase === "carousel_review") {
         return "开始生成图片";
+      }
+      if (state.sourceCount === 1 && this.isDirectImageTaskRetryable(this.imageDirectTask)) {
+        return "重试";
       }
       if (state.sourceCount === 2) {
         return "仅生成提示词";
@@ -7834,7 +7887,20 @@ const app = createApp({
       const submission = this.directImageSubmissionSource(record);
       const sources = submission ? submission.sources : [];
       const prompt = String(this.imageEditorPrompt || "").trim();
-      const maskUrl = this.buildImageMaskDataUrl();
+      const retryMaskUrl = this.directImageRetryMaskUrl(this.imageDirectTask);
+      let maskUrl = retryMaskUrl;
+      if (this.hasImageMaskStrokes()) {
+        try {
+          maskUrl = this.buildImageMaskDataUrl();
+        } catch (error) {
+          this.imageEditorError = "[DIRECT_IMAGE_MASK_BUILD_FAILED] " + String(error && error.message || "局部抠图生成失败，请重新打开图片后再试。");
+          return;
+        }
+      }
+      if ((this.hasImageMaskStrokes() || this.imageDirectTask && this.imageDirectTask.mask_mode === "cutout") && !maskUrl) {
+        this.imageEditorError = "[DIRECT_IMAGE_MASK_MISSING] 局部抠图未保存，请重新涂抹后再重试。";
+        return;
+      }
       if (!record || !prompt || !submission || sources.length !== 1 || this.imageEditorBusy) {
         if (record && prompt && !this.imageEditorBusy) {
           this.imageEditorError = "[DIRECT_IMAGE_SOURCE_MISSING] 当前单图来源丢失，请重新打开这张图再生成。";
@@ -7862,6 +7928,8 @@ const app = createApp({
         detail_index: submission.detailIndex,
         reference_mode: submission.referenceMode,
         parent_task_id: submission.parentTaskId,
+        mask_mode: maskUrl ? "cutout" : "",
+        mask_image_url: retryMaskUrl,
         prompt: prompt,
         size: this.imageEditSize,
         status: "queued",
@@ -7890,6 +7958,7 @@ const app = createApp({
           detail_index: directTask.detail_index,
           reference_mode: directTask.reference_mode,
           parent_task_id: directTask.parent_task_id || undefined,
+          mask_mode: directTask.mask_mode || undefined,
           mask_url: maskUrl || undefined,
           prompt: directTask.prompt,
           size: directTask.size
@@ -8354,11 +8423,23 @@ const app = createApp({
       if (!task || !task.id || !Array.isArray(pageIndices) || !pageIndices.length) {
         return;
       }
-      const maskUrl = referenceMode === "current" ? this.buildImageMaskDataUrl() : "";
+      let maskUrl = "";
+      if (referenceMode === "current" && this.hasImageMaskStrokes()) {
+        try {
+          maskUrl = this.buildImageMaskDataUrl();
+        } catch (error) {
+          this.imageEditorError = "[CAROUSEL_MASK_BUILD_FAILED] " + String(error && error.message || "局部抠图生成失败，请重新打开图片后再试。");
+          return;
+        }
+      }
+      if (referenceMode === "current" && this.hasImageMaskStrokes() && !maskUrl) {
+        this.imageEditorError = "[CAROUSEL_MASK_MISSING] 局部抠图未保存，请重新涂抹后再重试。";
+        return;
+      }
       const response = await fetch(apiUrl(this.pagedImageTaskBasePath(task) + "/" + encodeURIComponent(task.id) + "/generate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ page_indices: pageIndices, reference_mode: referenceMode === "current" ? "current" : "original", mask_url: maskUrl || undefined })
+        body: JSON.stringify({ page_indices: pageIndices, reference_mode: referenceMode === "current" ? "current" : "original", mask_mode: maskUrl ? "cutout" : undefined, mask_url: maskUrl || undefined })
       });
       const payload = await response.json();
       if (!response.ok || !payload || !payload.ok) {
