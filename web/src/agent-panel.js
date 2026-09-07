@@ -26,7 +26,7 @@
         streamError: ""
       };
     },
-    template: 
+    template: `
       <aside class="workspace-agent-panel" :class="{ 'is-closed': !modelValue }">
         <header class="agent-panel-header">
           <div class="agent-panel-title">
@@ -104,7 +104,7 @@
           </div>
         </footer>
       </aside>
-    ,
+    `,
     mounted: function onAgentMounted() {
       this.fetchChats();
       window.addEventListener("keydown", this.handleGlobalKeyDown);
@@ -123,12 +123,12 @@
           );
           if (!isInput && !event.ctrlKey && !event.metaKey && !event.altKey) {
             event.preventDefault();
-            this.("update:modelValue", !this.modelValue);
+            this.$emit("update:modelValue", !this.modelValue);
           }
         }
       },
       closePanel: function closePanel() {
-        this.("update:modelValue", false);
+        this.$emit("update:modelValue", false);
       },
       fetchChats: async function fetchChats() {
         try {
@@ -176,8 +176,8 @@
         } catch (_) {}
       },
       scrollToBottom: function scrollToBottom() {
-        this.(() => {
-          const container = this..messagesContainer;
+        this.$nextTick(() => {
+          const container = this.$refs.messagesContainer;
           if (container) {
             container.scrollTop = container.scrollHeight;
           }
