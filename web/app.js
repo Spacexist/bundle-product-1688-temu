@@ -529,7 +529,7 @@ const app = createApp({
               <header><span>01</span><div><strong>组货建议</strong><small>{{ workflowMode === 'clip' ? '新版 CLIP 返回真实候选商品，点击搜索按钮走 1688 搜图。' : '四个候选方向会自动生成图片，生成完成后可直接搜图。' }}</small></div></header>
               <div class="smart-result-grid">
                 <article v-for="(item, index) in workflowPrompts" :key="'smart-result-' + index" class="smart-result-card" :class="{ selected: workflowSelectedResultIndex === index }">
-                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" :draggable="!!item.image_url" :title="item.image_url ? '拖到 Temu 主图、轮播图或 SKU 图片' : ''" @dragstart.stop="startWorkflowImageDrag($event, item, index)" @dragend="endAliImageDrag" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="workflowCandidateImageSource(item)" referrerpolicy="no-referrer" alt="AI 组货候选图" draggable="false" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
+                  <div class="smart-result-image-wrap"><button class="smart-result-image" type="button" :disabled="!item.image_url" :draggable="!!item.image_url" :title="item.image_url ? '拖到 Temu 主图/SKU，或拖进设计 Agent' : ''" @dragstart.stop="startWorkflowImageDrag($event, item, index)" @dragend="endAliImageDrag" @click="selectWorkflowResult(index)"><img v-if="item.image_url && !item.image_load_error" :src="workflowCandidateImageSource(item)" referrerpolicy="no-referrer" alt="AI 组货候选图" draggable="false" @load="handleWorkflowResultImageLoad(item)" @error="handleWorkflowResultImageError(item)"><span v-else>{{ item.image_url && item.image_load_error ? '图片加载失败，仍可搜图' : item.status === 'generating' || item.status === 'queued' ? '后台生成中…' : item.status === 'error' ? workflowPromptErrorText(item) : item.error || '等待生成' }}</span><i v-if="item.price_label">{{ item.price_label }}</i></button><button v-if="workflowMode === 'clip' && workflowClipTop10Keyword(item)" class="smart-result-top10-button" :class="{ 'is-busy': workflowClipTop10BusyKeys[index] }" type="button" :disabled="bulkClipBusy || !!workflowClipTop10BusyMainId" :title="'用 EN 关键词跑 CLIP Top10：' + workflowClipTop10Keyword(item)" :aria-label="workflowClipTop10BusyKeys[index] ? 'CLIP Top10 检索中' : '用 EN 关键词跑 CLIP Top10'" @click.stop="searchWorkflowClipTop10(index)">★</button><button v-if="item.image_url" class="smart-result-search-button" :class="{ 'is-busy': workflowSearchBusyKeys[index] }" type="button" :disabled="bulkClipBusy || workflowSearchBusyKeys[index] || item.status === 'generating' || item.status === 'queued'" title="用这张候选图搜索 1688" :aria-label="workflowSearchBusyKeys[index] ? '1688 搜图中' : '用这张候选图搜索 1688'" @click.stop="searchWorkflow1688(index)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.2"></circle><path d="m16 16 5 5"></path></svg></button></div>
                   <div class="smart-result-copy"><strong>{{ item.relation }}</strong><span class="smart-result-intro">{{ item.match_query || item.product_intro }}</span><em v-if="item.product_name && item.product_name !== (item.match_query || item.product_intro)" class="smart-result-title">{{ item.product_name }}</em><small v-if="item.sales_label">{{ item.sales_label }}</small></div>
                 </article>
               </div>
@@ -9682,8 +9682,46 @@ const app = createApp({
       this.imageDragScrollTime = 0;
     },
 
+    /** Attach an independent Agent payload so workspace images can drop into the Design Agent. */
+    attachAgentImageDragData: function attachAgentImageDragData(event, imageUrl, meta) {
+      const raw = String(imageUrl || "").trim();
+      if (!raw || !event || !event.dataTransfer) {
+        return;
+      }
+      const info = meta && typeof meta === "object" ? meta : {};
+      let fetchUrl = "";
+      if (info.workflow_item) {
+        fetchUrl = this.workflowCandidateImageSource(info.workflow_item);
+      } else if (/^https?:\/\//i.test(raw) && !this.isLocalCachedImageUrl(raw)) {
+        fetchUrl = apiUrl("/cache/candidate-image?source=" + encodeURIComponent(raw));
+      } else {
+        fetchUrl = this.imageSource(raw);
+      }
+      const sourceType = String(info.source_type || "image");
+      const indexPart = info.source_index === undefined || info.source_index === null || info.source_index === ""
+        ? ""
+        : "-" + String(info.source_index);
+      const extMatch = raw.match(/\.(jpe?g|png|webp|gif)(?:[?#]|$)/i);
+      let ext = ".jpg";
+      if (extMatch) {
+        ext = "." + String(extMatch[1]).toLowerCase().replace("jpeg", "jpg");
+      }
+      const filename = String(info.filename || ("workspace-" + sourceType + indexPart + ext));
+      try {
+        event.dataTransfer.setData("application/x-agent-image", JSON.stringify({
+          image_url: raw,
+          fetch_url: fetchUrl,
+          preview_url: fetchUrl,
+          filename: filename,
+          source_type: sourceType
+        }));
+      } catch (_) {
+        // Some browsers reject custom MIME writes; Agent can still fall back to text/plain.
+      }
+    },
+
     /** Start dragging one source image to its matching Temu image target. */
-    startAliImageDrag: function startAliImageDrag(event, record, image, sourceType, index) {
+    startAliImageDrag: function startAliImageDrag(event, record, image, sourceType, index, agentMeta) {
       const imageUrl = String(image || "").trim();
       if (!imageUrl) {
         return;
@@ -9713,13 +9751,19 @@ const app = createApp({
         event.dataTransfer.effectAllowed = "copy";
         event.dataTransfer.setData("application/x-temu-1688-image", JSON.stringify(this.dragImageReference));
         event.dataTransfer.setData("text/plain", imageUrl);
+        this.attachAgentImageDragData(event, imageUrl, Object.assign({
+          source_type: sourceType || "gallery",
+          source_index: index
+        }, agentMeta && typeof agentMeta === "object" ? agentMeta : {}));
       }
     },
 
     /** Start dragging one workflow candidate through the existing Temu image pipeline. */
     startWorkflowImageDrag: function startWorkflowImageDrag(event, item, index) {
       const candidate = item && typeof item === "object" ? item : {};
-      this.startAliImageDrag(event, this.selectedTemuRecord, candidate.image_url, "workflow", index);
+      this.startAliImageDrag(event, this.selectedTemuRecord, candidate.image_url, "workflow", index, {
+        workflow_item: candidate
+      });
     },
 
     /** Clear the active source-image drag state after a completed or cancelled drag. */
@@ -9817,6 +9861,7 @@ const app = createApp({
       if (!record || !Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= list.length) {
         return;
       }
+      const imageUrl = String(list[sourceIndex] || "");
       this.imageReorderReference = {
         record_key: this.imageRecordKey(record),
         image_type: imageType,
@@ -9828,9 +9873,13 @@ const app = createApp({
       this.imageDropTarget = null;
       this.imageReorderTarget = null;
       if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.effectAllowed = "copyMove";
         event.dataTransfer.setData("application/x-temu-image-reorder", JSON.stringify(this.imageReorderReference));
-        event.dataTransfer.setData("text/plain", String(list[sourceIndex] || ""));
+        event.dataTransfer.setData("text/plain", imageUrl);
+        this.attachAgentImageDragData(event, imageUrl, {
+          source_type: imageType === "detail" ? "detail" : "gallery",
+          source_index: sourceIndex
+        });
       }
     },
 

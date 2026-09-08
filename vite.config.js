@@ -31,7 +31,12 @@ function createViteConfiguration() {
       strictPort: true,
       proxy: {
         "/server/logs": "http://127.0.0.1:3000",
-        "/api/v1": "http://127.0.0.1:3000"
+        "/api/v1": {
+          target: "http://127.0.0.1:3000",
+          changeOrigin: true,
+          timeout: 0,
+          proxyTimeout: 0
+        }
       }
     }
   };

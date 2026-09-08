@@ -45,6 +45,23 @@ function extractDocxText(buffer) {
   return "";
 }
 
+/** Convert low-level stream failures into a readable Chinese message. */
+function formatAgentStreamError(error, timeoutFired, aborted) {
+  if (timeoutFired) {
+    return "Kimi 请求超时，请检查网络后重试，或在 config.json 提高 kimi.timeout_ms。";
+  }
+  if (aborted) {
+    return "流式已中断。";
+  }
+  const raw = String(error && error.message || error || "").trim();
+  const code = String(error && (error.code || (error.cause && error.cause.code)) || "");
+  const blob = (raw + " " + code).toLowerCase();
+  if (!raw || blob.indexOf("terminated") >= 0 || blob.indexOf("econnreset") >= 0 || blob.indexOf("und_err") >= 0 || blob.indexOf("socket") >= 0) {
+    return "Kimi 连接中断，回复可能不完整，请点击重试。";
+  }
+  return raw;
+}
+
 /** Safely resolve one Kimi endpoint URL. */
 function resolveKimiEndpoint(baseUrl, endpointPath) {
   const rawPath = String(endpointPath || "").trim();
@@ -274,7 +291,7 @@ class AgentChatService {
     };
   }
 
-  /** Stream response from Kimi 2.6 using SSE directly into HTTP response. */
+  /** Stream response from Kimi 2.6 using the same SSE pattern as logs/events. */
   async streamKimiChat(chatId, userMessage, res, requestId) {
     const chat = this.getChat(chatId);
     if (!chat) {
@@ -285,11 +302,13 @@ class AgentChatService {
     }
 
     const config = this.readConfig() || {};
-    const kimi = config.kimi && typeof config.kimi === "object" ? config.kimi : {};
-    const endpoint = resolveKimiEndpoint(kimi.baseurl, kimi.endpoint);
-    const apiKey = String(kimi.apikey || "");
-    const model = String(kimi.model || "kimi-k2.6");
-    const timeoutMs = Math.max(10000, Math.min(Number(kimi.timeout_ms || 60000), 180000));
+    const kimiConfig = config.kimi && typeof config.kimi === "object" ? config.kimi : {};
+    const endpoint = resolveKimiEndpoint(kimiConfig.baseurl, kimiConfig.endpoint);
+    const apiKey = String(kimiConfig.apikey || "");
+    const model = String(kimiConfig.model || "kimi-k2.6");
+    const timeoutMs = Math.max(10000, Math.min(Number(kimiConfig.timeout_ms || 120000), 300000));
+    // Keep-alive only; token frames are pushed immediately like ChatGPT.
+    const heartbeatMs = Math.max(1000, Math.min(Number(kimiConfig.sse_heartbeat_ms || 2000), 10000));
 
     if (!apiKey) {
       throw new Error("server/config.json 未配置 Kimi API Key。");
@@ -354,20 +373,77 @@ class AgentChatService {
     const requestPayload = {
       model: model,
       messages: messages,
-      temperature: typeof kimi.temperature === "number" ? kimi.temperature : 1,
+      temperature: typeof kimiConfig.temperature === "number" ? kimiConfig.temperature : 1,
       stream: true
     };
 
     this.writeLog("OUTBOUND", "Kimi Agent chat POST " + endpoint, requestPayload, requestId);
 
+    if (typeof res.status === "function") {
+      res.status(200);
+    }
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
-
-    function sendEvent(eventName, data) {
-      res.write("event: " + eventName + "\ndata: " + JSON.stringify(data) + "\n\n");
+    if (typeof res.flushHeaders === "function") {
+      res.flushHeaders();
     }
+    if (res.socket && typeof res.socket.setTimeout === "function") {
+      res.socket.setTimeout(0);
+    }
+    if (typeof res.setTimeout === "function") {
+      res.setTimeout(0);
+    }
+
+    let heartbeatTimer = null;
+    let streamFinished = false;
+    let clientClosedEarly = false;
+    let sseOpen = true;
+
+    /** Write one SSE frame and optionally flush buffered output. */
+    function writeSse(chunk) {
+      if (!sseOpen || !res || res.writableEnded || res.destroyed) {
+        return false;
+      }
+      try {
+        const ok = res.write(chunk);
+        if (typeof res.flush === "function") {
+          try {
+            res.flush();
+          } catch (_) {}
+        }
+        return ok !== false;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    /** Emit one named SSE event used by the Agent panel. */
+    function sendEvent(eventName, data) {
+      return writeSse("event: " + eventName + "\ndata: " + JSON.stringify(data) + "\n\n");
+    }
+
+    /** Keep the browser/proxy socket awake while Kimi is silent between tokens. */
+    function startHeartbeat() {
+      stopHeartbeat();
+      heartbeatTimer = setInterval(function beat() {
+        writeSse(": heartbeat " + Date.now() + "\n\n");
+      }, heartbeatMs);
+      if (heartbeatTimer && typeof heartbeatTimer.unref === "function") {
+        heartbeatTimer.unref();
+      }
+    }
+
+    /** Stop the SSE heartbeat timer. */
+    function stopHeartbeat() {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }
+
+    writeSse("retry: 3000\n\n");
 
     const assistantMsgObj = {
       id: "msg_" + Date.now().toString(36) + "_a",
@@ -382,6 +458,7 @@ class AgentChatService {
       message_id: assistantMsgObj.id,
       role: "assistant"
     });
+    startHeartbeat();
 
     const abortController = new AbortController();
     this.activeStreams[chat.id] = abortController;
@@ -392,18 +469,51 @@ class AgentChatService {
       abortController.abort();
     }, timeoutMs);
 
-    res.on("close", () => {
+    /** Tear down Kimi work when the browser disconnects mid-stream. */
+    function handleClientClose() {
+      if (!streamFinished) {
+        clientClosedEarly = true;
+        abortController.abort();
+      }
+      stopHeartbeat();
       clearTimeout(timeoutHandle);
-      abortController.abort();
       delete this.activeStreams[chat.id];
-    });
+    }
+    const onClientClose = handleClientClose.bind(this);
+    res.on("close", onClientClose);
+    res.on("error", onClientClose);
+
+    /** Parse one upstream SSE data payload into assistant deltas / thinking signals. */
+    function consumeUpstreamDataLine(dataStr) {
+      if (!dataStr || dataStr === "[DONE]") {
+        return;
+      }
+      try {
+        const parsed = JSON.parse(dataStr);
+        const delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta
+          ? parsed.choices[0].delta
+          : {};
+        const chunkText = delta.content || "";
+        const reasoningText = delta.reasoning_content || delta.reasoning || "";
+        if (reasoningText && !chunkText) {
+          sendEvent("thinking", { active: true });
+        }
+        if (chunkText) {
+          assistantMsgObj.content += chunkText;
+          // One upstream token → one downstream SSE frame, flushed immediately.
+          sendEvent("delta", { delta: chunkText });
+        }
+      } catch (_) {
+      }
+    }
 
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           "Authorization": "Bearer " + apiKey,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream"
         },
         body: JSON.stringify(requestPayload),
         signal: abortController.signal
@@ -412,6 +522,10 @@ class AgentChatService {
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error("Kimi 响应错误 [" + response.status + "]: " + errorText.slice(0, 200));
+      }
+
+      if (!response.body || typeof response.body.getReader !== "function") {
+        throw new Error("Kimi 未返回可读取的 SSE 响应流。");
       }
 
       const reader = response.body.getReader();
@@ -429,48 +543,57 @@ class AgentChatService {
 
         for (const line of lines) {
           const trimmed = line.trim();
+          if (!trimmed || trimmed.charAt(0) === ":") {
+            continue;
+          }
           if (!trimmed.startsWith("data:")) {
             continue;
           }
-          const dataStr = trimmed.slice(5).trim();
-          if (dataStr === "[DONE]") {
-            continue;
-          }
-          try {
-            const parsed = JSON.parse(dataStr);
-            const delta = parsed.choices && parsed.choices[0] && parsed.choices[0].delta ? parsed.choices[0].delta : {};
-            const chunkText = delta.content || "";
-            if (chunkText) {
-              assistantMsgObj.content += chunkText;
-              sendEvent("delta", { delta: chunkText });
-            }
-          } catch (_) {
-          }
+          consumeUpstreamDataLine(trimmed.slice(5).trim());
+        }
+      }
+
+      if (pendingText.trim()) {
+        const trimmed = pendingText.trim();
+        if (trimmed.startsWith("data:")) {
+          consumeUpstreamDataLine(trimmed.slice(5).trim());
         }
       }
 
       clearTimeout(timeoutHandle);
       assistantMsgObj.status = "completed";
+      streamFinished = true;
       sendEvent("message_done", {
         content: assistantMsgObj.content,
         status: "completed"
       });
     } catch (error) {
       clearTimeout(timeoutHandle);
-      const isAborted = error.name === "AbortError" || abortController.signal.aborted;
+      const isAborted = error.name === "AbortError" || abortController.signal.aborted || clientClosedEarly;
       assistantMsgObj.status = timeoutFired ? "timeout" : isAborted ? "aborted" : "failed";
-      assistantMsgObj.error = timeoutFired ? "Kimi 请求超时，请检查网络或重试。" : isAborted ? "流式已中断" : error.message;
-
+      assistantMsgObj.error = formatAgentStreamError(error, timeoutFired, isAborted);
+      streamFinished = true;
       sendEvent("error", {
         message: assistantMsgObj.error,
-        status: assistantMsgObj.status
+        status: assistantMsgObj.status,
+        partial: Boolean(assistantMsgObj.content)
       });
     } finally {
+      streamFinished = true;
+      sseOpen = true;
+      stopHeartbeat();
       clearTimeout(timeoutHandle);
       delete this.activeStreams[chat.id];
+      try {
+        res.removeListener("close", onClientClose);
+        res.removeListener("error", onClientClose);
+      } catch (_) {}
       chat.messages.push(assistantMsgObj);
       this.saveChat(chat);
-      res.end();
+      if (!res.writableEnded && !res.destroyed) {
+        res.end();
+      }
+      sseOpen = false;
     }
   }
 }

@@ -119,6 +119,18 @@ class AgentChatController {
       const userMessage = req.body || {};
       await this.agentService.streamKimiChat(chatId, userMessage, res, req.requestId);
     } catch (error) {
+      if (res.headersSent) {
+        try {
+          if (!res.writableEnded && !res.destroyed) {
+            res.write("event: error\ndata: " + JSON.stringify({
+              message: String(error && error.message || "流式失败"),
+              status: "failed"
+            }) + "\n\n");
+            res.end();
+          }
+        } catch (_) {}
+        return;
+      }
       next(error);
     }
   }
