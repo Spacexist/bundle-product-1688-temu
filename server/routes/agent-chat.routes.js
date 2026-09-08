@@ -11,6 +11,8 @@ function createAgentChatRouter(options) {
   router.get("/agent/chats/:chatId", controller.getChat.bind(controller));
   router.delete("/agent/chats/:chatId", controller.deleteChat.bind(controller));
 
+  router.get("/agent/sop", controller.getSop.bind(controller));
+
   router.post("/agent/chats/:chatId/attachments", express.raw({ type: "*/*", limit: "50mb" }), controller.uploadAttachment.bind(controller));
   router.get("/agent/attachments/:filename", controller.serveAttachment.bind(controller));
 

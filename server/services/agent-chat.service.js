@@ -62,6 +62,63 @@ function formatAgentStreamError(error, timeoutFired, aborted) {
   return raw;
 }
 
+/**
+ * Build Kimi chat turns from stored session messages.
+ * Skips empty assistant turns (failed/timeout streams with no tokens) — Moonshot returns 400 otherwise.
+ */
+function buildKimiChatMessages(chatMessages, systemPrompt) {
+  const messages = [{ role: "system", content: String(systemPrompt || "") }];
+  const historyMessages = Array.isArray(chatMessages) ? chatMessages : [];
+  for (let index = 0; index < historyMessages.length; index += 1) {
+    const msg = historyMessages[index];
+    if (!msg || typeof msg !== "object") {
+      continue;
+    }
+    if (msg.role === "user") {
+      const parts = [];
+      if (Array.isArray(msg.attachments) && msg.attachments.length) {
+        for (let attIndex = 0; attIndex < msg.attachments.length; attIndex += 1) {
+          const att = msg.attachments[attIndex];
+          if (!att) {
+            continue;
+          }
+          if (att.extracted_text) {
+            parts.push({
+              type: "text",
+              text: "[参考文档：" + (att.filename || "文档") + "]\n" + String(att.extracted_text).slice(0, 8000) + "\n[文档结束]"
+            });
+          }
+          if (att.is_image && att.file_path && fs.existsSync(att.file_path)) {
+            try {
+              const imgBuf = fs.readFileSync(att.file_path);
+              const mime = att.mime_type || "image/jpeg";
+              parts.push({
+                type: "image_url",
+                image_url: { url: "data:" + mime + ";base64," + imgBuf.toString("base64") }
+              });
+            } catch (_) {}
+          }
+        }
+      }
+      if (msg.content) {
+        parts.push({ type: "text", text: msg.content });
+      }
+      if (parts.length === 1 && parts[0].type === "text") {
+        messages.push({ role: "user", content: parts[0].text });
+      } else if (parts.length > 0) {
+        messages.push({ role: "user", content: parts });
+      }
+    } else if (msg.role === "assistant") {
+      const assistantText = String(msg.content || "").trim();
+      if (!assistantText) {
+        continue;
+      }
+      messages.push({ role: "assistant", content: assistantText });
+    }
+  }
+  return messages;
+}
+
 /** Safely resolve one Kimi endpoint URL. */
 function resolveKimiEndpoint(baseUrl, endpointPath) {
   const rawPath = String(endpointPath || "").trim();
@@ -306,7 +363,7 @@ class AgentChatService {
     const endpoint = resolveKimiEndpoint(kimiConfig.baseurl, kimiConfig.endpoint);
     const apiKey = String(kimiConfig.apikey || "");
     const model = String(kimiConfig.model || "kimi-k2.6");
-    const timeoutMs = Math.max(10000, Math.min(Number(kimiConfig.timeout_ms || 120000), 300000));
+    const timeoutMs = Math.max(10000, Math.min(Number(kimiConfig.timeout_ms || 120000), 600000));
     // Keep-alive only; token frames are pushed immediately like ChatGPT.
     const heartbeatMs = Math.max(1000, Math.min(Number(kimiConfig.sse_heartbeat_ms || 2000), 10000));
 
@@ -329,46 +386,9 @@ class AgentChatService {
     this.saveChat(chat);
 
     const systemPrompt = "你是一个专业的跨境电商图片设计与分镜编排 Agent。你可以读取用户提供的商品文档正文、参考图片和对话历史，帮助用户分析商品卖点、提炼视觉概念、生成可落地的电商生图提示词。回答清晰、结构分明、专业可执行，默认使用中文。";
-    const messages = [{ role: "system", content: systemPrompt }];
-
     const historyLimit = 20;
     const historyMessages = (chat.messages || []).slice(-historyLimit);
-
-    for (const msg of historyMessages) {
-      if (msg.role === "user") {
-        const parts = [];
-        if (Array.isArray(msg.attachments) && msg.attachments.length) {
-          for (const att of msg.attachments) {
-            if (att.extracted_text) {
-              parts.push({
-                type: "text",
-                text: "[参考文档：" + (att.filename || "文档") + "]\n" + att.extracted_text.slice(0, 8000) + "\n[文档结束]"
-              });
-            }
-            if (att.is_image && att.file_path && fs.existsSync(att.file_path)) {
-              try {
-                const imgBuf = fs.readFileSync(att.file_path);
-                const mime = att.mime_type || "image/jpeg";
-                parts.push({
-                  type: "image_url",
-                  image_url: { url: "data:" + mime + ";base64," + imgBuf.toString("base64") }
-                });
-              } catch (_) {}
-            }
-          }
-        }
-        if (msg.content) {
-          parts.push({ type: "text", text: msg.content });
-        }
-        if (parts.length === 1 && parts[0].type === "text") {
-          messages.push({ role: "user", content: parts[0].text });
-        } else if (parts.length > 0) {
-          messages.push({ role: "user", content: parts });
-        }
-      } else if (msg.role === "assistant") {
-        messages.push({ role: "assistant", content: msg.content || "" });
-      }
-    }
+    const messages = buildKimiChatMessages(historyMessages, systemPrompt);
 
     const requestPayload = {
       model: model,
@@ -391,6 +411,11 @@ class AgentChatService {
     }
     if (res.socket && typeof res.socket.setTimeout === "function") {
       res.socket.setTimeout(0);
+    }
+    if (res.socket && typeof res.socket.setNoDelay === "function") {
+      try {
+        res.socket.setNoDelay(true);
+      } catch (_) {}
     }
     if (typeof res.setTimeout === "function") {
       res.setTimeout(0);
@@ -596,9 +621,58 @@ class AgentChatService {
       sseOpen = false;
     }
   }
+
+  /**
+   * Read the Agent SOP pack from server/sop.json.
+   * Returns a normalized { id, name, steps:[{id,title,instruction}] } object.
+   */
+  getSop() {
+    const sopPath = path.join(__dirname, "..", "sop.json");
+    if (!fs.existsSync(sopPath)) {
+      const error = new Error("SOP 配置不存在。");
+      error.statusCode = 404;
+      error.code = "SOP_NOT_FOUND";
+      throw error;
+    }
+    let raw = null;
+    try {
+      raw = JSON.parse(fs.readFileSync(sopPath, "utf8"));
+    } catch (error) {
+      const parseError = new Error("SOP 配置无法解析：" + String(error && error.message || error));
+      parseError.statusCode = 500;
+      parseError.code = "SOP_PARSE_FAILED";
+      throw parseError;
+    }
+    const stepsSource = raw && Array.isArray(raw.steps) ? raw.steps : [];
+    const steps = [];
+    for (let index = 0; index < stepsSource.length; index += 1) {
+      const step = stepsSource[index] && typeof stepsSource[index] === "object" ? stepsSource[index] : {};
+      const instruction = String(step.instruction || "").trim();
+      if (!instruction) {
+        continue;
+      }
+      steps.push({
+        id: String(step.id || ("step-" + (index + 1))).trim() || ("step-" + (index + 1)),
+        title: String(step.title || ("步骤 " + (index + 1))).trim() || ("步骤 " + (index + 1)),
+        instruction: instruction
+      });
+    }
+    if (!steps.length) {
+      const error = new Error("SOP 配置缺少有效步骤。");
+      error.statusCode = 500;
+      error.code = "SOP_STEPS_EMPTY";
+      throw error;
+    }
+    return {
+      id: String(raw && raw.id || "temu-suite").trim() || "temu-suite",
+      name: String(raw && raw.name || "Temu 套图策划").trim() || "Temu 套图策划",
+      steps: steps
+    };
+  }
 }
 
 module.exports = {
   AgentChatService: AgentChatService,
-  resolveKimiEndpoint: resolveKimiEndpoint
+  resolveKimiEndpoint: resolveKimiEndpoint,
+  buildKimiChatMessages: buildKimiChatMessages
 };

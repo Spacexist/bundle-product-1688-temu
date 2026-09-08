@@ -373,7 +373,13 @@ const TaskStatusIndicator = {
 const app = createApp({
   template: `
     <div class="shell" :class="{ 'has-agent-panel': agentOpen }">
-      <agent-panel v-model="agentOpen"></agent-panel>
+      <agent-panel
+        ref="agentPanel"
+        v-model="agentOpen"
+        :storyboard-target-ready="Boolean(imageEditorOpen && imageCarouselTask)"
+        :storyboard-source-images="agentCarouselSourceImages()"
+        @inject-storyboard="applyAgentStoryboardPages"
+      ></agent-panel>
       <Transition name="image-placement">
       <aside v-if="imagePlacementNotice && cloudAuth.authorized && !imageEditorOpen" class="image-placement-notice" role="status" aria-live="polite">
         <strong>图片已保存</strong>
@@ -8885,6 +8891,177 @@ const app = createApp({
     isCarouselPageBusy: function isCarouselPageBusy(pageIndex) {
       const page = this.imageCarouselTask && this.imageCarouselTask.pages ? this.imageCarouselTask.pages[Number(pageIndex)] : null;
       return Boolean(page && page.status === "generating") || this.hasCarouselSubmission(this.imageCarouselTask, pageIndex) || Boolean(this.imageCarouselPageBusyKeys[this.carouselPageBusyKey(pageIndex)]);
+    },
+
+    /** Reference images for Agent SOP 识别报告: prefer task sources, else open editor sources. */
+    agentCarouselSourceImages: function agentCarouselSourceImages() {
+      if (!this.imageEditorOpen) {
+        return [];
+      }
+      let urls = [];
+      if (this.imageCarouselTask && Array.isArray(this.imageCarouselTask.source_image_urls)
+        && this.imageCarouselTask.source_image_urls.length) {
+        urls = this.imageCarouselTask.source_image_urls;
+      } else if (Array.isArray(this.imageEditorSourceUrls) && this.imageEditorSourceUrls.length) {
+        urls = this.imageEditorSourceUrls;
+      } else {
+        urls = typeof this.galleryImageEditorSources === "function"
+          ? this.galleryImageEditorSources(this.selectedTemuRecord)
+          : [];
+      }
+      const list = [];
+      for (let index = 0; index < urls.length; index += 1) {
+        const raw = String(urls[index] || "").trim();
+        if (!raw) {
+          continue;
+        }
+        const resolved = typeof this.imageSource === "function" ? this.imageSource(raw) : raw;
+        list.push({
+          image_url: raw,
+          fetch_url: resolved,
+          preview_url: resolved,
+          filename: "source-" + (index + 1) + ".jpg"
+        });
+      }
+      return list;
+    },
+
+    /**
+     * Apply Agent storyboard pages onto the open multi-fusion/carousel editor.
+     * Text only first; when payload.generate is true, also start generation.
+     */
+    async applyAgentStoryboardPages(payload) {
+      const done = payload && typeof payload.done === "function"
+        ? payload.done
+        : function noopDone() {};
+      const pages = payload && Array.isArray(payload.pages) ? payload.pages : [];
+      const warning = payload && payload.warning ? String(payload.warning) : "";
+      const shouldGenerate = Boolean(payload && payload.generate);
+      try {
+        if (!this.imageEditorOpen || !this.imageCarouselTask) {
+          done({ ok: false, error: "请先打开多图融合或轮播。" });
+          return;
+        }
+        if (!pages.length) {
+          done({ ok: false, error: "没有可灌入的分镜。" });
+          return;
+        }
+        const task = this.imageCarouselTask;
+        if (typeof this.isCarouselTaskGenerating === "function" && this.isCarouselTaskGenerating(task)) {
+          done({ ok: false, error: "当前有分镜正在生成，请稍后再灌入。" });
+          return;
+        }
+        const existingPages = Array.isArray(task.pages) ? task.pages : [];
+        for (let busyIndex = 0; busyIndex < existingPages.length; busyIndex += 1) {
+          if (existingPages[busyIndex] && existingPages[busyIndex].status === "generating") {
+            done({ ok: false, error: "当前有分镜正在生成，请稍后再灌入。" });
+            return;
+          }
+        }
+        const compose = window.AgentStoryboard && typeof window.AgentStoryboard.composeEditablePrompt === "function"
+          ? window.AgentStoryboard.composeEditablePrompt
+          : function fallbackCompose(page) {
+            return String(page && page.prompt || "").trim();
+          };
+        const label = typeof this.pagedImageTaskLabel === "function"
+          ? this.pagedImageTaskLabel(task)
+          : "轮播";
+        const targetCount = Math.min(10, pages.length);
+        const originalCount = existingPages.length;
+
+        while (task.pages.length > targetCount) {
+          task.pages.pop();
+        }
+        while (task.pages.length < targetCount) {
+          task.pages.push({
+            purpose: "",
+            prompt: "",
+            status: "pending",
+            image_url: "",
+            selected: true
+          });
+        }
+
+        for (let index = 0; index < targetCount; index += 1) {
+          const next = pages[index] || {};
+          const page = task.pages[index];
+          page.purpose = String(next.purpose || "");
+          page.prompt = compose(next);
+        }
+        if (typeof this.normalizeCarouselPageIndex === "function") {
+          this.normalizeCarouselPageIndex();
+        } else {
+          this.imageCarouselPageIndex = Math.min(
+            Math.max(0, Number(this.imageCarouselPageIndex) || 0),
+            Math.max(0, task.pages.length - 1)
+          );
+        }
+
+        const savedCount = Math.min(originalCount, targetCount);
+        for (let index = 0; index < savedCount; index += 1) {
+          await this.saveCarouselPage(index);
+        }
+
+        let message = "已灌入 " + targetCount + " 页到「" + label + "」。";
+        if (warning) {
+          message += " " + warning;
+        }
+        if (targetCount > originalCount) {
+          message += " 新增页仅本地写入，需在编辑器侧可持久化后再生成这些页。";
+        }
+
+        if (!shouldGenerate) {
+          done({ ok: true, message: message });
+          return;
+        }
+
+        const originalModeIndices = [];
+        const currentModeIndices = [];
+        for (let index = 0; index < savedCount; index += 1) {
+          const page = task.pages[index];
+          if (page && String(page.image_url || "").trim()) {
+            currentModeIndices.push(index);
+          } else {
+            originalModeIndices.push(index);
+          }
+        }
+        if (!originalModeIndices.length && !currentModeIndices.length) {
+          done({
+            ok: false,
+            error: message + " 没有可提交生成的服务端分镜页。"
+          });
+          return;
+        }
+
+        try {
+          const allIndices = originalModeIndices.concat(currentModeIndices);
+          this.imageCarouselGenerationBusy = true;
+          this.imageEditorError = "";
+          this.beginCarouselFeedback(task, allIndices);
+          if (originalModeIndices.length) {
+            await this.startCarouselGeneration(task, originalModeIndices, "original");
+          }
+          for (let c = 0; c < currentModeIndices.length; c += 1) {
+            await this.startCarouselGeneration(task, [currentModeIndices[c]], "current");
+          }
+          if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
+            this.scheduleCarouselTaskPoll();
+          }
+          message += " 已提交 " + allIndices.length + " 页生成。";
+          done({ ok: true, message: message });
+        } catch (generateError) {
+          if (this.imageCarouselTask && this.imageCarouselTask.id === task.id) {
+            this.imageCarouselGenerationBusy = false;
+            this.scheduleCarouselTaskPoll();
+          }
+          done({
+            ok: false,
+            error: message + " 生成失败：" + String(generateError && generateError.message || generateError || "未知错误") + "。文案已保留，可在编辑器重试。"
+          });
+        }
+      } catch (error) {
+        done({ ok: false, error: String(error && error.message || error || "灌入失败。") });
+      }
     },
 
     /** Persist the current carousel page text without changing other page states. */

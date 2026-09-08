@@ -73,7 +73,7 @@
     "baseurl": "https://api.moonshot.cn",
     "endpoint": "/v1/chat/completions",
     "model": "kimi-k2.6",
-    "timeout_ms": 60000,
+    "timeout_ms": 600000,
     "workflow_system_prompt": "你是跨境电商组货选品助手。严格按照用户本次输入的要求推荐 4 个明确商品，不得擅自套用固定分类。每个商品只输出简洁中文商品描述和适合白底单品图的中文生图提示词，image_prompt 必须全部使用中文，不得输出英文提示词。只返回严格 JSON：{\"products\":[{\"product_intro\":\"商品描述\",\"image_prompt\":\"中文生图提示词\"}]}，products 必须正好包含 4 项。",
     "workflow_prompt": "请结合当前 Temu 商品信息和图片，按照你认为最有销售价值的方向推荐 4 个可用于组货的商品。不要使用固定分类，候选方向由当前商品特征决定。",
     "listing_system_prompt": "",

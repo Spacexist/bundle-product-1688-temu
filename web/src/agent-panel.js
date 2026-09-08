@@ -171,9 +171,13 @@
   const AgentPanelComponent = {
     name: "AgentPanelComponent",
     props: {
-      modelValue: { type: Boolean, default: false }
+      modelValue: { type: Boolean, default: false },
+      /** True when the right-side multi-fusion or carousel editor is open. */
+      storyboardTargetReady: { type: Boolean, default: false },
+      /** Reference images from the open carousel/fusion task (for 识别报告). */
+      storyboardSourceImages: { type: Array, default: function emptySources() { return []; } }
     },
-    emits: ["update:modelValue"],
+    emits: ["update:modelValue", "inject-storyboard"],
     data: function data() {
       return {
         chats: [],
@@ -189,6 +193,11 @@
         isDragOver: false,
         dragEnterDepth: 0,
         panelError: "",
+        injectHint: "",
+        injectBusy: false,
+        sop: null,
+        sopLoading: false,
+        sopActionBusy: false,
         abortController: null
       };
     },
@@ -196,6 +205,69 @@
       /** True when composer has ready attachments or non-empty draft text. */
       canSubmit: function canSubmit() {
         return !this.isUploading && (!!String(this.draftText || "").trim() || this.attachments.length > 0);
+      },
+      /** Last complete assistant message that contains a valid storyboard JSON block. */
+      injectableStoryboard: function injectableStoryboard() {
+        const api = window.AgentStoryboard;
+        if (!api || typeof api.findInjectableAssistantMessage !== "function") {
+          return null;
+        }
+        return api.findInjectableAssistantMessage(this.activeChat && this.activeChat.messages);
+      },
+      hasStoryboardSources: function hasStoryboardSources() {
+        return Array.isArray(this.storyboardSourceImages) && this.storyboardSourceImages.length > 0;
+      },
+      canRunRecognize: function canRunRecognize() {
+        return this.hasStoryboardSources
+          && !this.isStreaming
+          && !this.isUploading
+          && !this.sopActionBusy
+          && !this.injectBusy
+          && Boolean(this.sopStep("recognize"));
+      },
+      canRunStoryboard: function canRunStoryboard() {
+        return !this.isStreaming
+          && !this.isUploading
+          && !this.sopActionBusy
+          && !this.injectBusy
+          && Boolean(this.sopStep("storyboard"));
+      },
+      canInjectAndGenerate: function canInjectAndGenerate() {
+        return Boolean(this.injectableStoryboard && this.injectableStoryboard.parsed && this.injectableStoryboard.parsed.ok)
+          && Boolean(this.storyboardTargetReady)
+          && !this.isStreaming
+          && !this.injectBusy
+          && !this.sopActionBusy;
+      },
+      recognizeButtonTitle: function recognizeButtonTitle() {
+        if (this.isStreaming || this.sopActionBusy) {
+          return "请等待当前操作结束";
+        }
+        if (!this.hasStoryboardSources) {
+          return "请先打开右侧编辑器并确保有参考图";
+        }
+        return "带上右侧全部参考图，发送识别报告步骤";
+      },
+      storyboardButtonTitle: function storyboardButtonTitle() {
+        if (this.isStreaming || this.sopActionBusy) {
+          return "请等待当前操作结束";
+        }
+        return "发送生成分镜步骤（建议先跑识别报告）";
+      },
+      injectButtonTitle: function injectButtonTitle() {
+        if (this.injectBusy) {
+          return "正在灌入并生成…";
+        }
+        if (this.isStreaming) {
+          return "生成结束后再操作";
+        }
+        if (!(this.injectableStoryboard && this.injectableStoryboard.parsed && this.injectableStoryboard.parsed.ok)) {
+          return "需要最后一条完整助手消息含合法分镜 JSON";
+        }
+        if (!this.storyboardTargetReady) {
+          return "请先打开右侧多图融合或轮播";
+        }
+        return "灌入全部分镜并触发生成";
       }
     },
     template: `
@@ -287,7 +359,8 @@
             <div
               v-if="msg.role === 'assistant'"
               class="agent-message-text agent-message-markdown"
-              v-html="formatAssistantHtml(msg.content)"
+              :class="{ 'is-streaming-plain': msg.status === 'streaming' }"
+              v-html="renderAssistantBubble(msg)"
             ></div>
             <div v-else class="agent-message-text">{{ msg.content }}</div>
             <div v-if="msg.status === 'streaming'" class="agent-streaming-indicator">
@@ -361,8 +434,35 @@
           ></textarea>
 
           <div class="agent-composer-footer">
-            <span class="count">支持拖入工作区图、docx、txt 或本机图</span>
-            <div class="agent-composer-actions">
+            <span class="count">{{ injectHint || '支持拖入工作区图、docx、txt 或本机图' }}</span>
+            <div class="agent-composer-actions agent-sop-actions">
+              <button
+                class="glass-action-button ghost-button agent-sop-btn"
+                type="button"
+                :disabled="!canRunRecognize"
+                :title="recognizeButtonTitle"
+                @click="runRecognizeStep"
+              >
+                识别报告
+              </button>
+              <button
+                class="glass-action-button ghost-button agent-sop-btn"
+                type="button"
+                :disabled="!canRunStoryboard"
+                :title="storyboardButtonTitle"
+                @click="runStoryboardStep"
+              >
+                生成分镜
+              </button>
+              <button
+                class="glass-action-button ghost-button agent-inject-btn"
+                type="button"
+                :disabled="!canInjectAndGenerate"
+                :title="injectButtonTitle"
+                @click="handleInjectAndGenerate"
+              >
+                {{ injectBusy ? '处理中…' : '灌入并生成' }}
+              </button>
               <button
                 v-if="isStreaming"
                 class="glass-action-button ghost-button agent-stop-btn"
@@ -388,6 +488,7 @@
     `,
     mounted: function onAgentMounted() {
       this.fetchChats();
+      this.loadSop();
       window.addEventListener("keydown", this.handleGlobalKeyDown);
       window.addEventListener("dragend", this.clearDragOverState, true);
     },
@@ -413,6 +514,134 @@
       closePanel: function closePanel() {
         this.clearDragOverState();
         this.$emit("update:modelValue", false);
+      },
+      /** Resolve one SOP step from loaded pack or fallback. */
+      sopStep: function sopStep(stepId) {
+        const api = window.AgentStoryboard;
+        if (!api || typeof api.findSopStep !== "function") {
+          return null;
+        }
+        return api.findSopStep(this.sop || api.FALLBACK_SOP, stepId);
+      },
+      /** Load SOP pack from GET /agent/sop (fallback to built-in). */
+      loadSop: async function loadSop() {
+        const api = window.AgentStoryboard;
+        this.sopLoading = true;
+        try {
+          if (api && typeof api.fetchSop === "function") {
+            this.sop = await api.fetchSop(getApiBase());
+          } else {
+            this.sop = api && api.FALLBACK_SOP ? api.FALLBACK_SOP : null;
+          }
+        } catch (error) {
+          this.sop = api && api.FALLBACK_SOP ? api.FALLBACK_SOP : null;
+          console.warn("[agent-panel] SOP 读取失败，使用内置兜底：", error && error.message ? error.message : error);
+        } finally {
+          this.sopLoading = false;
+        }
+      },
+      /** Send one SOP step instruction as a user message (optionally with current attachments). */
+      sendSopInstruction: async function sendSopInstruction(instruction) {
+        const text = String(instruction || "").trim();
+        if (!text) {
+          this.injectHint = "SOP 步骤文案为空。";
+          return false;
+        }
+        this.draftText = text;
+        await this.submitMessage();
+        return true;
+      },
+      /** 识别报告：上传右侧任务全部参考图后直接发送第 1 步. */
+      runRecognizeStep: async function runRecognizeStep() {
+        if (!this.canRunRecognize) {
+          this.injectHint = this.recognizeButtonTitle;
+          return;
+        }
+        const step = this.sopStep("recognize");
+        if (!step) {
+          this.injectHint = "未找到「识别报告」步骤。";
+          return;
+        }
+        this.sopActionBusy = true;
+        this.injectHint = "正在附带参考图并发送识别报告…";
+        this.panelError = "";
+        try {
+          if (!(await this.ensureActiveChat())) {
+            this.injectHint = "无法创建会话。";
+            return;
+          }
+          this.attachments = [];
+          this.dropFailures = [];
+          const sources = Array.isArray(this.storyboardSourceImages) ? this.storyboardSourceImages : [];
+          for (let index = 0; index < sources.length; index += 1) {
+            await this.uploadWorkspaceImage(sources[index]);
+          }
+          if (!this.attachments.length) {
+            this.injectHint = "参考图上传失败，请重试或手动拖入图片。";
+            return;
+          }
+          const attachedCount = this.attachments.length;
+          const sent = await this.sendSopInstruction(step.instruction);
+          if (sent) {
+            this.injectHint = "已发送识别报告（附带 " + attachedCount + " 张参考图）。";
+          }
+        } catch (error) {
+          this.injectHint = String(error && error.message || error || "识别报告发送失败。");
+        } finally {
+          this.sopActionBusy = false;
+        }
+      },
+      /** 生成分镜：直接发送第 2 步，并轻提示建议先识别. */
+      runStoryboardStep: async function runStoryboardStep() {
+        if (!this.canRunStoryboard) {
+          this.injectHint = this.storyboardButtonTitle;
+          return;
+        }
+        const step = this.sopStep("storyboard");
+        if (!step) {
+          this.injectHint = "未找到「生成分镜」步骤。";
+          return;
+        }
+        const api = window.AgentStoryboard;
+        this.injectHint = api && api.STORYBOARD_TIP ? api.STORYBOARD_TIP : "建议先跑「识别报告」，再生成分镜。";
+        this.sopActionBusy = true;
+        this.panelError = "";
+        try {
+          await this.sendSopInstruction(step.instruction);
+        } catch (error) {
+          this.injectHint = String(error && error.message || error || "生成分镜发送失败。");
+        } finally {
+          this.sopActionBusy = false;
+        }
+      },
+      /** Emit parsed pages for inject + generate on the open editor. */
+      handleInjectAndGenerate: function handleInjectAndGenerate() {
+        const hit = this.injectableStoryboard;
+        if (!hit || !hit.parsed || !hit.parsed.ok) {
+          this.injectHint = "没有可灌入的合法分镜 JSON。";
+          return;
+        }
+        if (!this.storyboardTargetReady) {
+          this.injectHint = "请先打开多图融合或轮播。";
+          return;
+        }
+        this.injectBusy = true;
+        this.injectHint = hit.parsed.warning || "正在灌入并生成…";
+        const self = this;
+        this.$emit("inject-storyboard", {
+          pages: hit.parsed.pages,
+          warning: hit.parsed.warning || "",
+          generate: true,
+          done: function onInjectDone(result) {
+            self.injectBusy = false;
+            const payload = result && typeof result === "object" ? result : {};
+            if (payload.ok === false) {
+              self.injectHint = String(payload.error || "灌入并生成失败。");
+              return;
+            }
+            self.injectHint = String(payload.message || "已灌入并开始生成。");
+          }
+        });
       },
       clearDragOverState: function clearDragOverState() {
         this.isDragOver = false;
@@ -483,6 +712,21 @@
       },
       formatAssistantHtml: function formatAssistantHtml(content) {
         return renderAgentMarkdown(content);
+      },
+      /** Streaming uses plain text so incomplete markdown does not thrash; completed uses markdown. */
+      formatStreamingHtml: function formatStreamingHtml(content) {
+        return escapeHtml(content).replace(/\n/g, "<br>");
+      },
+      /** Pick the bubble renderer; streamRenderTick keeps Vue painting each typewriter tick. */
+      renderAssistantBubble: function renderAssistantBubble(msg) {
+        void this.streamRenderTick;
+        if (!msg) {
+          return "";
+        }
+        if (msg.status === "streaming") {
+          return this.formatStreamingHtml(msg.content);
+        }
+        return this.formatAssistantHtml(msg.content);
       },
       formatStreamStatus: function formatStreamStatus(msg) {
         if (!msg) {
@@ -848,15 +1092,74 @@
 
         this.abortController = new AbortController();
         const self = this;
+        let pendingDelta = "";
+        let paintTimer = null;
+        let scrollBudget = 0;
 
-        /** Apply one token through Vue reactivity so the bubble repaints immediately. */
-        const applyDelta = function applyDelta(piece) {
+        /** How many characters to reveal this tick: keep typewriter feel, catch up if backlog grows. */
+        function charsPerTick() {
+          const queued = pendingDelta.length;
+          if (queued > 240) {
+            return 24;
+          }
+          if (queued > 80) {
+            return 12;
+          }
+          if (queued > 24) {
+            return 4;
+          }
+          return 2;
+        }
+
+        /** Paint one slice from the typewriter queue onto the reactive assistant bubble. */
+        function paintDeltaSlice() {
+          if (!pendingDelta) {
+            paintTimer = null;
+            return;
+          }
+          const take = Math.min(charsPerTick(), pendingDelta.length);
+          const piece = pendingDelta.slice(0, take);
+          pendingDelta = pendingDelta.slice(take);
+          assistantMsg.thinking = false;
+          assistantMsg.content = String(assistantMsg.content || "") + piece;
+          self.streamRenderTick += 1;
+          scrollBudget += 1;
+          if (scrollBudget >= 4) {
+            scrollBudget = 0;
+            self.scrollToBottom();
+          }
+          if (pendingDelta) {
+            paintTimer = window.setTimeout(paintDeltaSlice, 18);
+          } else {
+            paintTimer = null;
+            self.scrollToBottom();
+          }
+        }
+
+        /** Enqueue tokens; never dump a whole network chunk into the DOM at once. */
+        const queueDelta = function queueDelta(piece) {
           const value = String(piece || "");
           if (!value) {
             return;
           }
+          pendingDelta += value;
+          if (paintTimer == null) {
+            paintTimer = window.setTimeout(paintDeltaSlice, 0);
+          }
+        };
+
+        /** Flush the remaining typewriter queue immediately (end / error / abort). */
+        const flushDeltaNow = function flushDeltaNow() {
+          if (paintTimer != null) {
+            window.clearTimeout(paintTimer);
+            paintTimer = null;
+          }
+          if (!pendingDelta) {
+            return;
+          }
           assistantMsg.thinking = false;
-          assistantMsg.content = String(assistantMsg.content || "") + value;
+          assistantMsg.content = String(assistantMsg.content || "") + pendingDelta;
+          pendingDelta = "";
           self.streamRenderTick += 1;
           self.scrollToBottom();
         };
@@ -884,8 +1187,9 @@
               assistantMsg.thinking = true;
               self.streamRenderTick += 1;
             } else if (eventType === "delta" && data.delta) {
-              applyDelta(data.delta);
+              queueDelta(data.delta);
             } else if (eventType === "message_done") {
+              flushDeltaNow();
               assistantMsg.thinking = false;
               assistantMsg.status = "completed";
               if (data.content) {
@@ -893,6 +1197,7 @@
               }
               self.streamRenderTick += 1;
             } else if (eventType === "error") {
+              flushDeltaNow();
               assistantMsg.thinking = false;
               assistantMsg.status = data.status || "failed";
               assistantMsg.error = data.message;
@@ -945,11 +1250,13 @@
             buffer = "";
           }
 
+          flushDeltaNow();
           if (assistantMsg.status === "streaming") {
             assistantMsg.status = "completed";
             this.streamRenderTick += 1;
           }
         } catch (error) {
+          flushDeltaNow();
           if (error.name === "AbortError" || (this.abortController && this.abortController.signal.aborted)) {
             assistantMsg.status = "aborted";
             assistantMsg.error = "流式已停止";
@@ -959,6 +1266,7 @@
           }
           this.streamRenderTick += 1;
         } finally {
+          flushDeltaNow();
           assistantMsg.thinking = false;
           this.isStreaming = false;
           this.abortController = null;

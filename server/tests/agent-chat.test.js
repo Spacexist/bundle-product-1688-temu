@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
 const fs = require("fs");
-const { AgentChatService, resolveKimiEndpoint } = require("../services/agent-chat.service");
+const { AgentChatService, resolveKimiEndpoint, buildKimiChatMessages } = require("../services/agent-chat.service");
 
 test("AgentChatService can create, list, and delete chat sessions", () => {
   const testDir = path.join(__dirname, "test-agent-cache");
@@ -139,4 +139,37 @@ test("deleteChat physically unlinks referenced attachment files from disk", () =
   assert.ok(!fs.existsSync(attachedFilePath), "会话删除后，磁盘上的关联附件文件应被清理");
 
   fs.rmSync(testDir, { recursive: true, force: true });
+});
+
+test("AgentChatService reads server/sop.json with recognize and storyboard steps", () => {
+  const testDir = path.join(__dirname, "test-agent-cache-sop");
+  fs.mkdirSync(testDir, { recursive: true });
+  const service = new AgentChatService({
+    storageDirectory: testDir,
+    readConfig: () => ({ kimi: { apikey: "dummy" } })
+  });
+  const sop = service.getSop();
+  assert.equal(sop.id, "temu-suite");
+  assert.ok(Array.isArray(sop.steps));
+  assert.equal(sop.steps.length, 2);
+  assert.equal(sop.steps[0].id, "recognize");
+  assert.equal(sop.steps[1].id, "storyboard");
+  assert.ok(sop.steps[0].instruction.length > 10);
+  assert.ok(sop.steps[1].instruction.indexOf("```json") >= 0);
+  fs.rmSync(testDir, { recursive: true, force: true });
+});
+
+test("buildKimiChatMessages skips empty assistant turns that would 400 Moonshot", () => {
+  const built = buildKimiChatMessages([
+    { role: "user", content: "请写识别报告" },
+    { role: "assistant", content: "", status: "failed", error: "terminated" },
+    { role: "user", content: "请写识别报告" }
+  ], "system");
+  assert.equal(built[0].role, "system");
+  assert.equal(built.length, 3);
+  assert.equal(built[1].role, "user");
+  assert.equal(built[2].role, "user");
+  assert.ok(built.every(function noEmptyAssistant(msg) {
+    return msg.role !== "assistant" || String(msg.content || "").trim().length > 0;
+  }));
 });

@@ -112,6 +112,16 @@ class AgentChatController {
     }
   }
 
+  /** GET /api/v1/agent/sop - Return the configurable Agent SOP pack. */
+  getSop(req, res, next) {
+    try {
+      const sop = this.agentService.getSop();
+      res.json({ ok: true, data: { sop: sop }, error: null, meta: { request_id: req.requestId } });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /** POST /api/v1/agent/chats/:chatId/messages/stream - SSE chat stream. */
   async streamMessage(req, res, next) {
     try {

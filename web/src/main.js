@@ -25,7 +25,8 @@ async function bootstrapWorkbench() {
   }
   window.APP_CONFIG = await response.json();
   await loadClassicScript("/vendor/vue.global.prod.js");
-  await loadClassicScript("/src/agent-panel.js?v=sse-reactive-1");
+  await loadClassicScript("/src/agent-storyboard.js?v=sop-2");
+  await loadClassicScript("/src/agent-panel.js?v=sse-typewriter-1");
   await loadClassicScript("/app.js");
 }
 
